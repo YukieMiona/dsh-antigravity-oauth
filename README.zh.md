@@ -9,7 +9,7 @@
 打开 **设置 → 插件 → 添加插件**，在“包名或地址”中输入：
 
 ```text
-github:aa2246740/dsh-antigravity-oauth#v0.2.2
+github:aa2246740/dsh-antigravity-oauth
 ```
 
 桌面端插件管理器负责 Desktop profile 和内置包管理器。本发布包含 `lib/`；普通使用不需要 clone、构建或安装 DSHX。若应用提示刷新或重新打开，请按提示完成。
@@ -17,17 +17,17 @@ github:aa2246740/dsh-antigravity-oauth#v0.2.2
 ### Web CLI
 
 ```sh
-dsh plugin --profile web add github:aa2246740/dsh-antigravity-oauth#v0.2.2
+dsh plugin --profile web add github:aa2246740/dsh-antigravity-oauth
 ```
 
 这条官方 CLI 命令只写入 `web` profile，不能修改 Desktop App 的 profile。对于已经运行的 Web Host，请重新打开该 Host 一次，再刷新网页。
 
-需要 DeepSeek Harness **0.1.7-rc.2**（客户端 peer 为 `>=0.1.7-rc.1 <0.1.8`），Node **22.19+**。
+包版本 **0.2.3**。需要 DeepSeek Harness **0.2.0-rc.1**（客户端 peer 为 `>=0.2.0-rc.1 <0.2.1`），Node **22.19+**。
 
 `dsh` 不在 PATH 时：
 
 ```sh
-npx @deepseek-ai/dsh plugin --profile web add github:aa2246740/dsh-antigravity-oauth#v0.2.2
+npx @deepseek-ai/dsh plugin --profile web add github:aa2246740/dsh-antigravity-oauth
 ```
 
 官方 CLI 只管理 `web` profile；Desktop App 请使用上面的应用内“添加插件”入口。

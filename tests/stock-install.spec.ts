@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
   name?: string
+  version?: string
   main?: string
   files?: string[]
   scripts?: Record<string, string>
@@ -36,14 +37,17 @@ describe('stock dsh plugin add', () => {
       '@deepseek-ai/dsh-client-ui-settings',
       '@deepseek-ai/dsh-client-ui-slots',
     ]) {
-      expect(peers[name]).toBe('>=0.1.7-rc.1 <0.1.8')
+      expect(peers[name]).toBe('>=0.2.0-rc.1 <0.2.1')
     }
-    expect(readme).toContain('0.1.7-rc.2')
-    expect(readmeZh).toContain('0.1.7-rc.2')
-    expect(readme).toContain('>=0.1.7-rc.1 <0.1.8')
-    expect(readmeZh).toContain('>=0.1.7-rc.1 <0.1.8')
-    expect(readme).not.toContain('0.1.7-alpha')
-    expect(readmeZh).not.toContain('0.1.7-alpha')
+    expect(pkg.version).toBe('0.2.3')
+    expect(readme).toContain('0.2.0-rc.1')
+    expect(readmeZh).toContain('0.2.0-rc.1')
+    expect(readme).toContain('>=0.2.0-rc.1 <0.2.1')
+    expect(readmeZh).toContain('>=0.2.0-rc.1 <0.2.1')
+    expect(readme).not.toContain('0.2.0-alpha')
+    expect(readmeZh).not.toContain('0.2.0-alpha')
+    expect(readme).not.toContain('0.1.7-rc.2')
+    expect(readmeZh).not.toContain('0.1.7-rc.2')
   })
 
   it.each([

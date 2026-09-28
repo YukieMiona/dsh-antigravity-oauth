@@ -410,7 +410,7 @@ describe('AntigravityAdapter search', () => {
 })
 
 describe('AntigravityAdapter model catalog', () => {
-  it('omits toolUpdate so 0.1.7-rc.2 sends the complete tool list', async () => {
+  it('omits toolUpdate so 0.2.0-rc.1 sends the complete tool list', async () => {
     const fake = fakeSession({})
     const adapter = createAntigravityAdapter(fake.session, {
       nativeTools: true,

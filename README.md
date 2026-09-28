@@ -9,7 +9,7 @@ English | [中文](README.zh.md)
 Open **Settings → Plugins → Add plugin** and enter this in “Package name or address”:
 
 ```text
-github:aa2246740/dsh-antigravity-oauth#v0.2.2
+github:aa2246740/dsh-antigravity-oauth
 ```
 
 The desktop plugin manager owns the Desktop profile and bundled package manager. This release includes `lib/`; normal use needs no clone, build, or DSHX installation. Follow the app if it asks you to reload or reopen after installation.
@@ -17,17 +17,17 @@ The desktop plugin manager owns the Desktop profile and bundled package manager.
 ### Web CLI
 
 ```sh
-dsh plugin --profile web add github:aa2246740/dsh-antigravity-oauth#v0.2.2
+dsh plugin --profile web add github:aa2246740/dsh-antigravity-oauth
 ```
 
 This official CLI command writes only the `web` profile; it cannot modify the Desktop App profile. For an already-running Web Host, reopen that Host once and reload the page.
 
-DeepSeek Harness **0.1.7-rc.2** (client peers `>=0.1.7-rc.1 <0.1.8`). Node **22.19+**.
+Package **0.2.3**. DeepSeek Harness **0.2.0-rc.1** (client peers `>=0.2.0-rc.1 <0.2.1`). Node **22.19+**.
 
 If `dsh` is not on PATH:
 
 ```sh
-npx @deepseek-ai/dsh plugin --profile web add github:aa2246740/dsh-antigravity-oauth#v0.2.2
+npx @deepseek-ai/dsh plugin --profile web add github:aa2246740/dsh-antigravity-oauth
 ```
 
 The public CLI manages `web` only; use the in-app “Add plugin” entry above for the Desktop App.
