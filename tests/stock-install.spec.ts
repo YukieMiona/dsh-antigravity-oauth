@@ -51,8 +51,8 @@ describe('stock dsh plugin add', () => {
   })
 
   it.each([
-    ['README.md', readme, /restart that Host and reload the page/i],
-    ['README.zh.md', readmeZh, /重启这个 Host，再刷新页面/],
+    ['README.md', readme, /reopen that Host once and reload the page/i],
+    ['README.zh.md', readmeZh, /重新打开该 Host 一次，再刷新网页/],
   ] as const)('%s leads with the official stock install and does not default to DSHX', (_label, text, reload) => {
     const heading = text.indexOf('# dsh-antigravity-oauth')
     const command = text.indexOf(stockCommand)
@@ -62,8 +62,9 @@ describe('stock dsh plugin add', () => {
     expect(command).toBeLessThan(warning)
     expect(text).toMatch(/\bpnpm\b/)
     expect(text).toMatch(reload)
+    expect(text).toMatch(/no clone, build, or DSHX|不需要 clone、构建或安装 DSHX/)
     expect(text).not.toMatch(/\bmy-plugins\b/)
-    expect(text).not.toMatch(/\bdshx\b/i)
+    expect(text).not.toMatch(/\bdshx\s+(check|plugin|start|creator)\b/i)
     expect(text).not.toMatch(/DSHX_HARNESS/)
   })
 })
