@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest'
 const root = join(dirname(fileURLToPath(import.meta.url)), '..')
 const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
   name?: string
+  version?: string
   main?: string
   files?: string[]
   scripts?: Record<string, string>
@@ -36,19 +37,22 @@ describe('stock dsh plugin add', () => {
       '@deepseek-ai/dsh-client-ui-settings',
       '@deepseek-ai/dsh-client-ui-slots',
     ]) {
-      expect(peers[name]).toBe('>=0.1.7-rc.1 <0.1.8')
+      expect(peers[name]).toBe('>=0.2.0-rc.1 <0.2.1')
     }
-    expect(readme).toContain('0.1.7-rc.2')
-    expect(readmeZh).toContain('0.1.7-rc.2')
-    expect(readme).toContain('>=0.1.7-rc.1 <0.1.8')
-    expect(readmeZh).toContain('>=0.1.7-rc.1 <0.1.8')
-    expect(readme).not.toContain('0.1.7-alpha')
-    expect(readmeZh).not.toContain('0.1.7-alpha')
+    expect(pkg.version).toBe('0.2.3')
+    expect(readme).toContain('0.2.0-rc.2')
+    expect(readmeZh).toContain('0.2.0-rc.2')
+    expect(readme).toContain('>=0.2.0-rc.1 <0.2.1')
+    expect(readmeZh).toContain('>=0.2.0-rc.1 <0.2.1')
+    expect(readme).not.toContain('0.2.0-alpha')
+    expect(readmeZh).not.toContain('0.2.0-alpha')
+    expect(readme).not.toContain('0.1.7-rc.2')
+    expect(readmeZh).not.toContain('0.1.7-rc.2')
   })
 
   it.each([
-    ['README.md', readme, /restart that Host and reload the page/i],
-    ['README.zh.md', readmeZh, /重启这个 Host，再刷新页面/],
+    ['README.md', readme, /reopen that Host once and reload the page/i],
+    ['README.zh.md', readmeZh, /重新打开该 Host 一次，再刷新网页/],
   ] as const)('%s leads with the official stock install and does not default to DSHX', (_label, text, reload) => {
     const heading = text.indexOf('# dsh-antigravity-oauth')
     const command = text.indexOf(stockCommand)
@@ -58,8 +62,9 @@ describe('stock dsh plugin add', () => {
     expect(command).toBeLessThan(warning)
     expect(text).toMatch(/\bpnpm\b/)
     expect(text).toMatch(reload)
+    expect(text).toMatch(/no clone, build, or DSHX|不需要 clone、构建或安装 DSHX/)
     expect(text).not.toMatch(/\bmy-plugins\b/)
-    expect(text).not.toMatch(/\bdshx\b/i)
+    expect(text).not.toMatch(/\bdshx\s+(check|plugin|start|creator)\b/i)
     expect(text).not.toMatch(/DSHX_HARNESS/)
   })
 })
