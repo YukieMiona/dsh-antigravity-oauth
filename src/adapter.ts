@@ -85,15 +85,30 @@ function convertMessages(
     }
   }
   const contents: GeminiContent[] = []
+  // Replayed compaction shadows can repeat a tool-call id within one history. Emitting the same id
+  // twice makes the provider reject the whole request (`Request contains an invalid argument`), so
+  // every emitted function call gets a unique id and the tool results that follow consume them in
+  // order.
+  const emittedCount = new Map<string, number>()
+  const emittedNames = new Map<string, string>()
+  const pendingCallIds = new Map<string, string[]>()
   for (const message of messages) {
     if (message.role === 'tool') {
       const responseText = textOf(message.content)
+      const queue = pendingCallIds.get(message.toolCallId)
+      const id = queue !== undefined && queue.length > 0 ? queue.shift() : undefined
+      if (id === undefined) {
+        // A tool result whose function call is no longer in the history cannot be sent as a bare
+        // functionResponse, so keep the payload legal by degrading it to plain text.
+        if (responseText.length > 0) contents.push({ role: 'user', parts: [{ text: responseText }] })
+        continue
+      }
       contents.push({
         role: 'user',
         parts: [{
           functionResponse: {
-            name: toolNames.get(message.toolCallId) ?? 'tool',
-            id: message.toolCallId,
+            name: emittedNames.get(id) ?? toolNames.get(message.toolCallId) ?? 'tool',
+            id,
             response: { result: responseText },
           },
         }],
@@ -112,11 +127,18 @@ function convertMessages(
           } catch {
             args = { raw: block.arguments }
           }
+          const seen = emittedCount.get(block.id) ?? 0
+          emittedCount.set(block.id, seen + 1)
+          const id = seen === 0 ? block.id : `${block.id}#${seen}`
           const thoughtSignature = thoughtSignatures.get(block.id)
           parts.push({
-            functionCall: { name: block.name, args, id: block.id },
+            functionCall: { name: block.name, args, id },
             ...thoughtSignature === undefined ? {} : { thoughtSignature },
           })
+          emittedNames.set(id, block.name)
+          const queue = pendingCallIds.get(block.id)
+          if (queue === undefined) pendingCallIds.set(block.id, [id])
+          else queue.push(id)
         }
       }
       if (parts.length > 0) contents.push({ role: 'model', parts })
