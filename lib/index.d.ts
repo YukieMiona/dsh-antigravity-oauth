@@ -163,6 +163,26 @@ type AccountSummary = {
   limited: boolean;
   dead: boolean;
 };
+type QuotaBucket = {
+  bucketId: string;
+  displayName?: string;
+  window: string;
+  remainingFraction: number;
+  resetTime?: string;
+  description?: string;
+};
+type QuotaGroup = {
+  displayName: string;
+  description?: string;
+  buckets: QuotaBucket[];
+};
+type AccountQuotaSummary = {
+  accountId: string;
+  email?: string;
+  ok: boolean;
+  error?: string;
+  groups?: QuotaGroup[];
+};
 type AntigravityStatus = {
   status: 'signed-out';
   accounts: [];
@@ -276,6 +296,7 @@ declare class AntigravitySession {
   private runLogin;
   private listenForCallback;
   private stopCallbackServer;
+  retrieveAllQuotas(): Promise<Record<string, AccountQuotaSummary>>;
 }
 //#endregion
 //#region src/adapter.d.ts

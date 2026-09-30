@@ -518,9 +518,10 @@ export class AntigravitySession {
       try {
         let access = account.access
         if (account.expires <= Date.now() + 60_000) {
-          const refreshed = await refreshAccessToken(account.refresh, this.fetchImpl)
+          const refreshed = await refreshAccessToken(account, this.fetchImpl)
           await this.store.update(account.id, {
             access: refreshed.access,
+            refresh: refreshed.refresh,
             expires: refreshed.expires,
           })
           access = refreshed.access
