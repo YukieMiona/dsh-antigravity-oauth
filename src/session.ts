@@ -108,6 +108,30 @@ export class AntigravitySession {
     }
   }
 
+  async acquireForAccount(accountId: string): Promise<AntigravityLease | undefined> {
+    const grant = await this.refreshGrantForAccount(accountId)
+    if (grant === undefined || grant.projectId === undefined) return undefined
+    const runtime = this.runtimeFor(accountId)
+    return {
+      oauth: { ...grant, projectId: grant.projectId },
+      accountId,
+      ...grant.email === undefined ? {} : { email: grant.email },
+      cca: runtime.cca,
+    }
+  }
+
+  async findFailoverAccount(excludeAccountId: string, now = Date.now()): Promise<StoredAccount | undefined> {
+    const all = await this.store.list()
+    return all.find((account) => {
+      if (account.id === excludeAccountId) return false
+      if (account.projectId === undefined) return false
+      const runtime = this.runtimes.get(account.id)
+      if (runtime?.dead === true) return false
+      if (runtime?.limitedUntil !== undefined && runtime.limitedUntil > now) return false
+      return true
+    })
+  }
+
   async hasReadyAccount(): Promise<boolean> {
     const accounts = await this.store.list()
     return accounts.some(account => account.projectId !== undefined)
@@ -209,19 +233,25 @@ export class AntigravitySession {
   private async refreshGrant(now = Date.now()): Promise<AntigravityGrant | undefined> {
     const current = await this.store.active()
     if (current === undefined) return undefined
-    if (now < current.expires - OAUTH_REFRESH_SOON_MS) return current
-    if (now - (this.refreshAttempts.get(current.id) ?? 0) < OAUTH_REFRESH_COOLDOWN_MS) return current
-    this.refreshAttempts.set(current.id, now)
+    return this.refreshGrantForAccount(current.id, now)
+  }
+
+  private async refreshGrantForAccount(accountId: string, now = Date.now()): Promise<AntigravityGrant | undefined> {
+    const target = await this.store.get(accountId)
+    if (target === undefined) return undefined
+    if (now < target.expires - OAUTH_REFRESH_SOON_MS) return target
+    if (now - (this.refreshAttempts.get(target.id) ?? 0) < OAUTH_REFRESH_COOLDOWN_MS) return target
+    this.refreshAttempts.set(target.id, now)
     try {
-      const next = await refreshAccessToken(current, this.fetchImpl, now)
-      return await this.store.update(current.id, {
+      const next = await refreshAccessToken(target, this.fetchImpl, now)
+      return await this.store.update(target.id, {
         access: next.access,
         refresh: next.refresh,
         expires: next.expires,
       })
     } catch (error) {
-      if (/invalid_grant/i.test(safeMessage(error))) this.runtimeFor(current.id).dead = true
-      return current
+      if (/invalid_grant/i.test(safeMessage(error))) this.runtimeFor(target.id).dead = true
+      return target
     }
   }
 

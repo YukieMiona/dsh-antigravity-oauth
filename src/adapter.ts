@@ -274,48 +274,64 @@ export class AntigravityAdapter extends LlmAdapter {
     const watchdog = options.signal === undefined
       ? AbortSignal.timeout(idleMs)
       : AbortSignal.any([options.signal, AbortSignal.timeout(idleMs)])
-    try {
-      yield* this.emitChat(options, input, state, watchdog, lease)
-      yield* this.closeThought(state)
-      yield* this.closeText(state)
-      if (state.usage !== undefined) yield { type: 'usage', usage: state.usage }
-      const kind = state.toolNames.length > 0
-        ? 'tool-calls' as const
-        : state.finish === 'MAX_TOKENS'
-          ? 'max-tokens' as const
-          : 'stop' as const
-      if (kind === 'stop' && state.index === 0) {
-        yield {
-          type: 'finish',
-          reason: {
-            kind: 'error',
-            failure: { message: `model "${options.model}" returned a completed response with no content`, code: 'EMPTY_RESPONSE' },
-          },
+    let currentLease = lease
+    while (true) {
+      try {
+        yield* this.emitChat(options, input, state, watchdog, currentLease)
+        yield* this.closeThought(state)
+        yield* this.closeText(state)
+        if (state.usage !== undefined) yield { type: 'usage', usage: state.usage }
+        const kind = state.toolNames.length > 0
+          ? 'tool-calls' as const
+          : state.finish === 'MAX_TOKENS'
+            ? 'max-tokens' as const
+            : 'stop' as const
+        if (kind === 'stop' && state.index === 0) {
+          yield {
+            type: 'finish',
+            reason: {
+              kind: 'error',
+              failure: { message: `model "${options.model}" returned a completed response with no content`, code: 'EMPTY_RESPONSE' },
+            },
+          }
+          return
         }
+        yield { type: 'finish', reason: { kind } }
         return
+      } catch (error: unknown) {
+        if (error instanceof LlmError) throw error
+        let message = error instanceof Error
+          ? (error.cause instanceof Error ? `${error.message}: ${error.cause.message}` : error.message)
+          : String(error)
+        const code = /\b401\b|\b403\b/.test(message)
+          ? 'AUTH'
+          : /\b429\b|RESOURCE_EXHAUSTED|quota exhausted/i.test(message)
+            ? 'RATE_LIMIT'
+            : /\b5\d\d\b/.test(message)
+              ? 'SERVER'
+              : 'TRANSPORT'
+        if (code === 'RATE_LIMIT') {
+          this.session.noteRateLimited(currentLease.accountId)
+          // 若尚未向外暴露任何数据块，且 session 支持查找备用账号，尝试故障转移到可用账号
+          if (state.index === 0 && typeof this.session.findFailoverAccount === 'function') {
+            const fallback = await this.session.findFailoverAccount(currentLease.accountId)
+            if (fallback !== undefined && typeof this.session.acquireForAccount === 'function') {
+              const nextLease = await this.session.acquireForAccount(fallback.id)
+              if (nextLease !== undefined) {
+                await this.session.switchAccount?.(fallback.id).catch(() => {})
+                currentLease = nextLease
+                continue
+              }
+            }
+          }
+          const who = currentLease.email === undefined ? '' : ` (${currentLease.email})`
+          message = `Antigravity quota exhausted for this account${who}.`
+            + ' Switch to another saved account in Settings 鈫?Antigravity.'
+            + ` [${message}]`
+        }
+        if (code === 'AUTH') this.session.noteAuthRejected(currentLease.accountId)
+        throw new LlmError(message, code, { cause: error })
       }
-      yield { type: 'finish', reason: { kind } }
-    } catch (error: unknown) {
-      if (error instanceof LlmError) throw error
-      let message = error instanceof Error
-        ? (error.cause instanceof Error ? `${error.message}: ${error.cause.message}` : error.message)
-        : String(error)
-      const code = /\b401\b|\b403\b/.test(message)
-        ? 'AUTH'
-        : /\b429\b|RESOURCE_EXHAUSTED|quota exhausted/i.test(message)
-          ? 'RATE_LIMIT'
-          : /\b5\d\d\b/.test(message)
-            ? 'SERVER'
-            : 'TRANSPORT'
-      if (code === 'RATE_LIMIT') {
-        this.session.noteRateLimited(lease.accountId)
-        const who = lease.email === undefined ? '' : ` (${lease.email})`
-        message = `Antigravity quota exhausted for this account${who}.`
-          + ' Switch to another saved account in Settings 鈫?Antigravity.'
-          + ` [${message}]`
-      }
-      if (code === 'AUTH') this.session.noteAuthRejected(lease.accountId)
-      throw new LlmError(message, code, { cause: error })
     }
   }
 

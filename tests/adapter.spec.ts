@@ -407,6 +407,64 @@ describe('AntigravityAdapter search', () => {
     await expect(collect(adapter.stream(options('hi')))).rejects.toThrow(/a@example\.test/)
     expect(limited).toEqual(['acc_one'])
   })
+
+  it('automatically fails over to an available account when 429 occurs before any chunks are emitted', async () => {
+    const limited: string[] = []
+    const switched: string[] = []
+    let callCount = 0
+
+    const session = {
+      thoughtSignatures: new Map<string, string>(),
+      acquire: async () => ({
+        oauth,
+        accountId: 'acc_exhausted',
+        email: 'exhausted@example.test',
+        cca: {
+          async *chat(): AsyncIterable<CcaEvent> {
+            callCount++
+            throw new CcaHttpError(429, 'RESOURCE_EXHAUSTED')
+          },
+        },
+      }),
+      noteRateLimited: (id: string) => { limited.push(id) },
+      findFailoverAccount: async (excludeId: string) => {
+        return excludeId === 'acc_exhausted'
+          ? { id: 'acc_healthy', email: 'healthy@example.test', projectId: 'healthy-proj' }
+          : undefined
+      },
+      acquireForAccount: async (id: string) => {
+        if (id !== 'acc_healthy') return undefined
+        return {
+          oauth,
+          accountId: 'acc_healthy',
+          email: 'healthy@example.test',
+          cca: {
+            async *chat(): AsyncIterable<CcaEvent> {
+              callCount++
+              yield { type: 'text', text: 'recovered hello from failover account' }
+              yield { type: 'finish', reason: 'STOP' }
+            },
+          },
+        }
+      },
+      switchAccount: async (id: string) => {
+        switched.push(id)
+        return {} as any
+      },
+    } as unknown as AntigravitySession
+
+    const adapter = createAntigravityAdapter(session, {
+      nativeTools: true,
+      nativeSearch: true,
+    })
+
+    const chunks = await collect(adapter.stream(options('hi')))
+    expect(callCount).toBe(2)
+    expect(limited).toEqual(['acc_exhausted'])
+    expect(switched).toEqual(['acc_healthy'])
+    const textChunk = chunks.find(c => c.type === 'text-delta') as { type: 'text-delta', text: string } | undefined
+    expect(textChunk?.text).toBe('recovered hello from failover account')
+  })
 })
 
 describe('AntigravityAdapter model catalog', () => {

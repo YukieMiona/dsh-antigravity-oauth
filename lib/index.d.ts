@@ -208,7 +208,7 @@ type AntigravityLease = {
 };
 //#endregion
 //#region src/store.d.ts
-type StoredAccount = AntigravityGrant & {
+type StoredAccount$1 = AntigravityGrant & {
   id: string;
   addedAt?: string;
 };
@@ -218,13 +218,13 @@ declare class AntigravityCredentialStore {
   constructor(filename?: string);
   private readParsed;
   private writeDocument;
-  list(): Promise<StoredAccount[]>;
-  active(): Promise<StoredAccount | undefined>;
-  get(id: string): Promise<StoredAccount | undefined>;
-  add(grant: AntigravityGrant): Promise<StoredAccount>;
-  update(id: string, patch: Partial<AntigravityGrant>): Promise<StoredAccount>;
+  list(): Promise<StoredAccount$1[]>;
+  active(): Promise<StoredAccount$1 | undefined>;
+  get(id: string): Promise<StoredAccount$1 | undefined>;
+  add(grant: AntigravityGrant): Promise<StoredAccount$1>;
+  update(id: string, patch: Partial<AntigravityGrant>): Promise<StoredAccount$1>;
   setActive(id: string): Promise<void>;
-  remove(id: string): Promise<StoredAccount>;
+  remove(id: string): Promise<StoredAccount$1>;
 }
 //#endregion
 //#region src/network.d.ts
@@ -271,6 +271,8 @@ declare class AntigravitySession {
   constructor(store: AntigravityCredentialStore, fetchImpl?: FetchImpl);
   private runtimeFor;
   acquire(): Promise<AntigravityLease | undefined>;
+  acquireForAccount(accountId: string): Promise<AntigravityLease | undefined>;
+  findFailoverAccount(excludeAccountId: string, now?: number): Promise<StoredAccount | undefined>;
   hasReadyAccount(): Promise<boolean>;
   noteRateLimited(accountId: string): void;
   noteAuthRejected(accountId: string): void;
@@ -280,6 +282,7 @@ declare class AntigravitySession {
   credential(): Promise<AntigravityOAuth | undefined>;
   refreshIfNeeded(now?: number): Promise<AntigravityOAuth | undefined>;
   private refreshGrant;
+  private refreshGrantForAccount;
   switchAccount(accountId: string): Promise<AntigravityStatus>;
   removeAccount(accountId: string): Promise<AntigravityStatus>;
   signIn(): Promise<{
