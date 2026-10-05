@@ -56,6 +56,7 @@ export const en = {
   noMatchingAccounts: 'No matching accounts found',
   activeBadge: 'Active',
   quotaWeeklyShort: 'Wk',
+  authStatus: 'Authorization status',
 } as const
 
 export type AntigravityKey = keyof typeof en
@@ -118,4 +119,5 @@ export const zh: { [Key in AntigravityKey]: string } = {
   noMatchingAccounts: '未找到匹配的账号',
   activeBadge: '当前',
   quotaWeeklyShort: '周',
+  authStatus: '授权与登录',
 }

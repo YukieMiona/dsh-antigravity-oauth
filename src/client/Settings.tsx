@@ -26,8 +26,11 @@ const SETTINGS_CSS = `
 .dsh-agy-title { margin:0; font-size:20px; line-height:28px; font-weight:600; color:var(--dsw-alias-label-primary); }
 .dsh-agy-body { margin:0; font-size:13px; line-height:20px; color:var(--dsw-alias-label-secondary); }
 .dsh-agy-error { margin:0; font-size:13px; line-height:20px; color:var(--dsw-alias-state-error-primary); }
+.dsh-agy-grid-2col {
+  display:grid; grid-template-columns:repeat(auto-fit, minmax(280px, 1fr)); gap:12px; width:100%;
+}
 .dsh-agy-card {
-  display:flex; flex-direction:column; gap:8px; padding:14px 16px;
+  display:flex; flex-direction:column; gap:8px; padding:12px 14px;
   border:1px solid var(--dsw-alias-border-l2); border-radius:12px;
   background:var(--dsw-alias-bg-module-platform);
 }
@@ -114,8 +117,13 @@ const SETTINGS_CSS = `
 .dsh-agy-select {
   box-sizing:border-box; min-height:26px; padding:2px 8px; border-radius:6px;
   border:1px solid var(--dsw-alias-border-l2);
-  background:var(--dsw-alias-bg-page-primary, transparent);
-  color:var(--dsw-alias-label-primary); font:inherit; font-size:12px; cursor:pointer;
+  background:var(--dsw-alias-bg-module-platform, var(--dsw-alias-bg-page-primary, #1e1e1e));
+  color:var(--dsw-alias-label-primary, inherit); font:inherit; font-size:12px; cursor:pointer;
+  outline:none;
+}
+.dsh-agy-select option {
+  background:var(--dsw-alias-bg-module-platform, #1e1e1e);
+  color:var(--dsw-alias-label-primary, inherit);
 }
 .dsh-agy-account-list {
   max-height:480px; overflow-y:auto; padding-right:4px;
@@ -129,10 +137,20 @@ const SETTINGS_CSS = `
 .dsh-agy-account {
   display:flex; align-items:center; gap:8px; flex-wrap:wrap;
   padding:8px 10px; border:1px solid var(--dsw-alias-border-l2); border-radius:8px;
+  transition:border-color 0.15s ease, background 0.15s ease;
+}
+.dsh-agy-account.is-compact {
+  padding:5px 8px; flex-wrap:nowrap; gap:6px; min-height:36px;
 }
 .dsh-agy-account.is-active {
   border-color:var(--dsw-alias-brand-primary, #1677ff);
   background:var(--dsw-alias-brand-primary-faint, rgba(22, 119, 255, 0.04));
+}
+.dsh-agy-account.is-compact .dsh-agy-account-mail {
+  font-size:12px; font-weight:500;
+}
+.dsh-agy-btn-compact {
+  min-height:24px; padding:1px 8px; font-size:11px; border-radius:12px;
 }
 .dsh-agy-account-main { display:flex; align-items:center; gap:8px; flex:1 1 auto; min-width:0; cursor:pointer; }
 .dsh-agy-account-main input[type="radio"] { accent-color:var(--dsw-alias-brand-primary, #1677ff); }
@@ -473,22 +491,45 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
       <h2 id="antigravity-settings-title" className="dsh-agy-title">{t('title')}</h2>
       <p className="dsh-agy-body">{t('tos')}</p>
       {error !== undefined ? <p className="dsh-agy-error">{error}</p> : null}
-      {network && <div className="dsh-agy-card">
-        <p className="dsh-agy-name">{t('network')}</p>
-        <p className="dsh-agy-body">{t('networkHelp')}</p>
-        <label>{t('network')} <select aria-label={t('network')} value={network.mode} disabled={busy}
-          onChange={e => setNetwork({ ...network, mode: e.target.value as Network['mode'] })}>
-          <option value="auto">{t('networkAuto')}</option>
-          <option value="direct">{t('networkDirect')}</option>
-          <option value="proxy">{t('networkProxy')}</option>
-        </select></label>
-        {network.mode === 'proxy' && <input className="dsh-agy-input" aria-label={t('proxyUrl')}
-          placeholder="http://127.0.0.1:45678" value={network.url} disabled={busy}
-          onChange={e => setNetwork({ ...network, url: e.target.value })} />}
-        <p className="dsh-agy-body">{t('effectiveNetwork')} {network.effective}</p>
-        <button className="dsh-agy-btn dsh-agy-btn-secondary" disabled={busy} onClick={() => { void saveNetwork() }}>{t('saveNetwork')}</button>
-        {networkMessage && <p role="status">{networkMessage}</p>}
-      </div>}
+      <div className="dsh-agy-grid-2col">
+        {network && <div className="dsh-agy-card">
+          <p className="dsh-agy-name">{t('network')}</p>
+          <p className="dsh-agy-body">{t('networkHelp')}</p>
+          <label>{t('network')} <select className="dsh-agy-select" aria-label={t('network')} value={network.mode} disabled={busy}
+            onChange={e => setNetwork({ ...network, mode: e.target.value as Network['mode'] })}>
+            <option value="auto">{t('networkAuto')}</option>
+            <option value="direct">{t('networkDirect')}</option>
+            <option value="proxy">{t('networkProxy')}</option>
+          </select></label>
+          {network.mode === 'proxy' && <input className="dsh-agy-input" aria-label={t('proxyUrl')}
+            placeholder="http://127.0.0.1:45678" value={network.url} disabled={busy}
+            onChange={e => setNetwork({ ...network, url: e.target.value })} />}
+          <p className="dsh-agy-body">{t('effectiveNetwork')} {network.effective}</p>
+          <button className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact" disabled={busy} onClick={() => { void saveNetwork() }}>{t('saveNetwork')}</button>
+          {networkMessage && <p role="status">{networkMessage}</p>}
+        </div>}
+        <div className="dsh-agy-card">
+          <div className="dsh-agy-row">
+            <p className="dsh-agy-name">{t('authStatus')}</p>
+            {signing ? (
+              <button type="button" className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact" onClick={() => { void recover('cancel') }}>{t('cancel')}</button>
+            ) : (
+              <button type="button" className="dsh-agy-btn dsh-agy-btn-primary dsh-agy-btn-compact" disabled={busy}
+                onClick={() => { void signIn() }}>
+                {busy ? t('working') : status?.status === 'error' ? t('loginAgain') : accounts.length === 0 ? t('login') : t('addAccount')}
+              </button>
+            )}
+          </div>
+          <div className="dsh-agy-status" role="status">
+            <span aria-hidden="true" className={dotClass} />
+            <span>{label}</span>
+          </div>
+          {loginError !== undefined ? <p className="dsh-agy-error">{loginError}</p> : null}
+          {serviceMessage !== undefined ? <p className="dsh-agy-error">{serviceMessage}</p> : null}
+          {accounts.length > 0 ? <p className="dsh-agy-body">{t('quotaHint')}</p> : null}
+        </div>
+      </div>
+
       <article className="dsh-agy-card">
         <div className="dsh-agy-row">
           <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -505,22 +546,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
               </button>
             ) : null}
           </div>
-          {signing ? (
-            <button type="button" className="dsh-agy-btn dsh-agy-btn-secondary" onClick={() => { void recover('cancel') }}>{t('cancel')}</button>
-          ) : (
-            <button type="button" className="dsh-agy-btn dsh-agy-btn-primary" disabled={busy}
-              onClick={() => { void signIn() }}>
-              {busy ? t('working') : status?.status === 'error' ? t('loginAgain') : accounts.length === 0 ? t('login') : t('addAccount')}
-            </button>
-          )}
         </div>
-        <div className="dsh-agy-status" role="status">
-          <span aria-hidden="true" className={dotClass} />
-          <span>{label}</span>
-        </div>
-        {loginError !== undefined ? <p className="dsh-agy-error">{loginError}</p> : null}
-        {serviceMessage !== undefined ? <p className="dsh-agy-error">{serviceMessage}</p> : null}
-        {accounts.length > 0 ? <p className="dsh-agy-body">{t('quotaHint')}</p> : null}
 
         {accounts.length > 0 ? (
           <>
@@ -606,7 +632,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                   const capsuleClass = score >= 50 ? 'is-high' : score >= 20 ? 'is-med' : 'is-low'
 
                   return (
-                    <div className={`dsh-agy-account${isActive ? ' is-active' : ''}`} key={account.id}>
+                    <div className={`dsh-agy-account${isActive ? ' is-active' : ''}${compactView ? ' is-compact' : ''}`} key={account.id}>
                       <label className="dsh-agy-account-main">
                         <input
                           type="radio"
@@ -634,12 +660,12 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                           ) : null}
                         </span>
                       </label>
-                      {account.projectId !== undefined ? (
+                      {!compactView && account.projectId !== undefined && account.projectId !== 'aicode-consumers' ? (
                         <span className="dsh-agy-body">{t('project')} {account.projectId}</span>
                       ) : null}
                       <button
                         type="button"
-                        className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-remove"
+                        className={`dsh-agy-btn dsh-agy-btn-secondary dsh-agy-remove${compactView ? ' dsh-agy-btn-compact' : ''}`}
                         disabled={busy || signing}
                         onClick={() => {
                           void (account.id === activeId ? signOutActive() : removeAccount(account.id))
