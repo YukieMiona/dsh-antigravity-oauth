@@ -62,14 +62,82 @@ const SETTINGS_CSS = `
   color:var(--dsw-alias-label-primary); font:inherit; font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
 }
 .dsh-agy-actions { display:flex; justify-content:flex-end; }
+.dsh-agy-summary-bar {
+  display:flex; align-items:center; gap:8px; flex-wrap:wrap;
+  padding:6px 12px; border-radius:8px; font-size:12px;
+  background:var(--dsw-alias-bg-page-primary, rgba(0,0,0,0.02));
+  border:1px solid var(--dsw-alias-border-l2);
+  color:var(--dsw-alias-label-secondary);
+}
+.dsh-agy-summary-badge {
+  display:inline-flex; align-items:center; gap:4px;
+}
+.dsh-agy-summary-badge.is-available {
+  color:var(--dsw-alias-state-success-primary, #22a06b); font-weight:500;
+}
+.dsh-agy-summary-badge.is-exhausted {
+  color:var(--dsw-alias-state-error-primary, #d92d20); font-weight:500;
+}
+.dsh-agy-toolbar {
+  display:flex; flex-direction:column; gap:8px;
+}
+.dsh-agy-search-box {
+  position:relative; display:flex; align-items:center; width:100%;
+}
+.dsh-agy-search-input {
+  box-sizing:border-box; width:100%; min-height:32px; padding:5px 28px 5px 10px;
+  border:1px solid var(--dsw-alias-border-l2); border-radius:8px;
+  background:var(--dsw-alias-bg-page-primary, transparent);
+  color:var(--dsw-alias-label-primary); font:inherit; font-size:12px;
+}
+.dsh-agy-search-clear {
+  position:absolute; right:6px; background:none; border:none;
+  cursor:pointer; color:var(--dsw-alias-label-secondary); font-size:14px;
+  padding:2px 6px; line-height:1;
+}
+.dsh-agy-controls {
+  display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; font-size:12px;
+  color:var(--dsw-alias-label-secondary);
+}
+.dsh-agy-filters {
+  display:flex; align-items:center; gap:12px; flex-wrap:wrap;
+}
+.dsh-agy-check-label {
+  display:inline-flex; align-items:center; gap:5px; cursor:pointer; user-select:none;
+}
+.dsh-agy-check-label input[type="checkbox"] {
+  accent-color:var(--dsw-alias-brand-primary, #1677ff); cursor:pointer; margin:0;
+}
+.dsh-agy-sort {
+  display:inline-flex; align-items:center; gap:6px; margin-left:auto;
+}
+.dsh-agy-select {
+  box-sizing:border-box; min-height:26px; padding:2px 8px; border-radius:6px;
+  border:1px solid var(--dsw-alias-border-l2);
+  background:var(--dsw-alias-bg-page-primary, transparent);
+  color:var(--dsw-alias-label-primary); font:inherit; font-size:12px; cursor:pointer;
+}
+.dsh-agy-account-list {
+  max-height:480px; overflow-y:auto; padding-right:4px;
+  display:flex; flex-direction:column; gap:8px;
+}
+.dsh-agy-empty-tip {
+  padding:16px; text-align:center; font-size:13px;
+  color:var(--dsw-alias-label-secondary);
+  border:1px dashed var(--dsw-alias-border-l2); border-radius:8px;
+}
 .dsh-agy-account {
   display:flex; align-items:center; gap:8px; flex-wrap:wrap;
   padding:8px 10px; border:1px solid var(--dsw-alias-border-l2); border-radius:8px;
 }
+.dsh-agy-account.is-active {
+  border-color:var(--dsw-alias-brand-primary, #1677ff);
+  background:var(--dsw-alias-brand-primary-faint, rgba(22, 119, 255, 0.04));
+}
 .dsh-agy-account-main { display:flex; align-items:center; gap:8px; flex:1 1 auto; min-width:0; cursor:pointer; }
 .dsh-agy-account-main input[type="radio"] { accent-color:var(--dsw-alias-brand-primary, #1677ff); }
 .dsh-agy-account-mail { font-size:13px; color:var(--dsw-alias-label-primary); word-break:break-all; }
-.dsh-agy-badges { display:inline-flex; gap:6px; flex-wrap:wrap; }
+.dsh-agy-badges { display:inline-flex; gap:6px; flex-wrap:wrap; align-items:center; }
 .dsh-agy-badge {
   display:inline-flex; align-items:center; padding:1px 8px; border-radius:10px;
   font-size:12px; line-height:18px;
@@ -78,6 +146,27 @@ const SETTINGS_CSS = `
 .dsh-agy-badge.is-error {
   border-color:var(--dsw-alias-state-error-primary, #d92d20);
   color:var(--dsw-alias-state-error-primary, #d92d20);
+}
+.dsh-agy-badge.is-active {
+  border-color:var(--dsw-alias-brand-primary, #1677ff);
+  color:var(--dsw-alias-brand-primary, #1677ff);
+  font-weight:600;
+}
+.dsh-agy-quota-capsule {
+  display:inline-flex; align-items:center; gap:4px;
+  padding:1px 8px; border-radius:10px; font-size:11px; line-height:18px;
+  border:1px solid var(--dsw-alias-border-l2);
+  background:var(--dsw-alias-bg-page-primary, rgba(0,0,0,0.02));
+  font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
+.dsh-agy-quota-capsule.is-high {
+  border-color:rgba(34,160,107,0.3); color:var(--dsw-alias-state-success-primary, #22a06b);
+}
+.dsh-agy-quota-capsule.is-med {
+  border-color:rgba(245,158,11,0.3); color:#d97706;
+}
+.dsh-agy-quota-capsule.is-low {
+  border-color:rgba(217,45,32,0.3); color:var(--dsw-alias-state-error-primary, #d92d20);
 }
 .dsh-agy-remove { margin-left:auto; }
 .dsh-agy-quota-box {
@@ -109,6 +198,42 @@ function formatReset(iso?: string): string {
     return `${d}d`
   }
   return `${h}h${m}m`
+}
+
+function getAccountQuotaMetrics(quota?: AccountQuotaSummary) {
+  if (!quota?.ok || !quota.groups) return undefined
+  const buckets = quota.groups.flatMap(g => g.buckets).filter(b => b.window === '5h' || b.window === 'weekly')
+  const b5h = buckets.find(b => b.window === '5h')
+  const bWeekly = buckets.find(b => b.window === 'weekly')
+  if (!b5h && !bWeekly) return undefined
+
+  const f5h = b5h?.remainingFraction
+  const fWeekly = bWeekly?.remainingFraction
+  const p5h = f5h !== undefined ? Math.round(f5h * 1000) / 10 : undefined
+  const pWeekly = fWeekly !== undefined ? Math.round(fWeekly * 1000) / 10 : undefined
+
+  const is5hExhausted = f5h !== undefined ? f5h <= 0 : false
+  const isWeeklyExhausted = fWeekly !== undefined ? fWeekly <= 0 : false
+  const isExhausted = (b5h ? is5hExhausted : true) && (bWeekly ? isWeeklyExhausted : true) && (!!b5h || !!bWeekly)
+
+  const score = Math.min(
+    f5h !== undefined ? f5h * 100 : 100,
+    fWeekly !== undefined ? fWeekly * 100 : 100,
+  )
+
+  const reset5h = b5h ? formatReset(b5h.resetTime) : ''
+  const resetWeekly = bWeekly ? formatReset(bWeekly.resetTime) : ''
+
+  return {
+    b5h,
+    bWeekly,
+    p5h,
+    pWeekly,
+    isExhausted,
+    score,
+    reset5h,
+    resetWeekly,
+  }
 }
 
 function ensureThemeStyles(): void {
@@ -147,6 +272,11 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
   const [networkMessage, setNetworkMessage] = useState('')
   const [quotas, setQuotas] = useState<Record<string, AccountQuotaSummary>>({})
   const [loadingQuotas, setLoadingQuotas] = useState(false)
+
+  const [searchQuery, setSearchQuery] = useState('')
+  const [hideExhausted, setHideExhausted] = useState(false)
+  const [compactView, setCompactView] = useState(false)
+  const [sortBy, setSortBy] = useState<'default' | 'quota'>('default')
 
   useEffect(() => { ensureThemeStyles() }, [])
 
@@ -279,6 +409,46 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
   const loginError = status?.status === 'error' ? status.message : undefined
   const serviceMessage = status?.status === 'signed-in' ? status.message : undefined
 
+  let availableCount = 0
+  let exhaustedCount = 0
+  for (const account of accounts) {
+    const isDead = account.dead
+    const metrics = getAccountQuotaMetrics(quotas[account.id])
+    const isEx = isDead || (metrics ? metrics.isExhausted : false)
+    if (isEx) {
+      exhaustedCount++
+    } else {
+      availableCount++
+    }
+  }
+
+  const filteredAccounts = accounts.filter((account) => {
+    if (hideExhausted && account.id !== activeId) {
+      const isDead = account.dead
+      const metrics = getAccountQuotaMetrics(quotas[account.id])
+      if (isDead || metrics?.isExhausted) return false
+    }
+    const q = searchQuery.trim().toLowerCase()
+    if (q) {
+      const email = (account.email ?? '').toLowerCase()
+      const proj = (account.projectId ?? '').toLowerCase()
+      const id = account.id.toLowerCase()
+      if (!email.includes(q) && !proj.includes(q) && !id.includes(q)) return false
+    }
+    return true
+  })
+
+  const visibleAccounts = [...filteredAccounts].sort((a, b) => {
+    if (a.id === activeId) return -1
+    if (b.id === activeId) return 1
+    if (sortBy === 'quota') {
+      const scoreA = getAccountQuotaMetrics(quotas[a.id])?.score ?? -1
+      const scoreB = getAccountQuotaMetrics(quotas[b.id])?.score ?? -1
+      return scoreB - scoreA
+    }
+    return 0
+  })
+
   const label = status === undefined
     ? t('loadingAccount')
     : status.status === 'signing-in'
@@ -351,64 +521,163 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
         {loginError !== undefined ? <p className="dsh-agy-error">{loginError}</p> : null}
         {serviceMessage !== undefined ? <p className="dsh-agy-error">{serviceMessage}</p> : null}
         {accounts.length > 0 ? <p className="dsh-agy-body">{t('quotaHint')}</p> : null}
-        {accounts.map((account) => {
-          return (
-            <div className="dsh-agy-account" key={account.id}>
-              <label className="dsh-agy-account-main">
-                <input
-                  type="radio"
-                  name="dsh-agy-active-account"
-                  aria-label={t('switchAccount')}
-                  checked={account.id === activeId}
-                  disabled={busy || signing}
-                  onChange={() => { void switchAccount(account.id) }}
-                />
-                <span className="dsh-agy-account-mail">{account.email ?? t('unknownAccount')}</span>
-                <span className="dsh-agy-badges">
-                  {account.dead ? <span className="dsh-agy-badge is-error">{t('accountNeedsRelogin')}</span> : null}
-                  {account.limited ? <span className="dsh-agy-badge">{t('accountLimited')}</span> : null}
-                  {!account.ready && !account.dead ? <span className="dsh-agy-badge">{t('accountNeedsEligibility')}</span> : null}
-                </span>
-              </label>
-              {account.projectId !== undefined ? (
-                <span className="dsh-agy-body">{t('project')} {account.projectId}</span>
-              ) : null}
-              <button
-                type="button"
-                className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-remove"
-                disabled={busy || signing}
-                onClick={() => {
-                  void (account.id === activeId ? signOutActive() : removeAccount(account.id))
-                }}
-              >{t('removeAccount')}</button>
-              {quotas[account.id]?.ok && quotas[account.id]?.groups ? (
-                <div className="dsh-agy-quota-box">
-                  <div className="dsh-agy-quota-grid">
-                    {quotas[account.id].groups!
-                      .flatMap(g => g.buckets)
-                      .filter(b => b.window === '5h' || b.window === 'weekly')
-                      .map(b => {
-                        const pct = Math.round(b.remainingFraction * 100)
-                        const fillClass = pct >= 50 ? 'is-high' : pct >= 20 ? 'is-med' : 'is-low'
-                        const label = b.window === '5h' ? t('quota5h') : t('quotaWeekly')
-                        const reset = formatReset(b.resetTime)
-                        return (
-                          <div key={b.bucketId} className="dsh-agy-quota-item" title={b.description || `${label}: ${pct}%`}>
-                            <span>{label}</span>
-                            <div className="dsh-agy-quota-bar">
-                              <div className={`dsh-agy-quota-fill ${fillClass}`} style={{ width: `${pct}%` }} />
-                            </div>
-                            <span style={{ fontWeight: 600 }}>{pct}%</span>
-                            {reset ? <span style={{ opacity: 0.65 }}>({reset})</span> : null}
-                          </div>
-                        )
-                      })}
-                  </div>
-                </div>
+
+        {accounts.length > 0 ? (
+          <>
+            <div className="dsh-agy-summary-bar">
+              <span className="dsh-agy-summary-badge">
+                {t('totalLabel')} <strong>{accounts.length}</strong>
+              </span>
+              <span>·</span>
+              <span className="dsh-agy-summary-badge is-available">
+                <strong>{availableCount}</strong> {t('availableLabel')}
+              </span>
+              {exhaustedCount > 0 ? (
+                <>
+                  <span>·</span>
+                  <span className="dsh-agy-summary-badge is-exhausted">
+                    <strong>{exhaustedCount}</strong> {t('exhaustedLabel')}
+                  </span>
+                </>
               ) : null}
             </div>
-          )
-        })}
+
+            <div className="dsh-agy-toolbar">
+              <div className="dsh-agy-search-box">
+                <input
+                  type="text"
+                  className="dsh-agy-search-input"
+                  placeholder={t('searchAccountsPlaceholder')}
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                />
+                {searchQuery ? (
+                  <button
+                    type="button"
+                    className="dsh-agy-search-clear"
+                    aria-label="Clear search"
+                    onClick={() => setSearchQuery('')}
+                  >
+                    ×
+                  </button>
+                ) : null}
+              </div>
+              <div className="dsh-agy-controls">
+                <div className="dsh-agy-filters">
+                  <label className="dsh-agy-check-label">
+                    <input
+                      type="checkbox"
+                      checked={hideExhausted}
+                      onChange={(e) => setHideExhausted(e.target.checked)}
+                    />
+                    <span>{t('hideExhausted')}</span>
+                  </label>
+                  <label className="dsh-agy-check-label">
+                    <input
+                      type="checkbox"
+                      checked={compactView}
+                      onChange={(e) => setCompactView(e.target.checked)}
+                    />
+                    <span>{t('compactView')}</span>
+                  </label>
+                </div>
+                <div className="dsh-agy-sort">
+                  <span>{t('sortBy')}:</span>
+                  <select
+                    className="dsh-agy-select"
+                    value={sortBy}
+                    onChange={(e) => setSortBy(e.target.value as 'default' | 'quota')}
+                  >
+                    <option value="default">{t('sortDefault')}</option>
+                    <option value="quota">{t('sortQuota')}</option>
+                  </select>
+                </div>
+              </div>
+            </div>
+
+            <div className="dsh-agy-account-list">
+              {visibleAccounts.length === 0 ? (
+                <div className="dsh-agy-empty-tip">{t('noMatchingAccounts')}</div>
+              ) : (
+                visibleAccounts.map((account) => {
+                  const isActive = account.id === activeId
+                  const metrics = getAccountQuotaMetrics(quotas[account.id])
+                  const score = metrics?.score ?? 0
+                  const capsuleClass = score >= 50 ? 'is-high' : score >= 20 ? 'is-med' : 'is-low'
+
+                  return (
+                    <div className={`dsh-agy-account${isActive ? ' is-active' : ''}`} key={account.id}>
+                      <label className="dsh-agy-account-main">
+                        <input
+                          type="radio"
+                          name="dsh-agy-active-account"
+                          aria-label={t('switchAccount')}
+                          checked={isActive}
+                          disabled={busy || signing}
+                          onChange={() => { void switchAccount(account.id) }}
+                        />
+                        <span className="dsh-agy-account-mail">{account.email ?? t('unknownAccount')}</span>
+                        <span className="dsh-agy-badges">
+                          {isActive ? <span className="dsh-agy-badge is-active">{t('activeBadge')}</span> : null}
+                          {account.dead ? <span className="dsh-agy-badge is-error">{t('accountNeedsRelogin')}</span> : null}
+                          {account.limited ? <span className="dsh-agy-badge">{t('accountLimited')}</span> : null}
+                          {!account.ready && !account.dead ? <span className="dsh-agy-badge">{t('accountNeedsEligibility')}</span> : null}
+                          {compactView && metrics ? (
+                            <span
+                              className={`dsh-agy-quota-capsule ${capsuleClass}`}
+                              title={`${metrics.b5h ? `5h: ${metrics.p5h}% ${metrics.reset5h ? `(${metrics.reset5h})` : ''}` : ''}${metrics.bWeekly ? ` | ${t('quotaWeeklyShort')}: ${metrics.pWeekly}% ${metrics.resetWeekly ? `(${metrics.resetWeekly})` : ''}` : ''}`}
+                            >
+                              {metrics.p5h !== undefined ? `5h: ${metrics.p5h}%` : ''}
+                              {metrics.p5h !== undefined && metrics.pWeekly !== undefined ? ' | ' : ''}
+                              {metrics.pWeekly !== undefined ? `${t('quotaWeeklyShort')}: ${metrics.pWeekly}%` : ''}
+                            </span>
+                          ) : null}
+                        </span>
+                      </label>
+                      {account.projectId !== undefined ? (
+                        <span className="dsh-agy-body">{t('project')} {account.projectId}</span>
+                      ) : null}
+                      <button
+                        type="button"
+                        className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-remove"
+                        disabled={busy || signing}
+                        onClick={() => {
+                          void (account.id === activeId ? signOutActive() : removeAccount(account.id))
+                        }}
+                      >{t('removeAccount')}</button>
+                      {!compactView && quotas[account.id]?.ok && quotas[account.id]?.groups ? (
+                        <div className="dsh-agy-quota-box">
+                          <div className="dsh-agy-quota-grid">
+                            {quotas[account.id].groups!
+                              .flatMap(g => g.buckets)
+                              .filter(b => b.window === '5h' || b.window === 'weekly')
+                              .map(b => {
+                                const pct = Math.round(b.remainingFraction * 100)
+                                const fillClass = pct >= 50 ? 'is-high' : pct >= 20 ? 'is-med' : 'is-low'
+                                const label = b.window === '5h' ? t('quota5h') : t('quotaWeekly')
+                                const reset = formatReset(b.resetTime)
+                                return (
+                                  <div key={b.bucketId} className="dsh-agy-quota-item" title={b.description || `${label}: ${pct}%`}>
+                                    <span>{label}</span>
+                                    <div className="dsh-agy-quota-bar">
+                                      <div className={`dsh-agy-quota-fill ${fillClass}`} style={{ width: `${pct}%` }} />
+                                    </div>
+                                    <span style={{ fontWeight: 600 }}>{pct}%</span>
+                                    {reset ? <span style={{ opacity: 0.65 }}>({reset})</span> : null}
+                                  </div>
+                                )
+                              })}
+                          </div>
+                        </div>
+                      ) : null}
+                    </div>
+                  )
+                })
+              )}
+            </div>
+          </>
+        ) : null}
+
         {signing && status?.status === 'signing-in' && status.url !== undefined
           ? (
               <p className="dsh-agy-body">
