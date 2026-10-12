@@ -1,7 +1,7 @@
 {
   "name": "dsh-antigravity-oauth",
   "description": "Isolated Gemini Cloud Code Assist OAuth for DeepSeek Harness. Independent store. Gemini flash only.",
-  "version": "0.2.3",
+  "version": "0.2.4",
   "engines": {
     "node": ">=22.19.0"
   },
@@ -135,5 +135,13 @@
     "tsdown": "^0.22.2",
     "typescript": "^5.9.3",
     "vitest": "^4.1.8"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/aa2246740/dsh-antigravity-oauth.git"
+  },
+  "homepage": "https://github.com/aa2246740/dsh-antigravity-oauth#readme",
+  "bugs": {
+    "url": "https://github.com/aa2246740/dsh-antigravity-oauth/issues"
   }
 }
