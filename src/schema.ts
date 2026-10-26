@@ -42,7 +42,7 @@ export function sanitizeGeminiSchema(raw: unknown): Record<string, unknown> | un
     out.description = source.description
   }
   if (Array.isArray(source.enum)) {
-    const values = source.enum.filter(entry => typeof entry === 'string')
+    const values = source.enum.filter(entry => typeof entry === 'string' && entry.length > 0)
     if (values.length > 0) out.enum = values
   }
   if (Array.isArray(source.required)) {

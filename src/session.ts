@@ -23,7 +23,7 @@ import {
   refreshAccessToken,
 } from './oauth.ts'
 import { isSafeAuthUrl, safeMessage } from './redact.ts'
-import type { AntigravityCredentialStore } from './store.ts'
+import type { AntigravityCredentialStore, StoredAccount } from './store.ts'
 import type {
   AccountQuotaSummary,
   AccountSummary,

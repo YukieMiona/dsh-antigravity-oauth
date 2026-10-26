@@ -175,11 +175,11 @@ function mergeUsageSnapshot(base: CcaUsage | undefined, extra: CcaUsage | undefi
 
 function addRequestUsage(base: TokenUsage | undefined, extra: CcaUsage | undefined): TokenUsage | undefined {
   if (extra === undefined) return base
-  const reasoningTokens = Math.max(base?.reasoningTokens ?? 0, extra.reasoningTokens ?? 0)
+  const reasoningTokens = (base?.reasoningTokens ?? 0) + (extra.reasoningTokens ?? 0)
   const cacheReadTokens = extra.cacheReadTokens ?? base?.cacheReadTokens
   return {
-    inputTokens: Math.max(base?.inputTokens ?? 0, extra.inputTokens),
-    outputTokens: Math.max(base?.outputTokens ?? 0, extra.outputTokens),
+    inputTokens: (base?.inputTokens ?? 0) + extra.inputTokens,
+    outputTokens: (base?.outputTokens ?? 0) + extra.outputTokens,
     ...reasoningTokens > 0 ? { reasoningTokens } : {},
     ...cacheReadTokens === undefined ? {} : { cacheReadTokens },
   }
@@ -338,7 +338,7 @@ export class AntigravityAdapter extends LlmAdapter {
           }
           const who = currentLease.email === undefined ? '' : ` (${currentLease.email})`
           message = `Antigravity quota exhausted for this account${who}.`
-            + ' Switch to another saved account in Settings 鈫?Antigravity.'
+            + ' Switch to another saved account in Settings → Antigravity.'
             + ` [${message}]`
         }
         if (code === 'AUTH') this.session.noteAuthRejected(currentLease.accountId)

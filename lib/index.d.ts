@@ -208,7 +208,7 @@ type AntigravityLease = {
 };
 //#endregion
 //#region src/store.d.ts
-type StoredAccount$1 = AntigravityGrant & {
+type StoredAccount = AntigravityGrant & {
   id: string;
   addedAt?: string;
 };
@@ -218,13 +218,13 @@ declare class AntigravityCredentialStore {
   constructor(filename?: string);
   private readParsed;
   private writeDocument;
-  list(): Promise<StoredAccount$1[]>;
-  active(): Promise<StoredAccount$1 | undefined>;
-  get(id: string): Promise<StoredAccount$1 | undefined>;
-  add(grant: AntigravityGrant): Promise<StoredAccount$1>;
-  update(id: string, patch: Partial<AntigravityGrant>): Promise<StoredAccount$1>;
+  list(): Promise<StoredAccount[]>;
+  active(): Promise<StoredAccount | undefined>;
+  get(id: string): Promise<StoredAccount | undefined>;
+  add(grant: AntigravityGrant): Promise<StoredAccount>;
+  update(id: string, patch: Partial<AntigravityGrant>): Promise<StoredAccount>;
   setActive(id: string): Promise<void>;
-  remove(id: string): Promise<StoredAccount$1>;
+  remove(id: string): Promise<StoredAccount>;
 }
 //#endregion
 //#region src/network.d.ts

@@ -1,5 +1,7 @@
 # dsh-antigravity-oauth
 
+> **Notice**: Only for personal use and contains unsafe changes.
+
 English | [中文](README.zh.md)
 
 ## Install

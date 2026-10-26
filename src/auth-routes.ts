@@ -76,10 +76,10 @@ export function registerAntigravityAuthRoutes(
         kind: 'exact', path: NETWORK_PATH,
         handler: async (req, res) => {
           if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
-          const hostname = new URL(`http://${req.headers.host}`).hostname
-          if (!['127.0.0.1', 'localhost', '[::1]'].includes(hostname)) return json(res, 403, { error: 'forbidden' })
           try {
             if (req.method === 'GET') return json(res, 200, await session.network.snapshot())
+            const hostname = new URL(`http://${req.headers.host}`).hostname
+            if (!['127.0.0.1', 'localhost', '[::1]'].includes(hostname)) return json(res, 403, { error: 'forbidden' })
             if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
             if (req.headers['content-type']?.split(';')[0] !== 'application/json') return json(res, 415, { error: 'application/json required' })
             await session.network.save(await readJson(req))
