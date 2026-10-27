@@ -17,6 +17,7 @@ const WEB2API_TEST_PATH = '/plugins/dsh-antigravity-oauth/web2api/test'
 const STYLE_ID = 'dsh-antigravity-oauth-settings-theme'
 const DOCKER_CMD = 'docker run -d --name gemini-web2api -p 18088:18088 zexadev/gemini-web2api-go:latest'
 const DISMISSED_BANNER_KEY = 'dsh-antigravity-oauth.dismissed-banner'
+const DISMISSED_WEB2API_GUIDE_KEY = 'dsh-antigravity-oauth.dismissed-web2api-guide'
 
 type Network = { mode: 'auto' | 'direct' | 'proxy', url: string, effective: string }
 type ActiveTab = 'accounts' | 'advanced' | 'web2api' | 'network'
@@ -391,6 +392,14 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     return false
   })
 
+  // Web2API quick setup guide dismiss state
+  const [guideDismissed, setGuideDismissed] = useState<boolean>(() => {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem(DISMISSED_WEB2API_GUIDE_KEY) === 'true'
+    }
+    return false
+  })
+
   // Network state
   const [network, setNetwork] = useState<Network>()
   const [networkMessage, setNetworkMessage] = useState('')
@@ -494,6 +503,20 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     void loadWeb2Api()
     void loadAdvanced()
   }, [refresh, refreshQuotas, loadNetwork, loadWeb2Api, loadAdvanced])
+
+  const dismissGuide = () => {
+    setGuideDismissed(true)
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(DISMISSED_WEB2API_GUIDE_KEY, 'true')
+    }
+  }
+
+  const restoreGuide = () => {
+    setGuideDismissed(false)
+    if (typeof localStorage !== 'undefined') {
+      localStorage.removeItem(DISMISSED_WEB2API_GUIDE_KEY)
+    }
+  }
 
   const dismissBanner = () => {
     setBannerDismissed(true)
@@ -857,16 +880,30 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
-                  <select
-                    className="dsh-agy-select"
-                    value={sortBy}
-                    onChange={e => setSortBy(e.target.value as 'default' | 'quota')}
-                  >
-                    <option value="default">{t('sortDefault')}</option>
-                    <option value="quota">{t('sortQuota')}</option>
-                  </select>
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px', cursor: 'pointer', color: '#b0b4ba' }}>
-                    <input type="checkbox" checked={compactView} onChange={e => setCompactView(e.target.checked)} />
+                  {/* Modern Segmented Sort Toggle */}
+                  <div className="dsh-agy-segmented">
+                    <button
+                      type="button"
+                      className={'dsh-agy-segmented-btn ' + (sortBy === 'default' ? 'is-active' : '')}
+                      style={{ padding: '3px 8px', fontSize: '11px' }}
+                      onClick={() => setSortBy('default')}
+                      title={t('sortDefault')}
+                    >
+                      {t('sortDefaultShort')}
+                    </button>
+                    <button
+                      type="button"
+                      className={'dsh-agy-segmented-btn ' + (sortBy === 'quota' ? 'is-active' : '')}
+                      style={{ padding: '3px 8px', fontSize: '11px' }}
+                      onClick={() => setSortBy('quota')}
+                      title={t('sortQuota')}
+                    >
+                      ⚡ {t('sortQuotaShort')}
+                    </button>
+                  </div>
+
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '12px', cursor: 'pointer', color: '#b0b4ba', userSelect: 'none' }}>
+                    <input type="checkbox" checked={compactView} onChange={e => setCompactView(e.target.checked)} style={{ cursor: 'pointer' }} />
                     <span>{t('compactView')}</span>
                   </label>
                 </div>
@@ -1041,21 +1078,21 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                     className={'dsh-agy-segmented-btn ' + (advancedEffort === 'low' ? 'is-active' : '')}
                     onClick={() => setAdvancedEffort('low')}
                   >
-                    {t('effortLow')}
+                    🌱 {t('effortLow')}
                   </button>
                   <button
                     type="button"
                     className={'dsh-agy-segmented-btn ' + (advancedEffort === 'medium' ? 'is-active' : '')}
                     onClick={() => setAdvancedEffort('medium')}
                   >
-                    {t('effortMedium')}
+                    ⚡ {t('effortMedium')}
                   </button>
                   <button
                     type="button"
                     className={'dsh-agy-segmented-btn ' + (advancedEffort === 'high' ? 'is-active' : '')}
                     onClick={() => setAdvancedEffort('high')}
                   >
-                    {t('effortHigh')}
+                    🔥 {t('effortHigh')}
                   </button>
                 </div>
               </div>
@@ -1113,9 +1150,14 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                 className={'dsh-agy-radio-card ' + (advancedStrategy === 'failover_429' ? 'is-active' : '')}
                 onClick={() => setAdvancedStrategy('failover_429')}
               >
-                <input type="radio" checked={advancedStrategy === 'failover_429'} readOnly style={{ cursor: 'pointer' }} />
-                <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#f0f0f0' }}>{t('strategyFailover')}</span>
+                <div className="dsh-agy-custom-radio">
+                  <div className="dsh-agy-custom-radio-dot" />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span style={{ fontSize: '13px', fontWeight: 600, color: '#f0f0f0' }}>{t('strategyFailover')}</span>
+                    <span className="dsh-agy-card-badge">Default</span>
+                  </div>
                   <span style={{ fontSize: '11px', color: '#9a9ea5' }}>Switch to the account with highest quota only when 429 quota exhaustion occurs.</span>
                 </div>
               </div>
@@ -1124,9 +1166,11 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                 className={'dsh-agy-radio-card ' + (advancedStrategy === 'proactive_threshold' ? 'is-active' : '')}
                 onClick={() => setAdvancedStrategy('proactive_threshold')}
               >
-                <input type="radio" checked={advancedStrategy === 'proactive_threshold'} readOnly style={{ cursor: 'pointer' }} />
+                <div className="dsh-agy-custom-radio">
+                  <div className="dsh-agy-custom-radio-dot" />
+                </div>
                 <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#f0f0f0' }}>{t('strategyProactive')}</span>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#f0f0f0' }}>{t('strategyProactive')}</span>
                   <span style={{ fontSize: '11px', color: '#9a9ea5' }}>{t('thresholdLabel', { threshold: advancedThreshold })}</span>
                   {advancedStrategy === 'proactive_threshold' ? (
                     <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px' }} onClick={e => e.stopPropagation()}>
@@ -1137,7 +1181,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                         step="5"
                         value={advancedThreshold}
                         onChange={e => setAdvancedThreshold(Number(e.target.value))}
-                        style={{ flex: '1 1 140px', cursor: 'pointer' }}
+                        style={{ flex: '1 1 140px', cursor: 'pointer', accentColor: '#1677ff' }}
                       />
                       <span style={{ fontSize: '12px', fontWeight: 600, color: '#1677ff', minWidth: '35px' }}>{advancedThreshold}%</span>
                     </div>
@@ -1149,9 +1193,11 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                 className={'dsh-agy-radio-card ' + (advancedStrategy === 'round_robin' ? 'is-active' : '')}
                 onClick={() => setAdvancedStrategy('round_robin')}
               >
-                <input type="radio" checked={advancedStrategy === 'round_robin'} readOnly style={{ cursor: 'pointer' }} />
-                <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#f0f0f0' }}>{t('strategyRoundRobin')}</span>
+                <div className="dsh-agy-custom-radio">
+                  <div className="dsh-agy-custom-radio-dot" />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#f0f0f0' }}>{t('strategyRoundRobin')}</span>
                   <span style={{ fontSize: '11px', color: '#9a9ea5' }}>Rotate through all available accounts per turn to balance rolling usage.</span>
                 </div>
               </div>
@@ -1160,9 +1206,11 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                 className={'dsh-agy-radio-card ' + (advancedStrategy === 'manual' ? 'is-active' : '')}
                 onClick={() => setAdvancedStrategy('manual')}
               >
-                <input type="radio" checked={advancedStrategy === 'manual'} readOnly style={{ cursor: 'pointer' }} />
-                <div style={{ display: 'flex', flexDirection: 'column' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#f0f0f0' }}>{t('strategyManual')}</span>
+                <div className="dsh-agy-custom-radio">
+                  <div className="dsh-agy-custom-radio-dot" />
+                </div>
+                <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
+                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#f0f0f0' }}>{t('strategyManual')}</span>
                   <span style={{ fontSize: '11px', color: '#9a9ea5' }}>Never auto-switch accounts; stay strictly on the currently selected account.</span>
                 </div>
               </div>
