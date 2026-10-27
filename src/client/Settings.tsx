@@ -26,52 +26,62 @@ export interface AntigravitySettingsInjected {
 export type AntigravitySettingsProps = Partial<AntigravitySettingsInjected>
 
 const SETTINGS_CSS = `
-.dsh-agy-page { display:flex; flex-direction:column; gap:16px; width:100%; max-width:760px; color:var(--dsw-alias-label-primary); font-family:inherit; }
+.dsh-agy-page { display:flex; flex-direction:column; gap:16px; width:100%; max-width:780px; color:#e0e0e0; font-family:inherit; }
 .dsh-agy-header { display:flex; flex-direction:column; gap:4px; margin-bottom:2px; }
-.dsh-agy-title { margin:0; font-size:20px; line-height:28px; font-weight:600; color:var(--dsw-alias-label-primary); }
-.dsh-agy-body { margin:0; font-size:13px; line-height:20px; color:var(--dsw-alias-label-secondary); }
-.dsh-agy-error { margin:0; font-size:13px; line-height:20px; color:var(--dsw-alias-state-error-primary); }
+.dsh-agy-title { margin:0; font-size:20px; line-height:28px; font-weight:600; color:#ffffff; }
+.dsh-agy-body { margin:0; font-size:13px; line-height:20px; color:#a0a0a0; }
+.dsh-agy-error { margin:0; font-size:13px; line-height:20px; color:#f25a5a; }
 
-/* Navigation Tabs */
-.dsh-agy-tabs {
-  display:inline-flex; align-items:center; gap:4px; padding:3px;
-  background:var(--dsw-alias-bg-module-platform, rgba(128,128,128,0.1));
-  border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.25));
-  border-radius:10px; width:fit-content; margin-bottom:4px;
+/* Modern Segmented Navigation Tabs (Explicit High-Contrast Dark Colors) */
+.dsh-agy-tabs-container {
+  display:inline-flex; align-items:center; gap:4px; padding:4px;
+  background:#1a1c1e !important;
+  border:1px solid rgba(255,255,255,0.1) !important;
+  border-radius:10px; width:fit-content; margin-bottom:6px;
 }
 .dsh-agy-tab-btn {
-  display:inline-flex; align-items:center; gap:6px; padding:6px 14px;
-  border:none; border-radius:7px; background:transparent;
-  color:var(--dsw-alias-label-secondary); font:inherit; font-size:13px; font-weight:500;
-  cursor:pointer; transition:all 0.15s ease;
+  display:inline-flex; align-items:center; gap:6px; padding:6px 16px;
+  border:none !important; border-radius:8px !important;
+  background:transparent !important;
+  color:#9a9ea5 !important; font:inherit; font-size:13px; font-weight:500;
+  cursor:pointer; transition:all 0.15s ease; user-select:none;
 }
-.dsh-agy-tab-btn:hover { color:var(--dsw-alias-label-primary); background:rgba(128,128,128,0.08); }
+.dsh-agy-tab-btn:hover {
+  color:#ffffff !important;
+  background:rgba(255,255,255,0.06) !important;
+}
 .dsh-agy-tab-btn.is-active {
-  color:#ffffff !important; background:var(--dsw-alias-brand-primary, #1677ff) !important;
-  box-shadow:0 1px 4px rgba(22, 119, 255, 0.35); font-weight:600;
+  color:#ffffff !important;
+  background:#1677ff !important;
+  box-shadow:0 2px 6px rgba(22, 119, 255, 0.4) !important;
+  font-weight:600 !important;
+}
+.dsh-agy-tab-count {
+  font-size:11px; padding:1px 6px; border-radius:10px;
+  background:rgba(255,255,255,0.15); color:#ffffff;
 }
 
 /* Cards */
 .dsh-agy-card {
   display:flex; flex-direction:column; gap:12px; padding:14px 16px;
-  border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.2));
-  border-radius:12px; background:var(--dsw-alias-bg-module-platform, rgba(128,128,128,0.03));
+  border:1px solid rgba(255,255,255,0.08);
+  border-radius:12px; background:#1e2023;
 }
 .dsh-agy-row { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
-.dsh-agy-card-title { margin:0; font-size:14px; font-weight:600; color:var(--dsw-alias-label-primary); display:flex; align-items:center; gap:8px; }
+.dsh-agy-card-title { margin:0; font-size:14px; font-weight:600; color:#ffffff; display:flex; align-items:center; gap:8px; }
 
 /* Status Badges */
 .dsh-agy-status-badge {
   display:inline-flex; align-items:center; gap:5px; padding:2px 8px; border-radius:10px;
-  font-size:11px; font-weight:500; background:rgba(128,128,128,0.12); color:var(--dsw-alias-label-secondary);
+  font-size:11px; font-weight:500; background:rgba(255,255,255,0.08); color:#a0a0a0;
 }
-.dsh-agy-status-badge.is-success { background:rgba(34,160,107,0.18); color:var(--dsw-alias-state-success-primary, #22a06b); font-weight:600; }
-.dsh-agy-status-badge.is-error { background:rgba(217,45,32,0.18); color:var(--dsw-alias-state-error-primary, #d92d20); }
-.dsh-agy-status-badge.is-switching { background:rgba(250,140,22,0.18); color:#fa8c16; font-weight:600; }
-.dsh-agy-dot { width:8px; height:8px; border-radius:50%; flex:0 0 auto; background:var(--dsw-alias-label-dimmed, #9aa0a6); }
-.dsh-agy-dot.is-signed-in, .dsh-agy-dot.is-active { background:var(--dsw-alias-state-success-primary, #22a06b); }
-.dsh-agy-dot.is-error { background:var(--dsw-alias-state-error-primary, #d92d20); }
-.dsh-agy-dot.is-signing-in { background:var(--dsw-alias-brand-primary, #1677ff); }
+.dsh-agy-status-badge.is-success { background:rgba(34,160,107,0.2); color:#41c977; font-weight:600; }
+.dsh-agy-status-badge.is-error { background:rgba(217,45,32,0.2); color:#f25a5a; }
+.dsh-agy-status-badge.is-switching { background:rgba(250,140,22,0.2); color:#fa8c16; font-weight:600; }
+.dsh-agy-dot { width:8px; height:8px; border-radius:50%; flex:0 0 auto; background:#6b7280; }
+.dsh-agy-dot.is-signed-in, .dsh-agy-dot.is-active { background:#41c977; }
+.dsh-agy-dot.is-error { background:#f25a5a; }
+.dsh-agy-dot.is-signing-in { background:#1677ff; }
 
 /* Buttons - Solid contrast colors that never wash out */
 .dsh-agy-btn {
@@ -79,36 +89,36 @@ const SETTINGS_CSS = `
   min-height:30px; padding:4px 14px; border-radius:8px; font:inherit; font-size:13px; line-height:20px;
   cursor:pointer; transition:all 0.15s ease; text-decoration:none;
 }
-.dsh-agy-btn:disabled { opacity:0.5; cursor:not-allowed; }
+.dsh-agy-btn:disabled { opacity:0.45; cursor:not-allowed; }
 .dsh-agy-btn-primary {
   background:#1677ff !important; color:#ffffff !important;
-  border:1px solid #1677ff !important; box-shadow:0 1px 2px rgba(0,0,0,0.15); font-weight:500;
+  border:1px solid #1677ff !important; box-shadow:0 1px 3px rgba(0,0,0,0.2); font-weight:500;
 }
 .dsh-agy-btn-primary:hover:not(:disabled) { background:#0958d9 !important; border-color:#0958d9 !important; }
 .dsh-agy-btn-secondary {
-  border:1px solid rgba(128,128,128,0.3) !important;
+  border:1px solid rgba(255,255,255,0.12) !important;
   background:#2b2d30 !important;
   color:#f0f0f0 !important;
 }
 .dsh-agy-btn-secondary:hover:not(:disabled) {
-  background:#3c3f41 !important;
+  background:#383b40 !important;
   border-color:#1677ff !important;
   color:#ffffff !important;
 }
-.dsh-agy-btn-compact { min-height:24px; padding:2px 10px; font-size:11px; border-radius:6px; }
+.dsh-agy-btn-compact { min-height:24px; padding:1px 8px; font-size:11px; border-radius:6px; }
 
 /* Inputs */
 .dsh-agy-input {
   box-sizing:border-box; width:100%; min-height:32px; padding:6px 10px; border-radius:8px;
-  border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.3));
-  background:var(--dsw-alias-bg-page-primary, #1e1e1e); color:var(--dsw-alias-label-primary, inherit);
+  border:1px solid rgba(255,255,255,0.12);
+  background:#141517; color:#f0f0f0;
   font:inherit; font-size:13px; outline:none; transition:border-color 0.15s ease;
 }
 .dsh-agy-input:focus { border-color:#1677ff; }
 .dsh-agy-select {
   box-sizing:border-box; min-height:28px; padding:2px 8px; border-radius:6px;
-  border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.3));
-  background:var(--dsw-alias-bg-page-primary, #1e1e1e); color:var(--dsw-alias-label-primary, inherit);
+  border:1px solid rgba(255,255,255,0.12);
+  background:#141517; color:#f0f0f0;
   font:inherit; font-size:12px; cursor:pointer; outline:none;
 }
 
@@ -116,11 +126,11 @@ const SETTINGS_CSS = `
 .dsh-agy-chips { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
 .dsh-agy-chip {
   padding:3px 10px; border-radius:12px; font-size:11px; cursor:pointer;
-  border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.25));
-  background:rgba(128,128,128,0.05); color:var(--dsw-alias-label-secondary);
+  border:1px solid rgba(255,255,255,0.1);
+  background:rgba(255,255,255,0.04); color:#9a9ea5;
   transition:all 0.15s ease;
 }
-.dsh-agy-chip:hover { border-color:#1677ff; color:var(--dsw-alias-label-primary); }
+.dsh-agy-chip:hover { border-color:#1677ff; color:#ffffff; }
 .dsh-agy-chip.is-active {
   border-color:#1677ff;
   background:rgba(22, 119, 255, 0.15); color:#1677ff; font-weight:600;
@@ -133,53 +143,81 @@ const SETTINGS_CSS = `
 .dsh-agy-account {
   display:flex; align-items:center; justify-content:space-between; gap:12px;
   padding:8px 12px; border-radius:8px;
-  border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.2));
-  background:var(--dsw-alias-bg-module-platform, transparent); transition:all 0.15s ease;
+  border:1px solid rgba(255,255,255,0.08);
+  background:rgba(255,255,255,0.02); transition:all 0.15s ease;
   white-space:nowrap; overflow:hidden;
 }
 .dsh-agy-account.is-compact {
-  padding:5px 10px; min-height:36px;
+  padding:4px 8px; min-height:30px; gap:8px;
 }
 .dsh-agy-account.is-active {
   border-color:#1677ff;
-  background:rgba(22, 119, 255, 0.06);
+  background:rgba(22, 119, 255, 0.08);
 }
 .dsh-agy-account-main {
   display:flex; align-items:center; gap:8px; flex:1 1 0; min-width:0;
   cursor:pointer; overflow:hidden; text-overflow:ellipsis;
 }
 .dsh-agy-account-mail {
-  font-size:13px; font-weight:500; color:var(--dsw-alias-label-primary);
+  font-size:13px; font-weight:500; color:#f0f0f0;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
+.dsh-agy-account.is-compact .dsh-agy-account-mail { font-size:12px; }
 .dsh-agy-link { color:#1677ff; text-decoration:none; }
 .dsh-agy-link:hover { text-decoration:underline; }
 
 /* Right Columns Container (Always Stays in One Line) */
 .dsh-agy-account-metrics {
-  display:flex; align-items:center; gap:10px; flex:0 0 auto;
+  display:flex; align-items:center; gap:8px; flex:0 0 auto;
 }
 
-/* Compact Clean Quota Capsule */
+/* Clear Tooltip-Enabled Quota Capsule */
 .dsh-agy-capsule-bar {
   box-sizing:border-box; width:130px; display:inline-flex; align-items:center; justify-content:space-between;
   gap:6px; font-size:11px; padding:4px 8px; border-radius:6px;
-  background:rgba(128,128,128,0.1); color:var(--dsw-alias-label-secondary);
-  cursor:help;
+  background:rgba(255,255,255,0.06); color:#b0b4ba;
+  cursor:help; user-select:none;
+}
+.dsh-agy-account.is-compact .dsh-agy-capsule-bar {
+  width:95px; padding:2px 6px; font-size:10px;
 }
 .dsh-agy-capsule-progress {
-  width:44px; height:6px; border-radius:3px; background:rgba(128,128,128,0.25); overflow:hidden; flex:0 0 44px;
+  width:44px; height:6px; border-radius:3px; background:rgba(255,255,255,0.15); overflow:hidden; flex:0 0 44px;
+}
+.dsh-agy-account.is-compact .dsh-agy-capsule-progress {
+  width:32px; height:5px; flex:0 0 32px;
 }
 .dsh-agy-capsule-fill { height:100%; border-radius:3px; transition:width 0.3s ease; }
-.dsh-agy-capsule-fill.is-high { background:var(--dsw-alias-state-success-primary, #22a06b); }
+.dsh-agy-capsule-fill.is-high { background:#41c977; }
 .dsh-agy-capsule-fill.is-med { background:#fa8c16; }
-.dsh-agy-capsule-fill.is-low { background:var(--dsw-alias-state-error-primary, #d92d20); }
+.dsh-agy-capsule-fill.is-low { background:#f25a5a; }
 
-/* Code Snippet Box */
-.dsh-agy-code-box {
-  display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px;
-  border-radius:6px; background:rgba(0,0,0,0.25); border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.2));
-  font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px;
+/* Modern Step-by-Step Quick Setup Guide (Plan C) */
+.dsh-agy-guide-card {
+  display:flex; flex-direction:column; gap:12px; padding:16px 18px;
+  border-radius:12px;
+  background:linear-gradient(145deg, #1e222b 0%, #171920 100%);
+  border:1px solid rgba(22, 119, 255, 0.25);
+  box-shadow:0 4px 12px rgba(0,0,0,0.2);
+}
+.dsh-agy-guide-header {
+  display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;
+}
+.dsh-agy-step {
+  display:flex; gap:12px; align-items:flex-start; margin-top:2px;
+}
+.dsh-agy-step-num {
+  width:22px; height:22px; border-radius:50%; background:#1677ff; color:#fff;
+  display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700;
+  flex:0 0 22px; margin-top:1px;
+}
+.dsh-agy-step-content {
+  display:flex; flex-direction:column; gap:6px; flex:1; min-width:0;
+}
+.dsh-agy-code-terminal {
+  display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 12px;
+  border-radius:8px; background:#0e1013; border:1px solid rgba(255,255,255,0.08);
+  font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; color:#58a6ff;
 }
 `
 
@@ -323,11 +361,13 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     } catch {}
   }, [])
 
+  // Initial load: load accounts, quotas, network, and web2api together
   useEffect(() => {
     void refresh()
+    void refreshQuotas()
     void loadNetwork()
     void loadWeb2Api()
-  }, [refresh, loadNetwork, loadWeb2Api])
+  }, [refresh, refreshQuotas, loadNetwork, loadWeb2Api])
 
   const saveNetwork = async () => {
     if (!network) return
@@ -545,8 +585,8 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
 
       {error ? <p className="dsh-agy-error">{error}</p> : null}
 
-      {/* Tabs */}
-      <nav className="dsh-agy-tabs" role="tablist">
+      {/* Modern High-Contrast Segmented Navigation Tabs */}
+      <nav className="dsh-agy-tabs-container" role="tablist">
         <button
           type="button"
           role="tab"
@@ -556,7 +596,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
         >
           <span>{t('tabAccounts')}</span>
           {accounts.length > 0 ? (
-            <span style={{ fontSize: '11px', opacity: 0.85, background: 'rgba(255,255,255,0.25)', padding: '1px 6px', borderRadius: '10px' }}>
+            <span className="dsh-agy-tab-count">
               {accounts.length}
             </span>
           ) : null}
@@ -696,6 +736,14 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                     const p5h = metrics?.p5h
                     const pWeekly = metrics?.pWeekly
 
+                    // Guaranteed informative hover tooltip
+                    const tooltip5h = p5h !== undefined
+                      ? `5h Window: ${p5h}% remaining${metrics?.reset5h ? ` (${t('quotaResetsIn')} ${metrics.reset5h})` : ''}`
+                      : '5h Window: Quota data not loaded (click Refresh Quotas above)'
+                    const tooltipWeekly = pWeekly !== undefined
+                      ? `Weekly Budget: ${pWeekly}% remaining${metrics?.resetWeekly ? ` (${t('quotaResetsIn')} ${metrics.resetWeekly})` : ''}`
+                      : 'Weekly Budget: Quota data not loaded (click Refresh Quotas above)'
+
                     return (
                       <div
                         key={account.id}
@@ -704,7 +752,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                         {/* Col 1: Account Info */}
                         <div className="dsh-agy-account-main" onClick={() => { if (!isActive && !switchingId) void switchAccount(account.id) }}>
                           <input type="radio" checked={isActive} readOnly style={{ cursor: 'pointer', flexShrink: 0 }} />
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0, overflow: 'hidden' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', minWidth: 0, overflow: 'hidden' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                               <span className="dsh-agy-account-mail">{account.email ?? account.id}</span>
                               {isSwitching ? <span className="dsh-agy-status-badge is-switching">{t('working')}...</span> : null}
@@ -720,11 +768,8 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
 
                         {/* Col 2: Metrics container */}
                         <div className="dsh-agy-account-metrics">
-                          {/* 5h Capsule */}
-                          <div
-                            className="dsh-agy-capsule-bar"
-                            title={'5h: ' + (p5h !== undefined ? p5h + '%' : '--') + (metrics?.reset5h ? ' (' + t('quotaResetsIn') + ' ' + metrics.reset5h + ')' : '')}
-                          >
+                          {/* 5h Capsule with Guaranteed Hover Tooltip */}
+                          <div className="dsh-agy-capsule-bar" title={tooltip5h}>
                             <span>{t('quota5h')} {p5h !== undefined ? p5h + '%' : '--'}</span>
                             <div className="dsh-agy-capsule-progress">
                               <div
@@ -734,11 +779,8 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                             </div>
                           </div>
 
-                          {/* Weekly Capsule */}
-                          <div
-                            className="dsh-agy-capsule-bar"
-                            title={'Weekly: ' + (pWeekly !== undefined ? pWeekly + '%' : '--') + (metrics?.resetWeekly ? ' (' + t('quotaResetsIn') + ' ' + metrics.resetWeekly + ')' : '')}
-                          >
+                          {/* Weekly Capsule with Guaranteed Hover Tooltip */}
+                          <div className="dsh-agy-capsule-bar" title={tooltipWeekly}>
                             <span>{t('quotaWeeklyShort')} {pWeekly !== undefined ? pWeekly + '%' : '--'}</span>
                             <div className="dsh-agy-capsule-progress">
                               <div
@@ -748,19 +790,21 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                             </div>
                           </div>
 
-                          {/* Remove button */}
-                          <div style={{ width: '64px', display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
-                            {!isActive ? (
-                              <button
-                                type="button"
-                                className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
-                                disabled={busy || Boolean(switchingId)}
-                                onClick={() => { void removeAccount(account.id) }}
-                              >
-                                {t('removeAccount')}
-                              </button>
-                            ) : null}
-                          </div>
+                          {/* Remove button (hidden in compact view for maximal density) */}
+                          {!compactView ? (
+                            <div style={{ width: '64px', display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
+                              {!isActive ? (
+                                <button
+                                  type="button"
+                                  className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
+                                  disabled={busy || Boolean(switchingId)}
+                                  onClick={() => { void removeAccount(account.id) }}
+                                >
+                                  {t('removeAccount')}
+                                </button>
+                              ) : null}
+                            </div>
+                          ) : null}
                         </div>
                       </div>
                     )
@@ -806,33 +850,55 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
 
       {/* TAB 2: WEB2API GATEWAY (PLAN C) */}
       {activeTab === 'web2api' ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {/* Quick Setup Card (Plan C) */}
-          <div className="dsh-agy-card" style={{ borderLeft: '3px solid #1677ff' }}>
-            <div className="dsh-agy-row">
-              <p className="dsh-agy-card-title">{t('quickSetupTitle')}</p>
-              <button
-                type="button"
-                className="dsh-agy-btn dsh-agy-btn-primary dsh-agy-btn-compact"
-                disabled={web2apiDetecting}
-                onClick={() => { void detectLocalGateway() }}
-              >
-                {web2apiDetecting ? t('detecting') : t('detectService')}
-              </button>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+          {/* Redesigned Quick Setup Guide Card with Modern Stepper */}
+          <div className="dsh-agy-guide-card">
+            <div className="dsh-agy-guide-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '16px' }}>🚀</span>
+                <p className="dsh-agy-card-title" style={{ fontSize: '15px' }}>{t('quickSetupTitle')}</p>
+              </div>
+              <span className="dsh-agy-status-badge is-success">Docker / Binary Ready</span>
             </div>
-            <p className="dsh-agy-body">{t('quickSetupDesc')}</p>
+            <p className="dsh-agy-body" style={{ color: '#c0c4cc' }}>{t('quickSetupDesc')}</p>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <span style={{ fontSize: '11px', fontWeight: 600, opacity: 0.8 }}>{t('dockerOneLiner')}</span>
-              <div className="dsh-agy-code-box">
-                <code style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{DOCKER_CMD}</code>
-                <button
-                  type="button"
-                  className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
-                  onClick={copyDockerCommand}
-                >
-                  {copiedDocker ? t('copied') : t('copyCommand')}
-                </button>
+            {/* Step 1 */}
+            <div className="dsh-agy-step">
+              <div className="dsh-agy-step-num">1</div>
+              <div className="dsh-agy-step-content">
+                <span style={{ fontSize: '13px', fontWeight: 600, color: '#f0f0f0' }}>{t('step1Title')}</span>
+                <span className="dsh-agy-body" style={{ fontSize: '12px' }}>{t('step1Desc')}</span>
+                <div className="dsh-agy-code-terminal">
+                  <code style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{DOCKER_CMD}</code>
+                  <button
+                    type="button"
+                    className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
+                    style={{ flexShrink: 0 }}
+                    onClick={copyDockerCommand}
+                  >
+                    {copiedDocker ? t('copied') : t('copyCommand')}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            {/* Step 2 */}
+            <div className="dsh-agy-step">
+              <div className="dsh-agy-step-num">2</div>
+              <div className="dsh-agy-step-content">
+                <span style={{ fontSize: '13px', fontWeight: 600, color: '#f0f0f0' }}>{t('step2Title')}</span>
+                <span className="dsh-agy-body" style={{ fontSize: '12px' }}>{t('step2Desc')}</span>
+                <div>
+                  <button
+                    type="button"
+                    className="dsh-agy-btn dsh-agy-btn-primary dsh-agy-btn-compact"
+                    style={{ padding: '4px 14px' }}
+                    disabled={web2apiDetecting}
+                    onClick={() => { void detectLocalGateway() }}
+                  >
+                    {web2apiDetecting ? t('detecting') : t('detectService')}
+                  </button>
+                </div>
               </div>
             </div>
           </div>

@@ -98,6 +98,10 @@ export const en = {
   copied: 'Copied!',
   quickSetupTitle: 'Quick Setup Guide',
   quickSetupDesc: 'Run gemini-web2api-go locally via Docker or binary to bypass Google WAF with genuine Chrome TLS fingerprinting.',
+  step1Title: 'Step 1: Start Container',
+  step1Desc: 'Run the lightweight reverse-proxy locally on port 18088:',
+  step2Title: 'Step 2: Auto-Connect',
+  step2Desc: 'Detect and link the running gateway automatically:',
 } as const
 
 export type AntigravityKey = keyof typeof en
@@ -202,4 +206,8 @@ export const zh: { [Key in AntigravityKey]: string } = {
   copied: '已复制！',
   quickSetupTitle: '快速部署与接入指引 (Plan C)',
   quickSetupDesc: '本地使用 Docker 或独立二进制运行 gemini-web2api-go，自带 Chrome 146 TLS 指纹绕过 Google 盾。',
+  step1Title: '第一步：启动容器',
+  step1Desc: '在本地 18088 端口运行免配逆向网关服务：',
+  step2Title: '第二步：一键连通',
+  step2Desc: '点击自动探测并绑定本地网关：',
 }
