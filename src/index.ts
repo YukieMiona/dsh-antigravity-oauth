@@ -59,7 +59,7 @@ export { CcaClient } from './cca-client.ts'
 export type { AntigravityOAuth, CcaKind, CcaSession } from './types.ts'
 
 export const name = 'llm-antigravity-oauth'
-export const inject = ['llm']
+export const inject = ['llm', 'webServer']
 
 function isDisposedRegistration(error: unknown): boolean {
   return typeof error === 'object'
@@ -100,7 +100,7 @@ export function apply(ctx: Context, config: Config): void {
     }),
   )
   const web2apiAdapter = new Web2ApiAdapter(() => session.web2api.read())
-  const web2apiRegistration = ctx.llm.registerAdapter([], web2apiAdapter)
+  const web2apiRegistration = ctx.llm.registerAdapter([WEB2API_ROUTE], web2apiAdapter)
   const refreshRoutes = (): Promise<void> => syncAuthenticatedRoute(session, registration, web2apiRegistration)
   void refreshRoutes()
   void ensureAntigravityVersion(envProxyFetch)
