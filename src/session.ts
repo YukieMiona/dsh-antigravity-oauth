@@ -123,6 +123,58 @@ export class AntigravitySession {
     }
   }
 
+  /**
+   * Find the account with the best remaining quota (optionally excluding one account or filtering by min threshold).
+   * Inspired by ~/.dsh/scripts/antigravity_quota.mjs.
+   */
+  async findBestAccount(options?: { excludeId?: string, minScore?: number, family?: 'gemini' | '3p' | 'any' }): Promise<StoredAccount | undefined> {
+    const all = await this.store.list()
+    const ready = all.filter(a => a.projectId !== undefined && a.id !== options?.excludeId)
+    if (ready.length === 0) return undefined
+    const now = Date.now()
+
+    // Filter out dead or rate-limited accounts
+    const available = ready.filter(account => {
+      const runtime = this.runtimes.get(account.id)
+      if (runtime?.dead) return false
+      if (runtime?.limitedUntil !== undefined && runtime.limitedUntil > now) return false
+      return true
+    })
+    if (available.length <= 1) return available[0]
+
+    // Fetch quotas to pick highest score
+    try {
+      const summaries = await this.retrieveAllQuotas()
+      const scores = new Map<string, number>()
+      for (const acc of available) {
+        const q = summaries[acc.id]
+        if (!q?.ok || !q.groups) {
+          scores.set(acc.id, 50) // unknown defaults to 50%
+          continue
+        }
+        let minFraction = 1
+        for (const g of q.groups) {
+          for (const b of g.buckets) {
+            const isGemini = /^gemini[-_]/i.test(b.bucketId || '')
+            if (options?.family === 'gemini' && !isGemini) continue
+            if (typeof b.remainingFraction === 'number') {
+              minFraction = Math.min(minFraction, b.remainingFraction)
+            }
+          }
+        }
+        scores.set(acc.id, minFraction * 100)
+      }
+      available.sort((a, b) => (scores.get(b.id) ?? 0) - (scores.get(a.id) ?? 0))
+      const best = available[0]
+      if (options?.minScore !== undefined && (scores.get(best.id) ?? 0) < options.minScore) {
+        return undefined
+      }
+      return best
+    } catch {
+      return available[0]
+    }
+  }
+
   async findFailoverAccount(excludeAccountId: string, now = Date.now()): Promise<StoredAccount | undefined> {
     const all = await this.store.list()
     return all.find((account) => {

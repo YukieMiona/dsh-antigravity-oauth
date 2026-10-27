@@ -298,6 +298,15 @@ declare class AntigravitySession {
   private runtimeFor;
   acquire(): Promise<AntigravityLease | undefined>;
   acquireForAccount(accountId: string): Promise<AntigravityLease | undefined>;
+  /**
+   * Find the account with the best remaining quota (optionally excluding one account or filtering by min threshold).
+   * Inspired by ~/.dsh/scripts/antigravity_quota.mjs.
+   */
+  findBestAccount(options?: {
+    excludeId?: string;
+    minScore?: number;
+    family?: 'gemini' | '3p' | 'any';
+  }): Promise<StoredAccount | undefined>;
   findFailoverAccount(excludeAccountId: string, now?: number): Promise<StoredAccount | undefined>;
   hasReadyAccount(): Promise<boolean>;
   noteRateLimited(accountId: string): void;

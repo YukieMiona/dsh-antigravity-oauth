@@ -332,8 +332,12 @@ export class AntigravityAdapter extends LlmAdapter {
         if (code === 'RATE_LIMIT') {
           this.session.noteRateLimited(currentLease.accountId)
           // If no chunks have been emitted yet and a ready fallback account exists, fail over automatically
-          if (state.index === 0 && typeof this.session.findFailoverAccount === 'function') {
-            const fallback = await this.session.findFailoverAccount(currentLease.accountId)
+          if (state.index === 0) {
+            const fallback = typeof this.session.findBestAccount === 'function'
+              ? await this.session.findBestAccount({ excludeId: currentLease.accountId, family: 'gemini' })
+              : typeof this.session.findFailoverAccount === 'function'
+                ? await this.session.findFailoverAccount(currentLease.accountId)
+                : undefined
             if (fallback !== undefined && typeof this.session.acquireForAccount === 'function') {
               const nextLease = await this.session.acquireForAccount(fallback.id)
               if (nextLease !== undefined) {
