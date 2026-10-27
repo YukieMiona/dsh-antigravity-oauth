@@ -1233,54 +1233,79 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
       {/* TAB 3: WEB2API GATEWAY (PLAN C) */}
       {activeTab === 'web2api' ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          <div className="dsh-agy-guide-card">
-            <div className="dsh-agy-guide-header">
+          {!guideDismissed ? (
+            <div className="dsh-agy-guide-card">
+              <div className="dsh-agy-guide-header">
+                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                  <span style={{ fontSize: '16px' }}>🚀</span>
+                  <span style={{ fontSize: '14px', fontWeight: 600, color: '#fff' }}>{t('quickSetupTitle')}</span>
+                  <span className="dsh-agy-status-badge is-success">Docker / Binary Ready</span>
+                </div>
+                <button
+                  type="button"
+                  className="dsh-agy-notice-close"
+                  title={t('hideGuide')}
+                  onClick={dismissGuide}
+                >
+                  ×
+                </button>
+              </div>
+              <p className="dsh-agy-body" style={{ color: '#b0b4ba' }}>{t('quickSetupDesc')}</p>
+
+              <div className="dsh-agy-step">
+                <div className="dsh-agy-step-num">1</div>
+                <div className="dsh-agy-step-content">
+                  <span style={{ fontSize: '12px', fontWeight: 600, color: '#f0f0f0' }}>{t('step1Title')}</span>
+                  <span className="dsh-agy-body" style={{ fontSize: '11px' }}>{t('step1Desc')}</span>
+                  <div className="dsh-agy-code-terminal">
+                    <code style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{DOCKER_CMD}</code>
+                    <button
+                      type="button"
+                      className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
+                      style={{ flexShrink: 0 }}
+                      onClick={copyDockerCommand}
+                    >
+                      {copiedDocker ? t('copied') : t('copyCommand')}
+                    </button>
+                  </div>
+                </div>
+              </div>
+
+              <div className="dsh-agy-step">
+                <div className="dsh-agy-step-num">2</div>
+                <div className="dsh-agy-step-content">
+                  <span style={{ fontSize: '12px', fontWeight: 600, color: '#f0f0f0' }}>{t('step2Title')}</span>
+                  <span className="dsh-agy-body" style={{ fontSize: '11px' }}>{t('step2Desc')}</span>
+                  <div>
+                    <button
+                      type="button"
+                      className="dsh-agy-btn dsh-agy-btn-primary dsh-agy-btn-compact"
+                      style={{ padding: '3px 12px' }}
+                      disabled={web2apiDetecting}
+                      onClick={() => { void detectLocalGateway() }}
+                    >
+                      {web2apiDetecting ? t('detecting') : t('detectService')}
+                    </button>
+                  </div>
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="dsh-agy-row" style={{ padding: '8px 12px', borderRadius: '8px', border: '1px dashed rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.02)' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '16px' }}>🚀</span>
-                <span style={{ fontSize: '14px', fontWeight: 600, color: '#fff' }}>{t('quickSetupTitle')}</span>
+                <span style={{ fontSize: '14px' }}>🚀</span>
+                <span className="dsh-agy-body" style={{ fontSize: '12px', color: '#c0c4cc' }}>{t('quickSetupTitle')}</span>
               </div>
-              <span className="dsh-agy-status-badge is-success">Docker / Binary Ready</span>
+              <button
+                type="button"
+                className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
+                style={{ padding: '2px 10px', fontSize: '11px' }}
+                onClick={restoreGuide}
+              >
+                {t('showGuide')}
+              </button>
             </div>
-            <p className="dsh-agy-body" style={{ color: '#b0b4ba' }}>{t('quickSetupDesc')}</p>
-
-            <div className="dsh-agy-step">
-              <div className="dsh-agy-step-num">1</div>
-              <div className="dsh-agy-step-content">
-                <span style={{ fontSize: '12px', fontWeight: 600, color: '#f0f0f0' }}>{t('step1Title')}</span>
-                <span className="dsh-agy-body" style={{ fontSize: '11px' }}>{t('step1Desc')}</span>
-                <div className="dsh-agy-code-terminal">
-                  <code style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{DOCKER_CMD}</code>
-                  <button
-                    type="button"
-                    className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
-                    style={{ flexShrink: 0 }}
-                    onClick={copyDockerCommand}
-                  >
-                    {copiedDocker ? t('copied') : t('copyCommand')}
-                  </button>
-                </div>
-              </div>
-            </div>
-
-            <div className="dsh-agy-step">
-              <div className="dsh-agy-step-num">2</div>
-              <div className="dsh-agy-step-content">
-                <span style={{ fontSize: '12px', fontWeight: 600, color: '#f0f0f0' }}>{t('step2Title')}</span>
-                <span className="dsh-agy-body" style={{ fontSize: '11px' }}>{t('step2Desc')}</span>
-                <div>
-                  <button
-                    type="button"
-                    className="dsh-agy-btn dsh-agy-btn-primary dsh-agy-btn-compact"
-                    style={{ padding: '3px 12px' }}
-                    disabled={web2apiDetecting}
-                    onClick={() => { void detectLocalGateway() }}
-                  >
-                    {web2apiDetecting ? t('detecting') : t('detectService')}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
+          )}
 
           <div className="dsh-agy-card">
             <div className="dsh-agy-row">
