@@ -857,7 +857,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
           {accounts.length > 0 ? (
             <div className="dsh-agy-card">
               {/* Single-Line Minimal Toolbar */}
-              <div className="dsh-agy-row" style={{ gap: '10px', alignItems: 'center' }}>
+              <div className="dsh-agy-row dsh-agy-toolbar-row" style={{ gap: '10px', alignItems: 'center' }}>
                 <div style={{ position: 'relative', flex: '1 1 200px' }}>
                   <input
                     type="text"
@@ -879,7 +879,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                   ) : null}
                 </div>
 
-                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
+                <div className="dsh-agy-toolbar-controls" style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
                   {/* Modern Segmented Sort Toggle */}
                   <div className="dsh-agy-segmented">
                     <button
@@ -944,19 +944,19 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                       >
                         {/* Account Main Info */}
                         <div className="dsh-agy-account-main">
-                          <input type="radio" checked={isActive} readOnly style={{ cursor: 'pointer', flexShrink: 0 }} />
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', minWidth: 0, overflow: 'hidden' }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                              <span className="dsh-agy-account-mail">{account.email ?? account.id}</span>
-                              {isSwitching ? <span className="dsh-agy-status-badge is-switching">{t('working')}...</span> : null}
-                              {account.limited ? <span className="dsh-agy-status-badge is-error">{t('accountLimited')}</span> : null}
-                              {account.dead ? <span className="dsh-agy-status-badge is-error">{t('accountNeedsRelogin')}</span> : null}
+                            <input type="radio" checked={isActive} readOnly style={{ cursor: 'pointer', flexShrink: 0 }} />
+                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', minWidth: 0, overflow: 'hidden' }}>
+                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                                <span className="dsh-agy-account-mail">{account.email ?? account.id}</span>
+                                {isSwitching ? <span className="dsh-agy-status-badge is-switching">{t('working')}...</span> : null}
+                                {account.limited ? <span className="dsh-agy-status-badge is-error">{t('accountLimited')}</span> : null}
+                                {account.dead ? <span className="dsh-agy-status-badge is-error">{t('accountNeedsRelogin')}</span> : null}
+                              </div>
+                              {!compactView && account.projectId ? (
+                                <span style={{ fontSize: '11px', opacity: 0.6, overflow: 'hidden', textOverflow: 'ellipsis' }}>{account.projectId}</span>
+                              ) : null}
                             </div>
-                            {!compactView && account.projectId ? (
-                              <span style={{ fontSize: '11px', opacity: 0.6, overflow: 'hidden', textOverflow: 'ellipsis' }}>{account.projectId}</span>
-                            ) : null}
                           </div>
-                        </div>
 
                         {/* Quota Indicators */}
                         <div className="dsh-agy-account-metrics" onClick={e => e.stopPropagation()} title={titleOverall}>
