@@ -208,6 +208,12 @@ type AntigravityLease = {
 };
 //#endregion
 //#region src/store.d.ts
+interface AdvancedSettings {
+  defaultReasoningEffort: 'low' | 'medium' | 'high';
+  modelContextWindow: number;
+  switchingStrategy: 'failover_429' | 'proactive_threshold' | 'round_robin' | 'manual';
+  proactiveThreshold: number;
+}
 type StoredAccount = AntigravityGrant & {
   id: string;
   addedAt?: string;
@@ -225,6 +231,8 @@ declare class AntigravityCredentialStore {
   update(id: string, patch: Partial<AntigravityGrant>): Promise<StoredAccount>;
   setActive(id: string): Promise<void>;
   remove(id: string): Promise<StoredAccount>;
+  getAdvanced(): Promise<AdvancedSettings>;
+  setAdvanced(settings: Partial<AdvancedSettings>): Promise<AdvancedSettings>;
 }
 //#endregion
 //#region src/network.d.ts
@@ -353,6 +361,9 @@ declare class AntigravitySession {
   private runLogin;
   private listenForCallback;
   private stopCallbackServer;
+  private cachedAdvanced?;
+  getAdvancedSettings(): Promise<AdvancedSettings>;
+  saveAdvancedSettings(settings: Partial<AdvancedSettings>): Promise<AdvancedSettings>;
   retrieveAllQuotas(): Promise<Record<string, AccountQuotaSummary>>;
 }
 //#endregion
