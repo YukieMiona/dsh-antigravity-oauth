@@ -15,6 +15,7 @@ const WEB2API_TEST_PATH = '/plugins/dsh-antigravity-oauth/web2api/test'
 
 const STYLE_ID = 'dsh-antigravity-oauth-settings-theme'
 const DOCKER_CMD = 'docker run -d --name gemini-web2api -p 18088:18088 zexadev/gemini-web2api-go:latest'
+const DISMISSED_BANNER_KEY = 'dsh-antigravity-oauth.dismissed-banner'
 
 type Network = { mode: 'auto' | 'direct' | 'proxy', url: string, effective: string }
 type ActiveTab = 'accounts' | 'web2api' | 'network'
@@ -26,7 +27,7 @@ export interface AntigravitySettingsInjected {
 export type AntigravitySettingsProps = Partial<AntigravitySettingsInjected>
 
 const SETTINGS_CSS = `
-.dsh-agy-page { display:flex; flex-direction:column; gap:16px; max-width:680px; color:var(--dsw-alias-label-primary, #e0e0e0); font-family:inherit; }
+.dsh-agy-page { display:flex; flex-direction:column; gap:16px; width:100%; max-width:680px; color:var(--dsw-alias-label-primary, #e0e0e0); font-family:inherit; }
 
 /* Header with Active Account status placed right beside the title */
 .dsh-agy-header { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; }
@@ -40,7 +41,20 @@ const SETTINGS_CSS = `
 .dsh-agy-body { margin:0; font-size:13px; line-height:20px; color:var(--dsw-alias-label-secondary, #9aa0a6); }
 .dsh-agy-error { margin:0; font-size:13px; line-height:20px; color:#f25a5a; }
 
-/* Modern Segmented Navigation Tabs */
+/* One-time dismissible notice banner */
+.dsh-agy-notice-banner {
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  padding:8px 12px; border-radius:8px;
+  background:var(--dsw-alias-bg-module-platform, rgba(128,128,128,0.08));
+  border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.2));
+}
+.dsh-agy-notice-close {
+  background:none; border:none; color:var(--dsw-alias-label-secondary, #9aa0a6); cursor:pointer;
+  font-size:16px; line-height:1; padding:2px 6px; border-radius:4px;
+}
+.dsh-agy-notice-close:hover { color:#ffffff; background:rgba(255,255,255,0.08); }
+
+/* Navigation Tabs */
 .dsh-agy-tabs {
   display:inline-flex; align-items:center; gap:4px; padding:3px;
   background:#1a1c1e !important;
@@ -65,6 +79,7 @@ const SETTINGS_CSS = `
   display:flex; flex-direction:column; gap:12px; padding:14px 16px;
   border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.2));
   border-radius:12px; background:var(--dsw-alias-bg-module-platform, rgba(128,128,128,0.04));
+  box-sizing:border-box; width:100%;
 }
 .dsh-agy-row { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
 .dsh-agy-card-title { margin:0; font-size:14px; font-weight:600; color:var(--dsw-alias-label-primary, #ffffff); display:flex; align-items:center; gap:8px; }
@@ -95,8 +110,7 @@ const SETTINGS_CSS = `
 .dsh-agy-btn-primary:hover:not(:disabled) { background:#0958d9 !important; border-color:#0958d9 !important; }
 .dsh-agy-btn-secondary {
   border:1px solid rgba(255,255,255,0.15) !important;
-  background:#2b2d30 !important;
-  color:#f0f0f0 !important;
+  background:#2b2d30 !important; color:#f0f0f0 !important;
 }
 .dsh-agy-btn-secondary:hover:not(:disabled) {
   background:#3c3f41 !important; border-color:#1677ff !important; color:#ffffff !important;
@@ -131,16 +145,20 @@ const SETTINGS_CSS = `
   border-color:#1677ff; background:rgba(22, 119, 255, 0.15); color:#1677ff; font-weight:600;
 }
 
-/* Accounts List & Row */
+/* Accounts List & Row with Persistent Scrollbar to eliminate width stretch */
 .dsh-agy-account-list {
-  max-height:480px; overflow-y:auto; padding-right:2px; display:flex; flex-direction:column; gap:6px;
+  max-height:480px; overflow-y:scroll; padding-right:4px; display:flex; flex-direction:column; gap:6px;
+  box-sizing:border-box; width:100%;
 }
 .dsh-agy-account {
   display:flex; align-items:center; justify-content:space-between; gap:12px;
   padding:8px 12px; border-radius:8px;
   border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.2));
   background:var(--dsw-alias-bg-module-platform, transparent); transition:all 0.15s ease;
-  overflow:hidden;
+  overflow:hidden; box-sizing:border-box;
+}
+.dsh-agy-account.is-compact {
+  padding:4px 10px; min-height:32px;
 }
 .dsh-agy-account.is-active {
   border-color:#1677ff;
@@ -164,7 +182,7 @@ const SETTINGS_CSS = `
 .dsh-agy-capsule-bar {
   box-sizing:border-box; width:130px; display:inline-flex; align-items:center; justify-content:space-between;
   gap:6px; font-size:11px; padding:3px 8px; border-radius:6px;
-  background:rgba(128,128,128,0.1); color:#9aa0a6;
+  background:rgba(128,128,128,0.1); color:#9aa0a6; cursor:help;
 }
 .dsh-agy-capsule-progress {
   width:42px; height:6px; border-radius:3px; background:rgba(128,128,128,0.25); overflow:hidden; flex:0 0 42px;
@@ -182,25 +200,36 @@ const SETTINGS_CSS = `
 }
 `
 
-function formatReset(iso?: string): string {
-  if (!iso) return ''
-  const t = new Date(iso).getTime() - Date.now()
-  if (t <= 0) return ''
-  const m = Math.floor(t / 60000)
-  const h = Math.floor(m / 60)
-  const d = Math.floor(h / 24)
-  if (d > 0) return d + 'd'
-  if (h > 0) return h + 'h' + (m % 60) + 'm'
-  return m + 'm'
+/**
+ * Accurately formats relative countdown string identical to antigravity_quota.mjs formatShortCountdown.
+ */
+function formatShortCountdown(isoString?: string): string {
+  if (!isoString) return '-'
+  const diff = new Date(isoString).getTime() - Date.now()
+  if (diff <= 0) return '0m'
+  const totalMinutes = Math.floor(diff / 60000)
+  const days = Math.floor(totalMinutes / 1440)
+  const hours = Math.floor((totalMinutes % 1440) / 60)
+  const mins = totalMinutes % 60
+  if (days > 0) {
+    return hours > 0 ? `${days}d${hours}h` : `${days}d`
+  }
+  if (hours > 0) {
+    return `${hours}h${mins}m`
+  }
+  return `${mins}m`
 }
 
 function getAccountQuotaMetrics(quota?: AccountQuotaSummary) {
   if (!quota?.ok || !quota.groups) return undefined
   const allBuckets = quota.groups.flatMap(g => g.buckets)
+  
+  // Prioritize Gemini core buckets (gemini-5h, gemini-weekly) to match antigravity_quota.mjs
   const b5h = allBuckets.find(b => b.window === '5h' && /^gemini[-_]/i.test(b.bucketId))
     ?? allBuckets.find(b => b.window === '5h')
   const bWeekly = allBuckets.find(b => b.window === 'weekly' && /^gemini[-_]/i.test(b.bucketId))
     ?? allBuckets.find(b => b.window === 'weekly')
+  
   if (!b5h && !bWeekly) return undefined
 
   const f5h = b5h?.remainingFraction
@@ -217,8 +246,8 @@ function getAccountQuotaMetrics(quota?: AccountQuotaSummary) {
     fWeekly !== undefined ? fWeekly * 100 : 100,
   )
 
-  const reset5h = b5h?.resetTime ? formatReset(b5h.resetTime) : ''
-  const resetWeekly = bWeekly?.resetTime ? formatReset(bWeekly.resetTime) : ''
+  const reset5h = b5h?.resetTime ? formatShortCountdown(b5h.resetTime) : ''
+  const resetWeekly = bWeekly?.resetTime ? formatShortCountdown(bWeekly.resetTime) : ''
 
   return { b5h, bWeekly, p5h, pWeekly, isExhausted, score, reset5h, resetWeekly }
 }
@@ -267,6 +296,14 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
   const [filterMode, setFilterMode] = useState<'all' | 'available' | 'exhausted'>('all')
   const [compactView, setCompactView] = useState(false)
   const [sortBy, setSortBy] = useState<'default' | 'quota'>('default')
+
+  // One-time dismissible banner state
+  const [bannerDismissed, setBannerDismissed] = useState<boolean>(() => {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem(DISMISSED_BANNER_KEY) === 'true'
+    }
+    return false
+  })
 
   // Network state
   const [network, setNetwork] = useState<Network>()
@@ -329,6 +366,13 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     void loadNetwork()
     void loadWeb2Api()
   }, [refresh, refreshQuotas, loadNetwork, loadWeb2Api])
+
+  const dismissBanner = () => {
+    setBannerDismissed(true)
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(DISMISSED_BANNER_KEY, 'true')
+    }
+  }
 
   const saveNetwork = async () => {
     if (!network) return
@@ -588,7 +632,21 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
         </nav>
       </div>
 
-      <p className="dsh-agy-body">{t('tos')}</p>
+      {/* Dismissible Notice Banner */}
+      {!bannerDismissed ? (
+        <div className="dsh-agy-notice-banner">
+          <p className="dsh-agy-body" style={{ margin: 0 }}>{t('tos')}</p>
+          <button
+            type="button"
+            className="dsh-agy-notice-close"
+            title="Dismiss"
+            onClick={dismissBanner}
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
+
       {error ? <p className="dsh-agy-error">{error}</p> : null}
 
       {/* TAB 1: ACCOUNTS & QUOTA */}
@@ -704,6 +762,14 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                     const p5h = metrics?.p5h
                     const pWeekly = metrics?.pWeekly
 
+                    const title5h = p5h !== undefined
+                      ? `5h Window: ${p5h}%${metrics?.reset5h ? ` (${t('quotaResetsIn')} ${metrics.reset5h})` : ''}`
+                      : '5h Window: Quota not loaded'
+
+                    const titleWeekly = pWeekly !== undefined
+                      ? `Weekly Budget: ${pWeekly}%${metrics?.resetWeekly ? ` (${t('quotaResetsIn')} ${metrics.resetWeekly})` : ''}`
+                      : 'Weekly Budget: Quota not loaded'
+
                     return (
                       <div
                         key={account.id}
@@ -727,7 +793,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                         {/* Quota Indicators */}
                         <div className="dsh-agy-account-metrics" onClick={e => e.stopPropagation()}>
                           {p5h !== undefined ? (
-                            <div className="dsh-agy-capsule-bar" title={'5h: ' + p5h + '% ' + (metrics?.reset5h ?? '')}>
+                            <div className="dsh-agy-capsule-bar" title={title5h}>
                               <span>{t('quota5h')} {p5h}%</span>
                               <div className="dsh-agy-capsule-progress">
                                 <div
@@ -739,7 +805,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                           ) : null}
 
                           {pWeekly !== undefined ? (
-                            <div className="dsh-agy-capsule-bar" title={'Weekly: ' + pWeekly + '% ' + (metrics?.resetWeekly ?? '')}>
+                            <div className="dsh-agy-capsule-bar" title={titleWeekly}>
                               <span>{t('quotaWeeklyShort')} {pWeekly}%</span>
                               <div className="dsh-agy-capsule-progress">
                                 <div
