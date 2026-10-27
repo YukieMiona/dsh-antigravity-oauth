@@ -102,6 +102,8 @@ export const en = {
   step1Desc: 'Run the lightweight reverse-proxy locally on port 18088:',
   step2Title: 'Step 2: Auto-Connect',
   step2Desc: 'Detect and link the running gateway automatically:',
+  accountSwitched: 'Switched to {email}',
+  resetsIn: 'resets in {time}',
 } as const
 
 export type AntigravityKey = keyof typeof en
@@ -210,4 +212,6 @@ export const zh: { [Key in AntigravityKey]: string } = {
   step1Desc: '在本地 18088 端口运行免配逆向网关服务：',
   step2Title: '第二步：一键连通',
   step2Desc: '点击自动探测并绑定本地网关：',
+  accountSwitched: '已成功切换至 {email}',
+  resetsIn: '{time} 后重置',
 }

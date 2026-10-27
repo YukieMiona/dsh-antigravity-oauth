@@ -26,22 +26,23 @@ export interface AntigravitySettingsInjected {
 export type AntigravitySettingsProps = Partial<AntigravitySettingsInjected>
 
 const SETTINGS_CSS = `
-.dsh-agy-page { display:flex; flex-direction:column; gap:16px; width:100%; max-width:780px; color:#e0e0e0; font-family:inherit; }
-.dsh-agy-header { display:flex; flex-direction:column; gap:4px; margin-bottom:2px; }
-.dsh-agy-title { margin:0; font-size:20px; line-height:28px; font-weight:600; color:#ffffff; }
-.dsh-agy-body { margin:0; font-size:13px; line-height:20px; color:#a0a0a0; }
-.dsh-agy-error { margin:0; font-size:13px; line-height:20px; color:#f25a5a; }
+.dsh-agy-page { display:flex; flex-direction:column; gap:14px; width:100%; max-width:800px; color:#e0e0e0; font-family:inherit; }
+.dsh-agy-header { display:flex; align-items:baseline; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:2px; }
+.dsh-agy-title { margin:0; font-size:18px; line-height:24px; font-weight:600; color:#ffffff; }
+.dsh-agy-body { margin:0; font-size:12px; line-height:18px; color:#9a9ea5; }
+.dsh-agy-error { margin:0; font-size:12px; line-height:18px; color:#f25a5a; padding:6px 12px; border-radius:6px; background:rgba(242,90,90,0.12); border:1px solid rgba(242,90,90,0.25); }
+.dsh-agy-toast { padding:6px 12px; border-radius:6px; background:rgba(34,160,107,0.15); border:1px solid rgba(34,160,107,0.3); color:#41c977; font-size:12px; font-weight:500; }
 
-/* Modern Segmented Navigation Tabs (Explicit High-Contrast Dark Colors) */
+/* Modern Segmented Navigation Tabs */
 .dsh-agy-tabs-container {
-  display:inline-flex; align-items:center; gap:4px; padding:4px;
+  display:inline-flex; align-items:center; gap:4px; padding:3px;
   background:#1a1c1e !important;
   border:1px solid rgba(255,255,255,0.1) !important;
-  border-radius:10px; width:fit-content; margin-bottom:6px;
+  border-radius:10px; width:fit-content; margin-bottom:2px;
 }
 .dsh-agy-tab-btn {
-  display:inline-flex; align-items:center; gap:6px; padding:6px 16px;
-  border:none !important; border-radius:8px !important;
+  display:inline-flex; align-items:center; gap:6px; padding:6px 14px;
+  border:none !important; border-radius:7px !important;
   background:transparent !important;
   color:#9a9ea5 !important; font:inherit; font-size:13px; font-weight:500;
   cursor:pointer; transition:all 0.15s ease; user-select:none;
@@ -61,14 +62,13 @@ const SETTINGS_CSS = `
   background:rgba(255,255,255,0.15); color:#ffffff;
 }
 
-/* Cards */
-.dsh-agy-card {
-  display:flex; flex-direction:column; gap:12px; padding:14px 16px;
-  border:1px solid rgba(255,255,255,0.08);
-  border-radius:12px; background:#1e2023;
+/* Compact Slim Status Bar (Replaces Huge Auth Card) */
+.dsh-agy-compact-auth {
+  display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;
+  padding:8px 14px; border-radius:8px;
+  background:#1e2023; border:1px solid rgba(255,255,255,0.08);
 }
-.dsh-agy-row { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
-.dsh-agy-card-title { margin:0; font-size:14px; font-weight:600; color:#ffffff; display:flex; align-items:center; gap:8px; }
+.dsh-agy-compact-auth-left { display:flex; align-items:center; gap:8px; font-size:13px; }
 
 /* Status Badges */
 .dsh-agy-status-badge {
@@ -83,10 +83,10 @@ const SETTINGS_CSS = `
 .dsh-agy-dot.is-error { background:#f25a5a; }
 .dsh-agy-dot.is-signing-in { background:#1677ff; }
 
-/* Buttons - Solid contrast colors that never wash out */
+/* Buttons - Solid contrast colors */
 .dsh-agy-btn {
   box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center;
-  min-height:30px; padding:4px 14px; border-radius:8px; font:inherit; font-size:13px; line-height:20px;
+  min-height:28px; padding:3px 12px; border-radius:6px; font:inherit; font-size:12px; line-height:18px;
   cursor:pointer; transition:all 0.15s ease; text-decoration:none;
 }
 .dsh-agy-btn:disabled { opacity:0.45; cursor:not-allowed; }
@@ -105,27 +105,12 @@ const SETTINGS_CSS = `
   border-color:#1677ff !important;
   color:#ffffff !important;
 }
-.dsh-agy-btn-compact { min-height:24px; padding:1px 8px; font-size:11px; border-radius:6px; }
+.dsh-agy-btn-compact { min-height:22px; padding:1px 8px; font-size:11px; border-radius:4px; }
 
-/* Inputs */
-.dsh-agy-input {
-  box-sizing:border-box; width:100%; min-height:32px; padding:6px 10px; border-radius:8px;
-  border:1px solid rgba(255,255,255,0.12);
-  background:#141517; color:#f0f0f0;
-  font:inherit; font-size:13px; outline:none; transition:border-color 0.15s ease;
-}
-.dsh-agy-input:focus { border-color:#1677ff; }
-.dsh-agy-select {
-  box-sizing:border-box; min-height:28px; padding:2px 8px; border-radius:6px;
-  border:1px solid rgba(255,255,255,0.12);
-  background:#141517; color:#f0f0f0;
-  font:inherit; font-size:12px; cursor:pointer; outline:none;
-}
-
-/* Filter Chips */
+/* Filter Chips & Search */
 .dsh-agy-chips { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
 .dsh-agy-chip {
-  padding:3px 10px; border-radius:12px; font-size:11px; cursor:pointer;
+  padding:2px 8px; border-radius:10px; font-size:11px; cursor:pointer;
   border:1px solid rgba(255,255,255,0.1);
   background:rgba(255,255,255,0.04); color:#9a9ea5;
   transition:all 0.15s ease;
@@ -133,66 +118,94 @@ const SETTINGS_CSS = `
 .dsh-agy-chip:hover { border-color:#1677ff; color:#ffffff; }
 .dsh-agy-chip.is-active {
   border-color:#1677ff;
-  background:rgba(22, 119, 255, 0.15); color:#1677ff; font-weight:600;
+  background:rgba(22, 119, 255, 0.18); color:#1677ff; font-weight:600;
+}
+.dsh-agy-input {
+  box-sizing:border-box; width:100%; min-height:30px; padding:4px 8px; border-radius:6px;
+  border:1px solid rgba(255,255,255,0.12);
+  background:#141517; color:#f0f0f0;
+  font:inherit; font-size:12px; outline:none; transition:border-color 0.15s ease;
+}
+.dsh-agy-input:focus { border-color:#1677ff; }
+.dsh-agy-select {
+  box-sizing:border-box; min-height:26px; padding:2px 8px; border-radius:6px;
+  border:1px solid rgba(255,255,255,0.12);
+  background:#141517; color:#f0f0f0;
+  font:inherit; font-size:11px; cursor:pointer; outline:none;
 }
 
-/* Accounts List & Single Row Alignment */
+/* Accounts List */
 .dsh-agy-account-list {
-  max-height:480px; overflow-y:auto; padding-right:2px; display:flex; flex-direction:column; gap:6px;
+  max-height:520px; overflow-y:auto; padding-right:2px; display:flex; flex-direction:column; gap:6px;
 }
 .dsh-agy-account {
   display:flex; align-items:center; justify-content:space-between; gap:12px;
-  padding:8px 12px; border-radius:8px;
+  padding:10px 14px; border-radius:8px;
   border:1px solid rgba(255,255,255,0.08);
   background:rgba(255,255,255,0.02); transition:all 0.15s ease;
-  white-space:nowrap; overflow:hidden;
+  overflow:hidden;
 }
-.dsh-agy-account.is-compact {
-  padding:4px 8px; min-height:30px; gap:8px;
+.dsh-agy-account:hover {
+  background:rgba(255,255,255,0.04);
 }
 .dsh-agy-account.is-active {
   border-color:#1677ff;
   background:rgba(22, 119, 255, 0.08);
 }
+
+/* Compact mode: truly slim and dense */
+.dsh-agy-account.is-compact {
+  padding:4px 10px; min-height:30px; gap:8px;
+}
 .dsh-agy-account-main {
   display:flex; align-items:center; gap:8px; flex:1 1 0; min-width:0;
-  cursor:pointer; overflow:hidden; text-overflow:ellipsis;
+  cursor:pointer; overflow:hidden;
 }
 .dsh-agy-account-mail {
   font-size:13px; font-weight:500; color:#f0f0f0;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
 .dsh-agy-account.is-compact .dsh-agy-account-mail { font-size:12px; }
-.dsh-agy-link { color:#1677ff; text-decoration:none; }
-.dsh-agy-link:hover { text-decoration:underline; }
 
-/* Right Columns Container (Always Stays in One Line) */
+/* Metrics container */
 .dsh-agy-account-metrics {
-  display:flex; align-items:center; gap:8px; flex:0 0 auto;
+  display:flex; align-items:center; gap:10px; flex:0 0 auto;
 }
 
-/* Clear Tooltip-Enabled Quota Capsule */
+/* Default Quota Capsule: Clean Dual-Line with explicit reset timer */
 .dsh-agy-capsule-bar {
-  box-sizing:border-box; width:130px; display:inline-flex; align-items:center; justify-content:space-between;
-  gap:6px; font-size:11px; padding:4px 8px; border-radius:6px;
+  box-sizing:border-box; width:140px; display:flex; flex-direction:column;
+  gap:2px; padding:4px 8px; border-radius:6px;
   background:rgba(255,255,255,0.06); color:#b0b4ba;
-  cursor:help; user-select:none;
+  user-select:none;
 }
-.dsh-agy-account.is-compact .dsh-agy-capsule-bar {
-  width:95px; padding:2px 6px; font-size:10px;
+.dsh-agy-capsule-header {
+  display:flex; align-items:center; justify-content:space-between; width:100%; font-size:11px;
 }
 .dsh-agy-capsule-progress {
   width:44px; height:6px; border-radius:3px; background:rgba(255,255,255,0.15); overflow:hidden; flex:0 0 44px;
-}
-.dsh-agy-account.is-compact .dsh-agy-capsule-progress {
-  width:32px; height:5px; flex:0 0 32px;
 }
 .dsh-agy-capsule-fill { height:100%; border-radius:3px; transition:width 0.3s ease; }
 .dsh-agy-capsule-fill.is-high { background:#41c977; }
 .dsh-agy-capsule-fill.is-med { background:#fa8c16; }
 .dsh-agy-capsule-fill.is-low { background:#f25a5a; }
+.dsh-agy-capsule-reset {
+  font-size:10px; opacity:0.75; line-height:12px; white-space:nowrap;
+}
 
-/* Modern Step-by-Step Quick Setup Guide (Plan C) */
+/* Compact Quota Capsule: Slim Single-Line */
+.dsh-agy-account.is-compact .dsh-agy-capsule-bar {
+  width:95px; flex-direction:row; align-items:center; justify-content:space-between;
+  padding:2px 6px; gap:4px;
+}
+.dsh-agy-account.is-compact .dsh-agy-capsule-progress {
+  width:32px; height:5px; flex:0 0 32px;
+}
+.dsh-agy-account.is-compact .dsh-agy-capsule-reset {
+  display:none;
+}
+
+/* Modern Stepper Card (Plan C) */
 .dsh-agy-guide-card {
   display:flex; flex-direction:column; gap:12px; padding:16px 18px;
   border-radius:12px;
@@ -296,6 +309,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
   // Accounts state
   const [status, setStatus] = useState<AntigravityStatus | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
+  const [toastMessage, setToastMessage] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
   const [switchingId, setSwitchingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
@@ -361,7 +375,6 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     } catch {}
   }, [])
 
-  // Initial load: load accounts, quotas, network, and web2api together
   useEffect(() => {
     void refresh()
     void refreshQuotas()
@@ -505,14 +518,23 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     }
   }
 
-  // Account switch with clean switching state
-  const switchAccount = async (id: string) => {
-    setSwitchingId(id)
+  // Account switch with verified server return + toast feedback
+  const switchAccount = async (targetAccount: AccountSummary) => {
+    setSwitchingId(targetAccount.id)
+    setError(undefined)
+    setToastMessage(null)
     try {
-      await jsonRequest(SWITCH_PATH, 'POST', { id })
-      await refresh()
+      const res = await jsonRequest<{ ok: boolean, account?: AntigravityStatus }>(SWITCH_PATH, 'POST', { id: targetAccount.id })
+      if (res?.account) {
+        setStatus(res.account)
+      } else {
+        await refresh()
+      }
+      setToastMessage(t('accountSwitched', { email: targetAccount.email ?? targetAccount.id }))
+      setTimeout(() => setToastMessage(null), 3000)
     } catch (caught: unknown) {
       setError(caught instanceof Error ? caught.message : t('requestFailed'))
+      await refresh()
     } finally {
       setSwitchingId(null)
     }
@@ -580,87 +602,84 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     <section className="dsh-agy-page" aria-labelledby="antigravity-settings-title">
       <div className="dsh-agy-header">
         <h2 id="antigravity-settings-title" className="dsh-agy-title">{t('title')}</h2>
-        <p className="dsh-agy-body">{t('tos')}</p>
+        {/* Navigation Tabs */}
+        <nav className="dsh-agy-tabs-container" role="tablist">
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'accounts'}
+            className={'dsh-agy-tab-btn ' + (activeTab === 'accounts' ? 'is-active' : '')}
+            onClick={() => setActiveTab('accounts')}
+          >
+            <span>{t('tabAccounts')}</span>
+            {accounts.length > 0 ? (
+              <span className="dsh-agy-tab-count">
+                {accounts.length}
+              </span>
+            ) : null}
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'web2api'}
+            className={'dsh-agy-tab-btn ' + (activeTab === 'web2api' ? 'is-active' : '')}
+            onClick={() => setActiveTab('web2api')}
+          >
+            <span className={'dsh-agy-dot ' + (web2apiEnabled ? 'is-signed-in' : '')} style={{ width: '6px', height: '6px' }} />
+            <span>{t('tabWeb2api')}</span>
+          </button>
+
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'network'}
+            className={'dsh-agy-tab-btn ' + (activeTab === 'network' ? 'is-active' : '')}
+            onClick={() => setActiveTab('network')}
+          >
+            <span>{t('tabNetwork')}</span>
+          </button>
+        </nav>
       </div>
 
       {error ? <p className="dsh-agy-error">{error}</p> : null}
-
-      {/* Modern High-Contrast Segmented Navigation Tabs */}
-      <nav className="dsh-agy-tabs-container" role="tablist">
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === 'accounts'}
-          className={'dsh-agy-tab-btn ' + (activeTab === 'accounts' ? 'is-active' : '')}
-          onClick={() => setActiveTab('accounts')}
-        >
-          <span>{t('tabAccounts')}</span>
-          {accounts.length > 0 ? (
-            <span className="dsh-agy-tab-count">
-              {accounts.length}
-            </span>
-          ) : null}
-        </button>
-
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === 'web2api'}
-          className={'dsh-agy-tab-btn ' + (activeTab === 'web2api' ? 'is-active' : '')}
-          onClick={() => setActiveTab('web2api')}
-        >
-          <span className={'dsh-agy-dot ' + (web2apiEnabled ? 'is-signed-in' : '')} style={{ width: '6px', height: '6px' }} />
-          <span>{t('tabWeb2api')}</span>
-        </button>
-
-        <button
-          type="button"
-          role="tab"
-          aria-selected={activeTab === 'network'}
-          className={'dsh-agy-tab-btn ' + (activeTab === 'network' ? 'is-active' : '')}
-          onClick={() => setActiveTab('network')}
-        >
-          <span>{t('tabNetwork')}</span>
-        </button>
-      </nav>
+      {toastMessage ? <p className="dsh-agy-toast">{toastMessage}</p> : null}
 
       {/* TAB 1: ACCOUNTS & QUOTA */}
       {activeTab === 'accounts' ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          <div className="dsh-agy-card">
-            <div className="dsh-agy-row">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
-                <span className={'dsh-agy-dot ' + (signing ? 'is-signing-in' : activeAccount?.ready ? 'is-signed-in' : 'is-error')} />
-                <div>
-                  <p className="dsh-agy-card-title">{t('authStatus')}</p>
-                  <p className="dsh-agy-body" style={{ fontSize: '12px' }}>
-                    {signing ? t('signingIn') : activeAccount ? activeAccount.email ?? activeAccount.id : t('signedOut')}
-                  </p>
-                </div>
-              </div>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                {signing ? (
-                  <button type="button" className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact" onClick={() => { void recover('cancel') }}>
-                    {t('cancel')}
-                  </button>
-                ) : (
-                  <button type="button" className="dsh-agy-btn dsh-agy-btn-primary dsh-agy-btn-compact" disabled={busy} onClick={() => { void signIn() }}>
-                    {busy ? t('working') : accounts.length === 0 ? t('login') : t('addAccount')}
-                  </button>
-                )}
-                {accounts.length > 0 ? (
-                  <button type="button" className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact" disabled={busy || loadingQuotas} onClick={() => { void refreshQuotas() }}>
-                    {loadingQuotas ? t('working') : t('refreshQuotas')}
-                  </button>
-                ) : null}
-              </div>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {/* Streamlined Status Bar */}
+          <div className="dsh-agy-compact-auth">
+            <div className="dsh-agy-compact-auth-left">
+              <span className={'dsh-agy-dot ' + (signing ? 'is-signing-in' : activeAccount?.ready ? 'is-signed-in' : 'is-error')} />
+              <span>{t('authStatus')}:</span>
+              <strong style={{ color: '#ffffff' }}>
+                {signing ? t('signingIn') : activeAccount ? activeAccount.email ?? activeAccount.id : t('signedOut')}
+              </strong>
             </div>
-            {accounts.length > 0 ? <p className="dsh-agy-body" style={{ fontSize: '12px' }}>{t('quotaHint')}</p> : null}
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+              {signing ? (
+                <button type="button" className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact" onClick={() => { void recover('cancel') }}>
+                  {t('cancel')}
+                </button>
+              ) : (
+                <button type="button" className="dsh-agy-btn dsh-agy-btn-primary dsh-agy-btn-compact" disabled={busy} onClick={() => { void signIn() }}>
+                  {busy ? t('working') : accounts.length === 0 ? t('login') : t('addAccount')}
+                </button>
+              )}
+              {accounts.length > 0 ? (
+                <button type="button" className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact" disabled={busy || loadingQuotas} onClick={() => { void refreshQuotas() }}>
+                  {loadingQuotas ? t('working') : t('refreshQuotas')}
+                </button>
+              ) : null}
+            </div>
           </div>
 
           {accounts.length > 0 ? (
-            <div className="dsh-agy-card">
-              <div className="dsh-agy-row" style={{ gap: '8px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+              {/* Filter & View Toolbar */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
                 <div style={{ position: 'relative', flex: '1 1 180px' }}>
                   <input
                     type="text"
@@ -675,7 +694,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                       type="button"
                       aria-label={t('clearSearch')}
                       onClick={() => setSearchQuery('')}
-                      style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'transparent', cursor: 'pointer', opacity: 0.6 }}
+                      style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'transparent', cursor: 'pointer', opacity: 0.6, color: '#fff' }}
                     >
                       ×
                     </button>
@@ -707,7 +726,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px', cursor: 'pointer' }}>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '11px', cursor: 'pointer' }}>
                     <input type="checkbox" checked={compactView} onChange={e => setCompactView(e.target.checked)} />
                     <span>{t('compactView')}</span>
                   </label>
@@ -722,7 +741,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                 </div>
               </div>
 
-              {/* Strict Clean Flex Row */}
+              {/* Accounts List (Directly in First Screen!) */}
               <div className="dsh-agy-account-list">
                 {filteredAccounts.length === 0 ? (
                   <div style={{ padding: '24px', textAlign: 'center', opacity: 0.6, fontSize: '13px' }}>
@@ -736,21 +755,14 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                     const p5h = metrics?.p5h
                     const pWeekly = metrics?.pWeekly
 
-                    // Guaranteed informative hover tooltip
-                    const tooltip5h = p5h !== undefined
-                      ? `5h Window: ${p5h}% remaining${metrics?.reset5h ? ` (${t('quotaResetsIn')} ${metrics.reset5h})` : ''}`
-                      : '5h Window: Quota data not loaded (click Refresh Quotas above)'
-                    const tooltipWeekly = pWeekly !== undefined
-                      ? `Weekly Budget: ${pWeekly}% remaining${metrics?.resetWeekly ? ` (${t('quotaResetsIn')} ${metrics.resetWeekly})` : ''}`
-                      : 'Weekly Budget: Quota data not loaded (click Refresh Quotas above)'
-
                     return (
                       <div
                         key={account.id}
                         className={'dsh-agy-account ' + (isActive ? 'is-active ' : '') + (compactView ? 'is-compact' : '')}
+                        onClick={() => { if (!isActive && !switchingId) void switchAccount(account) }}
                       >
-                        {/* Col 1: Account Info */}
-                        <div className="dsh-agy-account-main" onClick={() => { if (!isActive && !switchingId) void switchAccount(account.id) }}>
+                        {/* Account Info */}
+                        <div className="dsh-agy-account-main">
                           <input type="radio" checked={isActive} readOnly style={{ cursor: 'pointer', flexShrink: 0 }} />
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', minWidth: 0, overflow: 'hidden' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
@@ -766,33 +778,49 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                           </div>
                         </div>
 
-                        {/* Col 2: Metrics container */}
-                        <div className="dsh-agy-account-metrics">
-                          {/* 5h Capsule with Guaranteed Hover Tooltip */}
-                          <div className="dsh-agy-capsule-bar" title={tooltip5h}>
-                            <span>{t('quota5h')} {p5h !== undefined ? p5h + '%' : '--'}</span>
-                            <div className="dsh-agy-capsule-progress">
-                              <div
-                                className={'dsh-agy-capsule-fill ' + ((p5h ?? 0) > 40 ? 'is-high' : (p5h ?? 0) > 15 ? 'is-med' : 'is-low')}
-                                style={{ width: (p5h ?? 0) + '%' }}
-                              />
+                        {/* Quota Metrics Container */}
+                        <div className="dsh-agy-account-metrics" onClick={e => e.stopPropagation()}>
+                          {/* 5h Capsule */}
+                          <div
+                            className="dsh-agy-capsule-bar"
+                            title={'5h Window: ' + (p5h !== undefined ? p5h + '%' : '--') + (metrics?.reset5h ? ' (' + metrics.reset5h + ')' : '')}
+                          >
+                            <div className="dsh-agy-capsule-header">
+                              <span>{t('quota5h')} {p5h !== undefined ? p5h + '%' : '--'}</span>
+                              <div className="dsh-agy-capsule-progress">
+                                <div
+                                  className={'dsh-agy-capsule-fill ' + ((p5h ?? 0) > 40 ? 'is-high' : (p5h ?? 0) > 15 ? 'is-med' : 'is-low')}
+                                  style={{ width: (p5h ?? 0) + '%' }}
+                                />
+                              </div>
                             </div>
+                            {!compactView && metrics?.reset5h ? (
+                              <span className="dsh-agy-capsule-reset">{t('resetsIn', { time: metrics.reset5h })}</span>
+                            ) : null}
                           </div>
 
-                          {/* Weekly Capsule with Guaranteed Hover Tooltip */}
-                          <div className="dsh-agy-capsule-bar" title={tooltipWeekly}>
-                            <span>{t('quotaWeeklyShort')} {pWeekly !== undefined ? pWeekly + '%' : '--'}</span>
-                            <div className="dsh-agy-capsule-progress">
-                              <div
-                                className={'dsh-agy-capsule-fill ' + ((pWeekly ?? 0) > 40 ? 'is-high' : (pWeekly ?? 0) > 15 ? 'is-med' : 'is-low')}
-                                style={{ width: (pWeekly ?? 0) + '%' }}
-                              />
+                          {/* Weekly Capsule */}
+                          <div
+                            className="dsh-agy-capsule-bar"
+                            title={'Weekly Budget: ' + (pWeekly !== undefined ? pWeekly + '%' : '--') + (metrics?.resetWeekly ? ' (' + metrics.resetWeekly + ')' : '')}
+                          >
+                            <div className="dsh-agy-capsule-header">
+                              <span>{t('quotaWeeklyShort')} {pWeekly !== undefined ? pWeekly + '%' : '--'}</span>
+                              <div className="dsh-agy-capsule-progress">
+                                <div
+                                  className={'dsh-agy-capsule-fill ' + ((pWeekly ?? 0) > 40 ? 'is-high' : (pWeekly ?? 0) > 15 ? 'is-med' : 'is-low')}
+                                  style={{ width: (pWeekly ?? 0) + '%' }}
+                                />
+                              </div>
                             </div>
+                            {!compactView && metrics?.resetWeekly ? (
+                              <span className="dsh-agy-capsule-reset">{t('resetsIn', { time: metrics.resetWeekly })}</span>
+                            ) : null}
                           </div>
 
-                          {/* Remove button (hidden in compact view for maximal density) */}
+                          {/* Remove button (Only in default view) */}
                           {!compactView ? (
-                            <div style={{ width: '64px', display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
+                            <div style={{ width: '60px', display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
                               {!isActive ? (
                                 <button
                                   type="button"
@@ -815,11 +843,11 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
           ) : null}
 
           {signing && status?.url ? (
-            <div className="dsh-agy-card">
+            <div style={{ padding: '12px', borderRadius: '8px', background: '#1e2023', border: '1px solid rgba(255,255,255,0.08)' }}>
               <p className="dsh-agy-body">
-                {t('openUrl')} <a href={status.url} target="_blank" rel="noreferrer" className="dsh-agy-link">{t('reopen')}</a>
+                {t('openUrl')} <a href={status.url} target="_blank" rel="noreferrer" style={{ color: '#1677ff', textDecoration: 'underline' }}>{t('reopen')}</a>
               </p>
-              <form className="dsh-agy-form" onSubmit={e => { e.preventDefault(); void complete() }} style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+              <form onSubmit={e => { e.preventDefault(); void complete() }} style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
                 <input
                   type="text"
                   className="dsh-agy-input"
@@ -851,23 +879,22 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
       {/* TAB 2: WEB2API GATEWAY (PLAN C) */}
       {activeTab === 'web2api' ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          {/* Redesigned Quick Setup Guide Card with Modern Stepper */}
+          {/* Modern Stepper Quick Setup Guide */}
           <div className="dsh-agy-guide-card">
             <div className="dsh-agy-guide-header">
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span style={{ fontSize: '16px' }}>🚀</span>
-                <p className="dsh-agy-card-title" style={{ fontSize: '15px' }}>{t('quickSetupTitle')}</p>
+                <span style={{ fontSize: '14px', fontWeight: 600, color: '#fff' }}>{t('quickSetupTitle')}</span>
               </div>
               <span className="dsh-agy-status-badge is-success">Docker / Binary Ready</span>
             </div>
-            <p className="dsh-agy-body" style={{ color: '#c0c4cc' }}>{t('quickSetupDesc')}</p>
+            <p className="dsh-agy-body" style={{ color: '#b0b4ba' }}>{t('quickSetupDesc')}</p>
 
-            {/* Step 1 */}
             <div className="dsh-agy-step">
               <div className="dsh-agy-step-num">1</div>
               <div className="dsh-agy-step-content">
-                <span style={{ fontSize: '13px', fontWeight: 600, color: '#f0f0f0' }}>{t('step1Title')}</span>
-                <span className="dsh-agy-body" style={{ fontSize: '12px' }}>{t('step1Desc')}</span>
+                <span style={{ fontSize: '12px', fontWeight: 600, color: '#f0f0f0' }}>{t('step1Title')}</span>
+                <span className="dsh-agy-body" style={{ fontSize: '11px' }}>{t('step1Desc')}</span>
                 <div className="dsh-agy-code-terminal">
                   <code style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{DOCKER_CMD}</code>
                   <button
@@ -882,17 +909,16 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
               </div>
             </div>
 
-            {/* Step 2 */}
             <div className="dsh-agy-step">
               <div className="dsh-agy-step-num">2</div>
               <div className="dsh-agy-step-content">
-                <span style={{ fontSize: '13px', fontWeight: 600, color: '#f0f0f0' }}>{t('step2Title')}</span>
-                <span className="dsh-agy-body" style={{ fontSize: '12px' }}>{t('step2Desc')}</span>
+                <span style={{ fontSize: '12px', fontWeight: 600, color: '#f0f0f0' }}>{t('step2Title')}</span>
+                <span className="dsh-agy-body" style={{ fontSize: '11px' }}>{t('step2Desc')}</span>
                 <div>
                   <button
                     type="button"
                     className="dsh-agy-btn dsh-agy-btn-primary dsh-agy-btn-compact"
-                    style={{ padding: '4px 14px' }}
+                    style={{ padding: '3px 12px' }}
                     disabled={web2apiDetecting}
                     onClick={() => { void detectLocalGateway() }}
                   >
@@ -903,17 +929,17 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
             </div>
           </div>
 
-          {/* Gateway Configuration Card */}
-          <div className="dsh-agy-card">
-            <div className="dsh-agy-row">
+          {/* Gateway Settings Form */}
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '14px 16px', borderRadius: '10px', background: '#1e2023', border: '1px solid rgba(255,255,255,0.08)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span className={'dsh-agy-dot ' + (web2apiEnabled ? 'is-signed-in' : '')} />
-                <p className="dsh-agy-card-title">{t('web2apiTitle')}</p>
+                <span style={{ fontSize: '14px', fontWeight: 600, color: '#fff' }}>{t('web2apiTitle')}</span>
                 <span className={'dsh-agy-status-badge ' + (web2apiEnabled ? 'is-success' : '')}>
                   {web2apiEnabled ? t('statusConnected') : t('statusDisabled')}
                 </span>
               </div>
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px' }}>
                 <input
                   type="checkbox"
                   checked={web2apiEnabled}
@@ -927,9 +953,9 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
             <p className="dsh-agy-body">{t('web2apiHelp')}</p>
 
             {web2apiEnabled ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '4px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '2px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: '12px', opacity: 0.7 }}>{t('presetLocal')}:</span>
+                  <span style={{ fontSize: '11px', opacity: 0.7 }}>{t('presetLocal')}:</span>
                   <button
                     type="button"
                     className="dsh-agy-chip"
@@ -947,7 +973,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                 </div>
 
                 <div>
-                  <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px', fontWeight: 500 }}>
+                  <label style={{ fontSize: '11px', display: 'block', marginBottom: '4px', fontWeight: 500, color: '#b0b4ba' }}>
                     {t('web2apiBaseUrl')}
                   </label>
                   <input
@@ -961,7 +987,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                 </div>
 
                 <div>
-                  <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px', fontWeight: 500 }}>
+                  <label style={{ fontSize: '11px', display: 'block', marginBottom: '4px', fontWeight: 500, color: '#b0b4ba' }}>
                     {t('web2apiApiKey')}
                   </label>
                   <input
@@ -974,7 +1000,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                   />
                 </div>
 
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
+                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px' }}>
                   <input
                     type="checkbox"
                     checked={web2apiImageTool}
@@ -1004,7 +1030,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                 </div>
 
                 {web2apiFeedback ? (
-                  <p className={web2apiFeedback.ok ? 'dsh-agy-body' : 'dsh-agy-error'} style={{ marginTop: '2px', fontSize: '12px' }}>
+                  <p className={web2apiFeedback.ok ? 'dsh-agy-toast' : 'dsh-agy-error'} style={{ marginTop: '2px', fontSize: '11px' }}>
                     {web2apiFeedback.msg}
                   </p>
                 ) : null}
@@ -1013,32 +1039,31 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
           </div>
 
           {/* Credit Banner */}
-          <div className="dsh-agy-card" style={{ background: 'transparent', opacity: 0.85 }}>
-            <div className="dsh-agy-row">
-              <p className="dsh-agy-card-title" style={{ fontSize: '13px' }}>{t('creditTitle')}</p>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '6px', padding: '12px 14px', borderRadius: '8px', border: '1px solid rgba(255,255,255,0.06)' }}>
+            <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+              <span style={{ fontSize: '12px', fontWeight: 600, color: '#fff' }}>{t('creditTitle')}</span>
               <a
                 href="https://github.com/zexadev/gemini-web2api-go"
                 target="_blank"
                 rel="noreferrer"
-                className="dsh-agy-link"
-                style={{ fontSize: '12px' }}
+                style={{ fontSize: '11px', color: '#1677ff', textDecoration: 'none' }}
               >
                 {t('visitRepo')} →
               </a>
             </div>
-            <p className="dsh-agy-body" style={{ fontSize: '12px' }}>{t('creditBody')}</p>
+            <p className="dsh-agy-body" style={{ fontSize: '11px' }}>{t('creditBody')}</p>
           </div>
         </div>
       ) : null}
 
       {/* TAB 3: NETWORK & PROXY */}
       {activeTab === 'network' && network ? (
-        <div className="dsh-agy-card">
-          <p className="dsh-agy-card-title">{t('network')}</p>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', padding: '14px 16px', borderRadius: '10px', background: '#1e2023', border: '1px solid rgba(255,255,255,0.08)' }}>
+          <span style={{ fontSize: '14px', fontWeight: 600, color: '#fff' }}>{t('network')}</span>
           <p className="dsh-agy-body">{t('networkHelp')}</p>
 
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '6px' }}>
-            <label style={{ fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '4px' }}>
+            <label style={{ fontSize: '11px', display: 'flex', flexDirection: 'column', gap: '4px', color: '#b0b4ba' }}>
               <span>{t('network')}</span>
               <select
                 className="dsh-agy-select"
@@ -1055,7 +1080,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
 
             {network.mode === 'proxy' ? (
               <div>
-                <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>{t('proxyUrl')}</label>
+                <label style={{ fontSize: '11px', display: 'block', marginBottom: '4px', color: '#b0b4ba' }}>{t('proxyUrl')}</label>
                 <input
                   type="text"
                   className="dsh-agy-input"
@@ -1068,8 +1093,8 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
               </div>
             ) : null}
 
-            <p className="dsh-agy-body" style={{ fontSize: '12px' }}>
-              {t('effectiveNetwork')} <code>{network.effective || 'direct'}</code>
+            <p className="dsh-agy-body" style={{ fontSize: '11px' }}>
+              {t('effectiveNetwork')} <code style={{ color: '#58a6ff' }}>{network.effective || 'direct'}</code>
             </p>
 
             <button
@@ -1083,7 +1108,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
             </button>
 
             {networkMessage ? (
-              <p role="status" className="dsh-agy-body" style={{ fontSize: '12px' }}>
+              <p role="status" className="dsh-agy-toast" style={{ fontSize: '11px' }}>
                 {networkMessage}
               </p>
             ) : null}
