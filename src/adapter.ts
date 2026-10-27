@@ -324,7 +324,7 @@ export class AntigravityAdapter extends LlmAdapter {
               : 'TRANSPORT'
         if (code === 'RATE_LIMIT') {
           this.session.noteRateLimited(currentLease.accountId)
-          // 若尚未向外暴露任何数据块，且 session 支持查找备用账号，尝试故障转移到可用账号
+          // If no chunks have been emitted yet and a ready fallback account exists, fail over automatically
           if (state.index === 0 && typeof this.session.findFailoverAccount === 'function') {
             const fallback = await this.session.findFailoverAccount(currentLease.accountId)
             if (fallback !== undefined && typeof this.session.acquireForAccount === 'function') {
