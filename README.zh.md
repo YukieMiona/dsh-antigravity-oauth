@@ -189,6 +189,21 @@ CCA 请求会通过 undici `ProxyAgent` 走 `HTTPS_PROXY` / `HTTP_PROXY` / `http
 
 ---
 
+## Gemini Web2API 网页网关（可选扩展）
+
+本插件支持可选接入 [gemini-web2api-go](https://github.com/zexadev/gemini-web2api-go) 作为辅助扩展网关：
+
+- **默认关闭**：未开启时，插件完全运行在原生的 Google Cloud Code Assist（CCA）官方 OAuth 模式下，零侵入、零额外开销。
+- **自由开关与切换**：在 **设置 → Antigravity** 面板中提供可视化开关，可一键开启/停用，支持自定义 Base URL、API Key 与 Imagen 3 生图开关。
+- **独立路由隔离**：Web2API 注册的模型使用独立的 `agy-web` 提供方（例如 `agy-web/gemini-2.5-flash`），与主线 `agy-google-antigravity/gemini-3.8-flash` 互不干扰。
+- **生图能力补充**：借助自建网页端反代，为 DSH 提供可选的 Imagen 3 图片生成支持。
+
+### 致谢与项目鸣谢 (Credits)
+
+衷心感谢 **[@zexadev](https://github.com/zexadev)** 开发并开源的 [gemini-web2api-go](https://github.com/zexadev/gemini-web2api-go) 项目。该项目为本扩展特性的反代协议对接与设计提供了重要参考和支持。
+
+---
+
 ## 许可
 
 Apache-2.0。

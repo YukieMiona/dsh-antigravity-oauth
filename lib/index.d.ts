@@ -247,12 +247,38 @@ declare class AntigravityNetwork {
   dispose(): Promise<void>;
 }
 //#endregion
+//#region src/web2api/types.d.ts
+interface Web2ApiSettings {
+  enabled: boolean;
+  baseUrl: string;
+  apiKey?: string;
+  models: string[];
+  enableImageTool: boolean;
+  timeoutMs?: number;
+}
+interface Web2ApiTestResult {
+  ok: boolean;
+  latencyMs: number;
+  models?: string[];
+  error?: string;
+}
+//#endregion
+//#region src/web2api/store.d.ts
+declare class AntigravityWeb2ApiStore {
+  readonly filename: string;
+  constructor(filename: string);
+  read(): Promise<Web2ApiSettings>;
+  save(settings: unknown): Promise<Web2ApiSettings>;
+  testConnection(settings: Partial<Web2ApiSettings>): Promise<Web2ApiTestResult>;
+}
+//#endregion
 //#region src/session.d.ts
 type FetchImpl = typeof fetch;
 declare class AntigravitySession {
   readonly store: AntigravityCredentialStore;
   readonly thoughtSignatures: Map<string, string>;
   readonly network: AntigravityNetwork;
+  readonly web2api: AntigravityWeb2ApiStore;
   private readonly fetchImpl;
   private readonly runtimes;
   private readonly precheckAt;
@@ -325,6 +351,18 @@ declare class AntigravityAdapter extends LlmAdapter {
 }
 declare function createAntigravityAdapter(session: AntigravitySession, options: AntigravityAdapterOptions): AntigravityAdapter;
 //#endregion
+//#region src/web2api/adapter.d.ts
+declare const WEB2API_ROUTE = "agy-web";
+declare class Web2ApiAdapter extends LlmAdapter {
+  private readonly getSettings;
+  private readonly client;
+  constructor(getSettings: () => Promise<Web2ApiSettings>);
+  providerInfo(provider: string): LlmProviderInfo;
+  listModels(provider: string): Promise<readonly LlmModelInfo[]>;
+  resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo>;
+  stream(options: GenerateOptions): AsyncIterable<StreamChunk>;
+}
+//#endregion
 //#region src/auth-routes.d.ts
 interface AuthRouteOptions {
   onAuthChanged?: () => void | Promise<void>;
@@ -393,7 +431,7 @@ declare module '@deepseek-ai/cordis' {
 }
 declare const name = "llm-antigravity-oauth";
 declare const inject: string[];
-declare function syncAuthenticatedRoute(session: AntigravitySession, registration: AdapterRegistrationHandle): Promise<void>;
+declare function syncAuthenticatedRoute(session: AntigravitySession, registration: AdapterRegistrationHandle, web2apiRegistration?: AdapterRegistrationHandle): Promise<void>;
 declare function apply(ctx: Context, config: Config): void;
 //#endregion
-export { AUTH_COMPLETE_PATH, AUTH_FILENAME, AUTH_LOGIN_PATH, AUTH_LOGOUT_PATH, AUTH_STATUS_PATH, AntigravityCredentialStore, type AntigravityOAuth, AntigravitySession, BOOT_MARKER, CcaClient, type CcaKind, type CcaSession, Config, type Config as PluginConfig, HARNESS_ROUTE, LOAD_CODE_ASSIST_BODY, SCOPES, SEARCH_ANSWER_GUIDANCE, SEARCH_CONTINUE_GUIDANCE, SEARCH_FOLLOW_UP_LIMIT, THOUGHT_ONLY_CONTINUE, antigravityAuthPath, appendContinueMemo, appendSearchDossier, appendSearchMemo, appendSearchTurns, apply, authorizationUrl, buildCcaBody, createAntigravityAdapter, createCcaSession, inject, name, registerAntigravityAuthRoutes, streamGenerateContentUrl, syncAuthenticatedRoute, withoutSearchWeb };
+export { AUTH_COMPLETE_PATH, AUTH_FILENAME, AUTH_LOGIN_PATH, AUTH_LOGOUT_PATH, AUTH_STATUS_PATH, AntigravityCredentialStore, type AntigravityOAuth, AntigravitySession, BOOT_MARKER, CcaClient, type CcaKind, type CcaSession, Config, type Config as PluginConfig, HARNESS_ROUTE, LOAD_CODE_ASSIST_BODY, SCOPES, SEARCH_ANSWER_GUIDANCE, SEARCH_CONTINUE_GUIDANCE, SEARCH_FOLLOW_UP_LIMIT, THOUGHT_ONLY_CONTINUE, WEB2API_ROUTE, Web2ApiAdapter, antigravityAuthPath, appendContinueMemo, appendSearchDossier, appendSearchMemo, appendSearchTurns, apply, authorizationUrl, buildCcaBody, createAntigravityAdapter, createCcaSession, inject, name, registerAntigravityAuthRoutes, streamGenerateContentUrl, syncAuthenticatedRoute, withoutSearchWeb };

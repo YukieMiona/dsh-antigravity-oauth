@@ -4,7 +4,8 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import type { AdapterRegistrationHandle } from '@deepseek-ai/dsh-llm'
 import { createAntigravityAdapter } from './adapter.ts'
 import { registerAntigravityAuthRoutes } from './auth-routes.ts'
-import { HARNESS_ROUTE, OAUTH_REFRESH_POLL_MS } from './ids.ts'
+import { HARNESS_ROUTE, OAUTH_REFRESH_POLL_MS, WEB2API_ROUTE } from './ids.ts'
+import { Web2ApiAdapter } from './web2api/adapter.ts'
 import { maskDshWebAssembly } from './native-tools.ts'
 import type { Config } from './plugin-config.ts'
 import { AntigravitySession } from './session.ts'
@@ -32,6 +33,7 @@ declare module '@deepseek-ai/cordis' {
 }
 
 export { createAntigravityAdapter } from './adapter.ts'
+export { Web2ApiAdapter, WEB2API_ROUTE } from './web2api/adapter.ts'
 export {
   registerAntigravityAuthRoutes,
 } from './auth-routes.ts'
@@ -69,9 +71,14 @@ function isDisposedRegistration(error: unknown): boolean {
 export async function syncAuthenticatedRoute(
   session: AntigravitySession,
   registration: AdapterRegistrationHandle,
+  web2apiRegistration?: AdapterRegistrationHandle,
 ): Promise<void> {
   try {
     registration.replace(await session.hasReadyAccount() ? [HARNESS_ROUTE] : [])
+    if (web2apiRegistration) {
+      const webSettings = await session.web2api.read()
+      web2apiRegistration.replace(webSettings.enabled ? [WEB2API_ROUTE] : [])
+    }
   } catch (error) {
     // A short command such as `dsh web --help` disposes the fiber before this
     // async refresh runs. Replacing routes after that is not a load failure.
@@ -92,7 +99,9 @@ export function apply(ctx: Context, config: Config): void {
       resolveAttachments: () => ctx.get('attachments'),
     }),
   )
-  const refreshRoutes = (): Promise<void> => syncAuthenticatedRoute(session, registration)
+  const web2apiAdapter = new Web2ApiAdapter(() => session.web2api.read())
+  const web2apiRegistration = ctx.llm.registerAdapter([], web2apiAdapter)
+  const refreshRoutes = (): Promise<void> => syncAuthenticatedRoute(session, registration, web2apiRegistration)
   void refreshRoutes()
   void ensureAntigravityVersion(envProxyFetch)
   ctx.effect(() => {

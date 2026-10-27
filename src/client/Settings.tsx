@@ -13,6 +13,8 @@ const POLL_INTERVAL_MS = 1_000
 const STYLE_ID = 'dsh-antigravity-oauth-settings-theme'
 
 const NETWORK_PATH = '/plugins/dsh-antigravity-oauth/network'
+const WEB2API_SETTINGS_PATH = '/plugins/dsh-antigravity-oauth/web2api/settings'
+const WEB2API_TEST_PATH = '/plugins/dsh-antigravity-oauth/web2api/test'
 type Network = { mode: 'auto' | 'direct' | 'proxy', url: string, effective: string }
 
 export interface AntigravitySettingsInjected {
@@ -296,6 +298,14 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
   const [compactView, setCompactView] = useState(false)
   const [sortBy, setSortBy] = useState<'default' | 'quota'>('default')
 
+  const [web2apiEnabled, setWeb2apiEnabled] = useState(false)
+  const [web2apiBaseUrl, setWeb2apiBaseUrl] = useState('http://127.0.0.1:8080/v1')
+  const [web2apiApiKey, setWeb2apiApiKey] = useState('')
+  const [web2apiImageTool, setWeb2apiImageTool] = useState(true)
+  const [web2apiSaving, setWeb2apiSaving] = useState(false)
+  const [web2apiTesting, setWeb2apiTesting] = useState(false)
+  const [web2apiFeedback, setWeb2apiFeedback] = useState<{ ok: boolean, msg: string } | null>(null)
+
   useEffect(() => { ensureThemeStyles() }, [])
 
   const refreshQuotas = useCallback(async () => {
@@ -410,6 +420,60 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
       setDraft('')
       await refresh()
     } catch (err) { setError(String(err)) } finally { setBusy(false) }
+  }
+
+  const saveWeb2Api = async (): Promise<void> => {
+    setWeb2apiSaving(true)
+    setWeb2apiFeedback(null)
+    try {
+      const res = await fetch(WEB2API_SETTINGS_PATH, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: web2apiEnabled,
+          baseUrl: web2apiBaseUrl,
+          apiKey: web2apiApiKey,
+          enableImageTool: web2apiImageTool,
+        }),
+      })
+      if (res.ok) {
+        setWeb2apiFeedback({ ok: true, msg: t('web2apiSaved') })
+        void refresh()
+      } else {
+        const err = await res.text()
+        setWeb2apiFeedback({ ok: false, msg: err || 'Failed to save' })
+      }
+    } catch (e: unknown) {
+      setWeb2apiFeedback({ ok: false, msg: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setWeb2apiSaving(false)
+    }
+  }
+
+  const testWeb2Api = async (): Promise<void> => {
+    setWeb2apiTesting(true)
+    setWeb2apiFeedback(null)
+    try {
+      const res = await fetch(WEB2API_TEST_PATH, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          enabled: web2apiEnabled,
+          baseUrl: web2apiBaseUrl,
+          apiKey: web2apiApiKey,
+        }),
+      })
+      const data = await res.json()
+      if (data.ok) {
+        setWeb2apiFeedback({ ok: true, msg: t('web2apiConnected', { latency: data.latencyMs }) })
+      } else {
+        setWeb2apiFeedback({ ok: false, msg: t('web2apiFailed', { error: data.error ?? 'Unknown error' }) })
+      }
+    } catch (e: unknown) {
+      setWeb2apiFeedback({ ok: false, msg: e instanceof Error ? e.message : String(e) })
+    } finally {
+      setWeb2apiTesting(false)
+    }
   }
 
   const saveNetwork = async (): Promise<void> => {
@@ -528,6 +592,91 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
           {serviceMessage !== undefined ? <p className="dsh-agy-error">{serviceMessage}</p> : null}
           {accounts.length > 0 ? <p className="dsh-agy-body">{t('quotaHint')}</p> : null}
         </div>
+      </div>
+
+      <div className="dsh-agy-card">
+        <div className="dsh-agy-row">
+          <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap' }}>
+            <p className="dsh-agy-name">{t('web2apiTitle')}</p>
+            <a
+              href="https://github.com/zexadev/gemini-web2api-go"
+              target="_blank"
+              rel="noreferrer"
+              className="dsh-agy-link"
+              style={{ fontSize: '11px' }}
+            >
+              {t('web2apiCredit')}
+            </a>
+          </div>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
+            <input
+              type="checkbox"
+              checked={web2apiEnabled}
+              disabled={busy || web2apiSaving}
+              onChange={e => setWeb2apiEnabled(e.target.checked)}
+            />
+            <span>{t('web2apiEnable')}</span>
+          </label>
+        </div>
+        <p className="dsh-agy-body">{t('web2apiHelp')}</p>
+
+        {web2apiEnabled ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '4px' }}>
+            <div>
+              <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>{t('web2apiBaseUrl')}</label>
+              <input
+                className="dsh-agy-input"
+                placeholder="http://127.0.0.1:8080/v1"
+                value={web2apiBaseUrl}
+                disabled={busy || web2apiSaving}
+                onChange={e => setWeb2apiBaseUrl(e.target.value)}
+              />
+            </div>
+            <div>
+              <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>{t('web2apiApiKey')}</label>
+              <input
+                type="password"
+                className="dsh-agy-input"
+                placeholder="sk-..."
+                value={web2apiApiKey}
+                disabled={busy || web2apiSaving}
+                onChange={e => setWeb2apiApiKey(e.target.value)}
+              />
+            </div>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
+              <input
+                type="checkbox"
+                checked={web2apiImageTool}
+                disabled={busy || web2apiSaving}
+                onChange={e => setWeb2apiImageTool(e.target.checked)}
+              />
+              <span>{t('web2apiImageTool')}</span>
+            </label>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '8px', flexWrap: 'wrap', marginTop: '4px' }}>
+              <button
+                type="button"
+                className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
+                disabled={busy || web2apiTesting || web2apiSaving}
+                onClick={() => { void testWeb2Api() }}
+              >
+                {web2apiTesting ? t('web2apiTesting') : t('web2apiTest')}
+              </button>
+              <button
+                type="button"
+                className="dsh-agy-btn dsh-agy-btn-primary dsh-agy-btn-compact"
+                disabled={busy || web2apiSaving}
+                onClick={() => { void saveWeb2Api() }}
+              >
+                {web2apiSaving ? t('web2apiSaving') : t('web2apiSave')}
+              </button>
+            </div>
+            {web2apiFeedback ? (
+              <p className={web2apiFeedback.ok ? 'dsh-agy-body' : 'dsh-agy-error'} style={{ marginTop: '2px' }}>
+                {web2apiFeedback.msg}
+              </p>
+            ) : null}
+          </div>
+        ) : null}
       </div>
 
       <article className="dsh-agy-card">

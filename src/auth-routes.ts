@@ -9,6 +9,8 @@ import {
   AUTH_LOGIN_PATH,
   AUTH_LOGOUT_PATH,
   AUTH_STATUS_PATH,
+  WEB2API_SETTINGS_PATH,
+  WEB2API_TEST_PATH,
 } from './ids.ts'
 import { isSafeAuthUrl, safeMessage } from './redact.ts'
 import type { AntigravitySession } from './session.ts'
@@ -85,6 +87,40 @@ export function registerAntigravityAuthRoutes(
             await session.network.save(await readJson(req))
             json(res, 200, await session.network.snapshot())
           } catch (error) { json(res, 400, { error: safeMessage(error) }) }
+        },
+      }),
+      ctx.webServer.register({
+        kind: 'exact', path: WEB2API_SETTINGS_PATH,
+        handler: async (req, res) => {
+          if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
+          try {
+            if (req.method === 'GET') {
+              return json(res, 200, await session.web2api.read())
+            }
+            if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+            if (req.headers['content-type']?.split(';')[0] !== 'application/json') {
+              return json(res, 415, { error: 'application/json required' })
+            }
+            const saved = await session.web2api.save(await readJson(req))
+            await notify()
+            json(res, 200, saved)
+          } catch (error) {
+            json(res, 400, { error: safeMessage(error) })
+          }
+        },
+      }),
+      ctx.webServer.register({
+        kind: 'exact', path: WEB2API_TEST_PATH,
+        handler: async (req, res) => {
+          if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
+          if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+          try {
+            const body = await readJson(req)
+            const result = await session.web2api.testConnection(body as Record<string, unknown>)
+            json(res, 200, result)
+          } catch (error) {
+            json(res, 400, { error: safeMessage(error) })
+          }
         },
       }),
       ...(['cancel', 'retry'] as const).map(action => ctx.webServer.register({

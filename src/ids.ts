@@ -50,3 +50,8 @@ export const OAUTH_EXPIRES_SKEW_MS = 5 * 60 * 1000
 export const RATE_LIMIT_COOLDOWN_MS = 10 * 60 * 1000
 export const RATE_LIMIT_COOLDOWN_MAX_MS = 2 * 60 * 60 * 1000
 export const PRECHECK_INTERVAL_MS = 24 * 60 * 60 * 1000
+
+export const WEB2API_FILENAME = '.dsh-antigravity-oauth.web2api.json'
+export const WEB2API_ROUTE = 'agy-web'
+export const WEB2API_SETTINGS_PATH = '/plugins/dsh-antigravity-oauth/web2api/settings'
+export const WEB2API_TEST_PATH = '/plugins/dsh-antigravity-oauth/web2api/test'

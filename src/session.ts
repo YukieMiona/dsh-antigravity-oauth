@@ -35,6 +35,7 @@ import type {
   QuotaGroup,
 } from './types.ts'
 import { AntigravityNetwork } from './network.ts'
+import { AntigravityWeb2ApiStore } from './web2api/store.ts'
 import { antigravityUserAgent, ensureAntigravityVersion } from './user-agent.ts'
 
 export type FetchImpl = typeof fetch
@@ -63,6 +64,7 @@ export class AntigravitySession {
   readonly store: AntigravityCredentialStore
   readonly thoughtSignatures = new Map<string, string>()
   readonly network: AntigravityNetwork
+  readonly web2api: AntigravityWeb2ApiStore
   private readonly fetchImpl: FetchImpl
   private readonly runtimes = new Map<string, AccountRuntime>()
   private readonly precheckAt = new Map<string, number>()
@@ -82,6 +84,7 @@ export class AntigravitySession {
   constructor(store: AntigravityCredentialStore, fetchImpl?: FetchImpl) {
     this.store = store
     this.network = new AntigravityNetwork(store.filename + '.network.json')
+    this.web2api = new AntigravityWeb2ApiStore(store.filename + '.web2api.json')
     this.fetchImpl = fetchImpl ?? this.network.fetch
   }
 

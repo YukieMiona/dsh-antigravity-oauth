@@ -187,6 +187,21 @@ Optional overlay on the `llm-antigravity-oauth` row:
 
 ---
 
+## Gemini Web2API Gateway (Optional Feature)
+
+This plugin optionally supports integrating with [gemini-web2api-go](https://github.com/zexadev/gemini-web2api-go) as an auxiliary gateway:
+
+- **Disabled by default**: When turned off, the plugin runs in pure official Cloud Code Assist (CCA) OAuth mode with zero extra overhead or behavior changes.
+- **Switchable**: Easily toggle ON/OFF in **Settings → Antigravity**.
+- **Independent Provider Route**: Models registered under Web2API use the `agy-web` prefix (e.g. `agy-web/gemini-2.5-flash`), completely decoupled from the primary `agy-google-antigravity/gemini-3.8-flash` route.
+- **Image Generation**: Supports optional Imagen 3 image generation via the self-hosted Web proxy.
+
+### Credits & Attribution
+
+Special thanks to **[@zexadev](https://github.com/zexadev)** for creating and maintaining [gemini-web2api-go](https://github.com/zexadev/gemini-web2api-go), which powers the reverse-proxy protocol handling and inspiration for this auxiliary feature.
+
+---
+
 ## License
 
 Apache-2.0.

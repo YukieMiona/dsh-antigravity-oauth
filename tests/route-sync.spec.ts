@@ -25,4 +25,28 @@ describe('syncAuthenticatedRoute', () => {
       throw new Error('duplicate')
     }))).rejects.toThrow('duplicate')
   })
-})
+
+  it('mounts or unmounts WEB2API_ROUTE dynamically based on enabled setting', async () => {
+    let replacedRoutes: string[] | undefined
+    const mockWeb2ApiHandle = {
+      replace: (routes: readonly string[]) => {
+        replacedRoutes = [...routes]
+      },
+    } as unknown as AdapterRegistrationHandle
+
+    const mockSession = (web2apiEnabled: boolean) => ({
+      hasReadyAccount: async () => true,
+      web2api: {
+        read: async () => ({ enabled: web2apiEnabled }),
+      },
+    } as unknown as AntigravitySession)
+
+    // 1. When disabled -> empty routes
+    await syncAuthenticatedRoute(mockSession(false), handle(() => {}), mockWeb2ApiHandle)
+    expect(replacedRoutes).toEqual([])
+
+    // 2. When enabled -> WEB2API_ROUTE ('agy-web')
+    await syncAuthenticatedRoute(mockSession(true), handle(() => {}), mockWeb2ApiHandle)
+    expect(replacedRoutes).toEqual(['agy-web'])
+  })
+});
