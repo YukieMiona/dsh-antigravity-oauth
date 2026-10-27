@@ -27,19 +27,31 @@ export interface AntigravitySettingsInjected {
 export type AntigravitySettingsProps = Partial<AntigravitySettingsInjected>
 
 const SETTINGS_CSS = `
-.dsh-agy-page { display:flex; flex-direction:column; gap:16px; width:100%; max-width:680px; color:var(--dsw-alias-label-primary, #e0e0e0); font-family:inherit; }
+.dsh-agy-page { display:flex; flex-direction:column; gap:12px; width:100%; max-width:720px; color:var(--dsw-alias-label-primary, #e0e0e0); font-family:inherit; position:relative; }
 
-/* Header with Active Account status placed right beside the title */
+/* Top Header */
 .dsh-agy-header { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:12px; }
 .dsh-agy-title-row { display:flex; align-items:center; gap:10px; }
-.dsh-agy-title { margin:0; font-size:20px; line-height:28px; font-weight:600; color:var(--dsw-alias-label-primary, #ffffff); }
+.dsh-agy-title { margin:0; font-size:18px; line-height:24px; font-weight:600; color:var(--dsw-alias-label-primary, #ffffff); }
 .dsh-agy-header-active-badge {
-  display:inline-flex; align-items:center; gap:6px; padding:2px 10px; border-radius:12px;
+  display:inline-flex; align-items:center; gap:6px; padding:3px 10px; border-radius:12px;
   font-size:12px; font-weight:500; background:rgba(255,255,255,0.08); border:1px solid rgba(255,255,255,0.12);
-  color:#f0f0f0;
+  color:#f0f0f0; max-width:320px; overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
-.dsh-agy-body { margin:0; font-size:13px; line-height:20px; color:var(--dsw-alias-label-secondary, #9aa0a6); }
-.dsh-agy-error { margin:0; font-size:13px; line-height:20px; color:#f25a5a; }
+.dsh-agy-body { margin:0; font-size:12px; line-height:18px; color:var(--dsw-alias-label-secondary, #9aa0a6); }
+.dsh-agy-error { margin:0; font-size:12px; line-height:18px; color:#f25a5a; padding:6px 12px; border-radius:6px; background:rgba(242,90,90,0.12); border:1px solid rgba(242,90,90,0.25); }
+
+/* Floating Top-Right Toast Notification (Zero Layout Shift) */
+.dsh-agy-toast-float {
+  position:fixed; top:24px; right:24px; z-index:9999;
+  display:flex; align-items:center; gap:8px;
+  padding:10px 16px; border-radius:8px;
+  background:#1a231e; border:1px solid #41c977;
+  color:#41c977; font-size:13px; font-weight:500;
+  box-shadow:0 8px 24px rgba(0,0,0,0.45);
+  animation:dsh-agy-fadein 0.2s ease-out;
+}
+@keyframes dsh-agy-fadein { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
 
 /* One-time dismissible notice banner */
 .dsh-agy-notice-banner {
@@ -76,9 +88,9 @@ const SETTINGS_CSS = `
 
 /* Cards */
 .dsh-agy-card {
-  display:flex; flex-direction:column; gap:12px; padding:14px 16px;
+  display:flex; flex-direction:column; gap:10px; padding:12px 14px;
   border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.2));
-  border-radius:12px; background:var(--dsw-alias-bg-module-platform, rgba(128,128,128,0.04));
+  border-radius:10px; background:var(--dsw-alias-bg-module-platform, rgba(128,128,128,0.04));
   box-sizing:border-box; width:100%;
 }
 .dsh-agy-row { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
@@ -86,11 +98,13 @@ const SETTINGS_CSS = `
 
 /* Status Badges */
 .dsh-agy-status-badge {
-  display:inline-flex; align-items:center; gap:5px; padding:2px 8px; border-radius:10px;
+  display:inline-flex; align-items:center; justify-content:center; gap:4px;
+  padding:2px 8px; border-radius:6px; min-width:54px;
   font-size:11px; font-weight:500; background:rgba(128,128,128,0.1); color:var(--dsw-alias-label-secondary, #9aa0a6);
 }
-.dsh-agy-status-badge.is-success { background:rgba(34,160,107,0.18); color:#41c977; }
-.dsh-agy-status-badge.is-error { background:rgba(217,45,32,0.18); color:#f25a5a; }
+.dsh-agy-status-badge.is-success { background:rgba(34,160,107,0.2); color:#41c977; font-weight:600; }
+.dsh-agy-status-badge.is-error { background:rgba(217,45,32,0.2); color:#f25a5a; }
+.dsh-agy-status-badge.is-switching { background:rgba(250,140,22,0.2); color:#fa8c16; font-weight:600; }
 .dsh-agy-dot { width:8px; height:8px; border-radius:50%; flex:0 0 auto; background:#6b7280; }
 .dsh-agy-dot.is-signed-in, .dsh-agy-dot.is-active { background:#41c977; }
 .dsh-agy-dot.is-error { background:#f25a5a; }
@@ -99,7 +113,7 @@ const SETTINGS_CSS = `
 /* Buttons */
 .dsh-agy-btn {
   box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center;
-  min-height:30px; padding:4px 14px; border-radius:8px; font:inherit; font-size:13px; line-height:20px;
+  min-height:28px; padding:3px 12px; border-radius:6px; font:inherit; font-size:12px; line-height:18px;
   cursor:pointer; transition:all 0.15s ease; text-decoration:none;
 }
 .dsh-agy-btn:disabled { opacity:0.45; cursor:not-allowed; }
@@ -115,93 +129,140 @@ const SETTINGS_CSS = `
 .dsh-agy-btn-secondary:hover:not(:disabled) {
   background:#3c3f41 !important; border-color:#1677ff !important; color:#ffffff !important;
 }
-.dsh-agy-btn-compact { min-height:24px; padding:2px 8px; font-size:11px; border-radius:6px; }
+.dsh-agy-btn-compact { min-height:22px; padding:1px 8px; font-size:11px; border-radius:4px; min-width:54px; }
 
 /* Inputs */
 .dsh-agy-input {
-  box-sizing:border-box; width:100%; min-height:32px; padding:6px 10px; border-radius:8px;
+  box-sizing:border-box; width:100%; min-height:30px; padding:4px 8px; border-radius:6px;
   border:1px solid rgba(255,255,255,0.15);
   background:var(--dsw-alias-bg-page-primary, #1e1e1e); color:#f0f0f0;
-  font:inherit; font-size:13px; outline:none; transition:border-color 0.15s ease;
+  font:inherit; font-size:12px; outline:none; transition:border-color 0.15s ease;
 }
 .dsh-agy-input:focus { border-color:#1677ff; }
 .dsh-agy-select {
-  box-sizing:border-box; min-height:28px; padding:2px 8px; border-radius:6px;
+  box-sizing:border-box; min-height:26px; padding:2px 6px; border-radius:6px;
   border:1px solid rgba(255,255,255,0.15);
   background:var(--dsw-alias-bg-page-primary, #1e1e1e); color:#f0f0f0;
-  font:inherit; font-size:12px; cursor:pointer; outline:none;
+  font:inherit; font-size:11px; cursor:pointer; outline:none;
 }
 
 /* Filter Chips */
 .dsh-agy-chips { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
 .dsh-agy-chip {
-  padding:3px 10px; border-radius:12px; font-size:11px; cursor:pointer;
+  padding:2px 8px; border-radius:10px; font-size:11px; cursor:pointer;
   border:1px solid rgba(255,255,255,0.12);
   background:rgba(255,255,255,0.05); color:#9a9ea5;
   transition:all 0.15s ease;
 }
 .dsh-agy-chip:hover { border-color:#1677ff; color:#ffffff; }
 .dsh-agy-chip.is-active {
-  border-color:#1677ff; background:rgba(22, 119, 255, 0.15); color:#1677ff; font-weight:600;
+  border-color:#1677ff; background:rgba(22, 119, 255, 0.18); color:#1677ff; font-weight:600;
 }
 
-/* Accounts List & Row with Persistent Scrollbar to eliminate width stretch */
+/* Accounts List & Items */
 .dsh-agy-account-list {
-  max-height:480px; overflow-y:scroll; padding-right:4px; display:flex; flex-direction:column; gap:6px;
+  max-height:480px; overflow-y:scroll; padding-right:4px; display:flex; flex-direction:column; gap:5px;
   box-sizing:border-box; width:100%;
 }
+.dsh-agy-account-list.is-compact-mode {
+  gap:3px;
+}
 .dsh-agy-account {
-  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  display:flex; align-items:center; justify-content:space-between; gap:10px;
   padding:8px 12px; border-radius:8px;
   border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.2));
   background:var(--dsw-alias-bg-module-platform, transparent); transition:all 0.15s ease;
-  overflow:hidden; box-sizing:border-box;
+  overflow:hidden; box-sizing:border-box; cursor:pointer;
 }
-.dsh-agy-account.is-compact {
-  padding:4px 10px; min-height:32px;
+.dsh-agy-account:hover {
+  background:rgba(255,255,255,0.04);
 }
 .dsh-agy-account.is-active {
   border-color:#1677ff;
-  background:rgba(22, 119, 255, 0.05);
+  background:rgba(22, 119, 255, 0.06);
+}
+
+/* Compact mode: truly dense and slim */
+.dsh-agy-account.is-compact {
+  padding:3px 8px; min-height:28px; gap:6px; border-radius:4px;
 }
 .dsh-agy-account-main {
-  display:flex; align-items:center; gap:8px; flex:1 1 0; min-width:0; cursor:pointer;
+  display:flex; align-items:center; gap:8px; flex:1 1 0; min-width:0; overflow:hidden;
 }
 .dsh-agy-account-mail {
   font-size:13px; font-weight:500; color:#f0f0f0;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
+.dsh-agy-account.is-compact .dsh-agy-account-mail { font-size:11px; line-height:16px; }
 .dsh-agy-link { color:#1677ff; text-decoration:none; }
 .dsh-agy-link:hover { text-decoration:underline; }
 
 .dsh-agy-account-metrics {
   display:flex; align-items:center; gap:8px; flex:0 0 auto;
 }
+.dsh-agy-account.is-compact .dsh-agy-account-metrics {
+  gap:6px;
+}
 
 /* Quota Capsule Bars */
 .dsh-agy-capsule-bar {
   box-sizing:border-box; width:130px; display:inline-flex; align-items:center; justify-content:space-between;
   gap:6px; font-size:11px; padding:3px 8px; border-radius:6px;
-  background:rgba(128,128,128,0.1); color:#9aa0a6; cursor:help;
+  background:rgba(128,128,128,0.1); color:#9aa0a6; cursor:help; user-select:none;
+}
+.dsh-agy-account.is-compact .dsh-agy-capsule-bar {
+  width:88px; height:20px; padding:1px 5px; font-size:10px; border-radius:4px;
 }
 .dsh-agy-capsule-progress {
-  width:42px; height:6px; border-radius:3px; background:rgba(128,128,128,0.25); overflow:hidden; flex:0 0 42px;
+  width:40px; height:6px; border-radius:3px; background:rgba(128,128,128,0.25); overflow:hidden; flex:0 0 40px;
+}
+.dsh-agy-account.is-compact .dsh-agy-capsule-progress {
+  width:28px; height:4px; flex:0 0 28px;
 }
 .dsh-agy-capsule-fill { height:100%; border-radius:3px; transition:width 0.3s ease; }
 .dsh-agy-capsule-fill.is-high { background:#41c977; }
 .dsh-agy-capsule-fill.is-med { background:#fa8c16; }
 .dsh-agy-capsule-fill.is-low { background:#f25a5a; }
 
+/* Rightmost Action Cell: Aligns Active badge and Remove button */
+.dsh-agy-account-action {
+  width:64px; display:flex; align-items:center; justify-content:flex-end; flex-shrink:0;
+}
+.dsh-agy-account.is-compact .dsh-agy-account-action {
+  width:58px;
+}
+
 /* Quick Setup Card (Plan C) */
-.dsh-agy-code-box {
-  display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px;
-  border-radius:6px; background:rgba(0,0,0,0.25); border:1px solid rgba(255,255,255,0.1);
+.dsh-agy-guide-card {
+  display:flex; flex-direction:column; gap:12px; padding:16px 18px;
+  border-radius:12px;
+  background:linear-gradient(145deg, #1e222b 0%, #171920 100%);
+  border:1px solid rgba(22, 119, 255, 0.25);
+  box-shadow:0 4px 12px rgba(0,0,0,0.2);
+}
+.dsh-agy-guide-header {
+  display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px;
+}
+.dsh-agy-step {
+  display:flex; gap:12px; align-items:flex-start; margin-top:2px;
+}
+.dsh-agy-step-num {
+  width:22px; height:22px; border-radius:50%; background:#1677ff; color:#fff;
+  display:flex; align-items:center; justify-content:center; font-size:12px; font-weight:700;
+  flex:0 0 22px; margin-top:1px;
+}
+.dsh-agy-step-content {
+  display:flex; flex-direction:column; gap:6px; flex:1; min-width:0;
+}
+.dsh-agy-code-terminal {
+  display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 12px;
+  border-radius:8px; background:#0e1013; border:1px solid rgba(255,255,255,0.08);
   font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px; color:#58a6ff;
 }
 `
 
 /**
- * Accurately formats relative countdown string identical to antigravity_quota.mjs formatShortCountdown.
+ * Formats relative countdown string in exact parity with antigravity_quota.mjs formatShortCountdown.
  */
 function formatShortCountdown(isoString?: string): string {
   if (!isoString) return '-'
@@ -237,14 +298,15 @@ function getAccountQuotaMetrics(quota?: AccountQuotaSummary) {
   const p5h = f5h !== undefined ? Math.round(f5h * 100) : undefined
   const pWeekly = fWeekly !== undefined ? Math.round(fWeekly * 100) : undefined
 
-  const is5hExhausted = f5h !== undefined ? f5h <= 0 : false
-  const isWeeklyExhausted = fWeekly !== undefined ? fWeekly <= 0 : false
-  const isExhausted = (b5h ? is5hExhausted : true) && (bWeekly ? isWeeklyExhausted : true) && (!!b5h || !!bWeekly)
-
+  // Score represents the effective bottleneck (Math.min of 5h and weekly), identical to antigravity_quota.mjs
   const score = Math.min(
     f5h !== undefined ? f5h * 100 : 100,
     fWeekly !== undefined ? fWeekly * 100 : 100,
   )
+
+  const is5hExhausted = f5h !== undefined ? f5h <= 0 : false
+  const isWeeklyExhausted = fWeekly !== undefined ? fWeekly <= 0 : false
+  const isExhausted = score <= 10 || ((b5h ? is5hExhausted : true) && (bWeekly ? isWeeklyExhausted : true))
 
   const reset5h = b5h?.resetTime ? formatShortCountdown(b5h.resetTime) : ''
   const resetWeekly = bWeekly?.resetTime ? formatShortCountdown(bWeekly.resetTime) : ''
@@ -288,7 +350,9 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
   // Accounts state
   const [status, setStatus] = useState<AntigravityStatus | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
+  const [toastMessage, setToastMessage] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const [switchingId, setSwitchingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const [quotas, setQuotas] = useState<Record<string, AccountQuotaSummary>>({})
   const [loadingQuotas, setLoadingQuotas] = useState(false)
@@ -297,7 +361,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
   const [compactView, setCompactView] = useState(false)
   const [sortBy, setSortBy] = useState<'default' | 'quota'>('default')
 
-  // One-time dismissible banner state
+  // One-time dismissible banner state (persisted)
   const [bannerDismissed, setBannerDismissed] = useState<boolean>(() => {
     if (typeof localStorage !== 'undefined') {
       return localStorage.getItem(DISMISSED_BANNER_KEY) === 'true'
@@ -510,15 +574,24 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     }
   }
 
-  const switchAccount = async (id: string) => {
-    setBusy(true)
+  // Account switch with verified server return + non-intrusive floating toast
+  const switchAccount = async (targetAccount: AccountSummary) => {
+    setSwitchingId(targetAccount.id)
+    setError(undefined)
     try {
-      await jsonRequest(SWITCH_PATH, 'POST', { id })
-      void refresh()
+      const res = await jsonRequest<{ ok: boolean, account?: AntigravityStatus }>(SWITCH_PATH, 'POST', { id: targetAccount.id })
+      if (res?.account) {
+        setStatus(res.account)
+      } else {
+        await refresh()
+      }
+      setToastMessage(t('accountSwitched', { email: targetAccount.email ?? targetAccount.id }))
+      setTimeout(() => setToastMessage(null), 3000)
     } catch (caught: unknown) {
       setError(caught instanceof Error ? caught.message : t('requestFailed'))
+      await refresh()
     } finally {
-      setBusy(false)
+      setSwitchingId(null)
     }
   }
 
@@ -582,11 +655,19 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
 
   return (
     <section className="dsh-agy-page" aria-labelledby="antigravity-settings-title">
+      {/* Floating Top-Right Toast Notification (Zero Layout Shift) */}
+      {toastMessage ? (
+        <div className="dsh-agy-toast-float">
+          <span>✓</span>
+          <span>{toastMessage}</span>
+        </div>
+      ) : null}
+
       {/* Title Row with Active Account Info Cleanly Beside the Title */}
       <div className="dsh-agy-header">
         <div className="dsh-agy-title-row">
           <h2 id="antigravity-settings-title" className="dsh-agy-title">{t('title')}</h2>
-          <div className="dsh-agy-header-active-badge">
+          <div className="dsh-agy-header-active-badge" title={activeAccount ? activeAccount.email ?? activeAccount.id : t('signedOut')}>
             <span className={'dsh-agy-dot ' + (signing ? 'is-signing-in' : activeAccount?.ready ? 'is-signed-in' : 'is-error')} />
             <span>{signing ? t('signingIn') : activeAccount ? activeAccount.email ?? activeAccount.id : t('signedOut')}</span>
           </div>
@@ -632,14 +713,14 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
         </nav>
       </div>
 
-      {/* Dismissible Notice Banner */}
-      {!bannerDismissed ? (
+      {/* Dismissible Notice Banner (Hides automatically in Compact View) */}
+      {!bannerDismissed && !compactView ? (
         <div className="dsh-agy-notice-banner">
           <p className="dsh-agy-body" style={{ margin: 0 }}>{t('tos')}</p>
           <button
             type="button"
             className="dsh-agy-notice-close"
-            title="Dismiss"
+            title={t('dismissNotice')}
             onClick={dismissBanner}
           >
             ×
@@ -651,18 +732,16 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
 
       {/* TAB 1: ACCOUNTS & QUOTA */}
       {activeTab === 'accounts' ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {/* Status Header Card */}
-          <div className="dsh-agy-card">
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+          {/* Streamlined Hero Summary Bar */}
+          <div className="dsh-agy-card" style={{ padding: '8px 12px' }}>
             <div className="dsh-agy-row">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span className={'dsh-agy-dot ' + (signing ? 'is-signing-in' : activeAccount?.ready ? 'is-signed-in' : 'is-error')} />
-                <div>
-                  <p className="dsh-agy-card-title">{t('authStatus')}</p>
-                  <p className="dsh-agy-body" style={{ fontSize: '12px' }}>
-                    {signing ? t('signingIn') : activeAccount ? activeAccount.email ?? activeAccount.id : t('signedOut')}
-                  </p>
-                </div>
+                <span style={{ fontSize: '13px', fontWeight: 600, color: '#fff' }}>{t('authStatus')}:</span>
+                <span className={'dsh-agy-status-badge ' + (activeAccount?.ready ? 'is-success' : 'is-error')}>
+                  {signing ? t('signingIn') : activeAccount ? (activeAccount.ready ? t('signedIn') : t('authorized')) : t('signedOut')}
+                </span>
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
                 {signing ? (
@@ -681,12 +760,12 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                 ) : null}
               </div>
             </div>
-            {accounts.length > 0 ? <p className="dsh-agy-body" style={{ fontSize: '12px' }}>{t('quotaHint')}</p> : null}
           </div>
 
           {/* Accounts List & Filter Controls Card */}
           {accounts.length > 0 ? (
             <div className="dsh-agy-card">
+              {/* Toolbar */}
               <div className="dsh-agy-row" style={{ gap: '8px' }}>
                 <div style={{ position: 'relative', flex: '1 1 180px' }}>
                   <input
@@ -702,7 +781,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                       type="button"
                       aria-label={t('clearSearch')}
                       onClick={() => setSearchQuery('')}
-                      style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'transparent', cursor: 'pointer', opacity: 0.6 }}
+                      style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'transparent', cursor: 'pointer', opacity: 0.6, color: '#fff' }}
                     >
                       ×
                     </button>
@@ -734,7 +813,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                 </div>
 
                 <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px', cursor: 'pointer' }}>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px', cursor: 'pointer', color: '#b0b4ba' }}>
                     <input type="checkbox" checked={compactView} onChange={e => setCompactView(e.target.checked)} />
                     <span>{t('compactView')}</span>
                   </label>
@@ -750,7 +829,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
               </div>
 
               {/* Accounts Items List */}
-              <div className="dsh-agy-account-list">
+              <div className={'dsh-agy-account-list ' + (compactView ? 'is-compact-mode' : '')}>
                 {filteredAccounts.length === 0 ? (
                   <div style={{ padding: '24px', textAlign: 'center', opacity: 0.6, fontSize: '13px' }}>
                     {t('noMatchingAccounts')}
@@ -758,29 +837,37 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                 ) : (
                   filteredAccounts.map(account => {
                     const isActive = account.id === activeAccountId
+                    const isSwitching = account.id === switchingId
                     const metrics = getAccountQuotaMetrics(quotas[account.id])
                     const p5h = metrics?.p5h
                     const pWeekly = metrics?.pWeekly
+                    const score = metrics?.score !== undefined ? Math.round(metrics.score) : undefined
 
                     const title5h = p5h !== undefined
-                      ? `5h Window: ${p5h}%${metrics?.reset5h ? ` (${t('quotaResetsIn')} ${metrics.reset5h})` : ''}`
-                      : '5h Window: Quota not loaded'
+                      ? `5h limit: ${p5h}%${metrics?.reset5h ? ` (${t('quotaResetsIn')} ${metrics.reset5h})` : ''}`
+                      : '5h limit: Quota not loaded'
 
                     const titleWeekly = pWeekly !== undefined
-                      ? `Weekly Budget: ${pWeekly}%${metrics?.resetWeekly ? ` (${t('quotaResetsIn')} ${metrics.resetWeekly})` : ''}`
-                      : 'Weekly Budget: Quota not loaded'
+                      ? `Weekly limit: ${pWeekly}%${metrics?.resetWeekly ? ` (${t('quotaResetsIn')} ${metrics.resetWeekly})` : ''}`
+                      : 'Weekly limit: Quota not loaded'
+
+                    const titleOverall = score !== undefined
+                      ? `Effective bottleneck: ${score}% · 5h: ${p5h}% · Weekly: ${pWeekly}%`
+                      : ''
 
                     return (
                       <div
                         key={account.id}
                         className={'dsh-agy-account ' + (isActive ? 'is-active ' : '') + (compactView ? 'is-compact' : '')}
+                        onClick={() => { if (!isActive && !switchingId) void switchAccount(account) }}
                       >
-                        <div className="dsh-agy-account-main" onClick={() => { if (!isActive) void switchAccount(account.id) }}>
+                        {/* Account Main Info */}
+                        <div className="dsh-agy-account-main">
                           <input type="radio" checked={isActive} readOnly style={{ cursor: 'pointer', flexShrink: 0 }} />
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0, overflow: 'hidden' }}>
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', minWidth: 0, overflow: 'hidden' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                               <span className="dsh-agy-account-mail">{account.email ?? account.id}</span>
-                              {isActive ? <span className="dsh-agy-status-badge is-success">{t('activeBadge')}</span> : null}
+                              {isSwitching ? <span className="dsh-agy-status-badge is-switching">{t('working')}...</span> : null}
                               {account.limited ? <span className="dsh-agy-status-badge is-error">{t('accountLimited')}</span> : null}
                               {account.dead ? <span className="dsh-agy-status-badge is-error">{t('accountNeedsRelogin')}</span> : null}
                             </div>
@@ -791,10 +878,11 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                         </div>
 
                         {/* Quota Indicators */}
-                        <div className="dsh-agy-account-metrics" onClick={e => e.stopPropagation()}>
+                        <div className="dsh-agy-account-metrics" onClick={e => e.stopPropagation()} title={titleOverall}>
+                          {/* 5h Quota Bar */}
                           {p5h !== undefined ? (
                             <div className="dsh-agy-capsule-bar" title={title5h}>
-                              <span>{t('quota5h')} {p5h}%</span>
+                              <span>5h {p5h}%</span>
                               <div className="dsh-agy-capsule-progress">
                                 <div
                                   className={'dsh-agy-capsule-fill ' + (p5h > 40 ? 'is-high' : p5h > 15 ? 'is-med' : 'is-low')}
@@ -804,6 +892,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                             </div>
                           ) : null}
 
+                          {/* Weekly Quota Bar */}
                           {pWeekly !== undefined ? (
                             <div className="dsh-agy-capsule-bar" title={titleWeekly}>
                               <span>{t('quotaWeeklyShort')} {pWeekly}%</span>
@@ -815,17 +904,22 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                               </div>
                             </div>
                           ) : null}
+                        </div>
 
-                          {!isActive ? (
+                        {/* Rightmost Action Column: Active badge in line with Remove button! */}
+                        <div className="dsh-agy-account-action" onClick={e => e.stopPropagation()}>
+                          {isActive ? (
+                            <span className="dsh-agy-status-badge is-success">{t('activeBadge')}</span>
+                          ) : (
                             <button
                               type="button"
                               className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
-                              disabled={busy}
+                              disabled={busy || Boolean(switchingId)}
                               onClick={() => { void removeAccount(account.id) }}
                             >
                               {t('removeAccount')}
                             </button>
-                          ) : null}
+                          )}
                         </div>
                       </div>
                     )
@@ -872,31 +966,51 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
       {/* TAB 2: WEB2API GATEWAY (PLAN C) */}
       {activeTab === 'web2api' ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          <div className="dsh-agy-card">
-            <div className="dsh-agy-row">
-              <p className="dsh-agy-card-title">{t('quickSetupTitle')}</p>
-              <button
-                type="button"
-                className="dsh-agy-btn dsh-agy-btn-primary dsh-agy-btn-compact"
-                disabled={web2apiDetecting}
-                onClick={() => { void detectLocalGateway() }}
-              >
-                {web2apiDetecting ? t('detecting') : t('detectService')}
-              </button>
+          <div className="dsh-agy-guide-card">
+            <div className="dsh-agy-guide-header">
+              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                <span style={{ fontSize: '16px' }}>🚀</span>
+                <span style={{ fontSize: '14px', fontWeight: 600, color: '#fff' }}>{t('quickSetupTitle')}</span>
+              </div>
+              <span className="dsh-agy-status-badge is-success">Docker / Binary Ready</span>
             </div>
-            <p className="dsh-agy-body">{t('quickSetupDesc')}</p>
+            <p className="dsh-agy-body" style={{ color: '#b0b4ba' }}>{t('quickSetupDesc')}</p>
 
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <span style={{ fontSize: '11px', fontWeight: 600, opacity: 0.8 }}>{t('dockerOneLiner')}</span>
-              <div className="dsh-agy-code-box">
-                <code style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{DOCKER_CMD}</code>
-                <button
-                  type="button"
-                  className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
-                  onClick={copyDockerCommand}
-                >
-                  {copiedDocker ? t('copied') : t('copyCommand')}
-                </button>
+            <div className="dsh-agy-step">
+              <div className="dsh-agy-step-num">1</div>
+              <div className="dsh-agy-step-content">
+                <span style={{ fontSize: '12px', fontWeight: 600, color: '#f0f0f0' }}>{t('step1Title')}</span>
+                <span className="dsh-agy-body" style={{ fontSize: '11px' }}>{t('step1Desc')}</span>
+                <div className="dsh-agy-code-terminal">
+                  <code style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{DOCKER_CMD}</code>
+                  <button
+                    type="button"
+                    className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
+                    style={{ flexShrink: 0 }}
+                    onClick={copyDockerCommand}
+                  >
+                    {copiedDocker ? t('copied') : t('copyCommand')}
+                  </button>
+                </div>
+              </div>
+            </div>
+
+            <div className="dsh-agy-step">
+              <div className="dsh-agy-step-num">2</div>
+              <div className="dsh-agy-step-content">
+                <span style={{ fontSize: '12px', fontWeight: 600, color: '#f0f0f0' }}>{t('step2Title')}</span>
+                <span className="dsh-agy-body" style={{ fontSize: '11px' }}>{t('step2Desc')}</span>
+                <div>
+                  <button
+                    type="button"
+                    className="dsh-agy-btn dsh-agy-btn-primary dsh-agy-btn-compact"
+                    style={{ padding: '3px 12px' }}
+                    disabled={web2apiDetecting}
+                    onClick={() => { void detectLocalGateway() }}
+                  >
+                    {web2apiDetecting ? t('detecting') : t('detectService')}
+                  </button>
+                </div>
               </div>
             </div>
           </div>
