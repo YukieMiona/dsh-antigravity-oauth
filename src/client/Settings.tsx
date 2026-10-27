@@ -14,7 +14,7 @@ const WEB2API_SETTINGS_PATH = '/plugins/dsh-antigravity-oauth/web2api/settings'
 const WEB2API_TEST_PATH = '/plugins/dsh-antigravity-oauth/web2api/test'
 
 const STYLE_ID = 'dsh-antigravity-oauth-settings-theme'
-const DOCKER_CMD = 'docker run -d --name gemini-web2api -p 8080:8080 zexadev/gemini-web2api-go:latest'
+const DOCKER_CMD = 'docker run -d --name gemini-web2api -p 18088:18088 zexadev/gemini-web2api-go:latest'
 
 type Network = { mode: 'auto' | 'direct' | 'proxy', url: string, effective: string }
 type ActiveTab = 'accounts' | 'web2api' | 'network'
@@ -26,7 +26,7 @@ export interface AntigravitySettingsInjected {
 export type AntigravitySettingsProps = Partial<AntigravitySettingsInjected>
 
 const SETTINGS_CSS = `
-.dsh-agy-page { display:flex; flex-direction:column; gap:16px; max-width:680px; color:var(--dsw-alias-label-primary); font-family:inherit; }
+.dsh-agy-page { display:flex; flex-direction:column; gap:16px; width:100%; max-width:760px; color:var(--dsw-alias-label-primary); font-family:inherit; }
 .dsh-agy-header { display:flex; flex-direction:column; gap:4px; margin-bottom:2px; }
 .dsh-agy-title { margin:0; font-size:20px; line-height:28px; font-weight:600; color:var(--dsw-alias-label-primary); }
 .dsh-agy-body { margin:0; font-size:13px; line-height:20px; color:var(--dsw-alias-label-secondary); }
@@ -85,10 +85,14 @@ const SETTINGS_CSS = `
 }
 .dsh-agy-btn-primary:hover:not(:disabled) { opacity:0.9; }
 .dsh-agy-btn-secondary {
-  border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.25));
-  background:rgba(128,128,128,0.06); color:var(--dsw-alias-label-primary);
+  border:1px solid var(--dsw-alias-border-l1, rgba(128,128,128,0.35)) !important;
+  background:var(--dsw-alias-bg-module-platform, rgba(128,128,128,0.12)) !important;
+  color:var(--dsw-alias-label-primary, #e0e0e0) !important;
 }
-.dsh-agy-btn-secondary:hover:not(:disabled) { background:rgba(128,128,128,0.12); }
+.dsh-agy-btn-secondary:hover:not(:disabled) {
+  background:rgba(128,128,128,0.2) !important;
+  border-color:var(--dsw-alias-brand-primary, #1677ff) !important;
+}
 .dsh-agy-btn-compact { min-height:24px; padding:2px 8px; font-size:11px; border-radius:6px; }
 
 /* Inputs */
@@ -120,15 +124,16 @@ const SETTINGS_CSS = `
   background:rgba(22, 119, 255, 0.12); color:var(--dsw-alias-brand-primary, #1677ff); font-weight:600;
 }
 
-/* Accounts List & Grid Alignment */
+/* Accounts List & Flexbox Grid Row Alignment (No Wrapping) */
 .dsh-agy-account-list {
   max-height:480px; overflow-y:auto; padding-right:2px; display:flex; flex-direction:column; gap:6px;
 }
 .dsh-agy-account {
-  display:grid; grid-template-columns:minmax(180px, 1fr) 130px 130px 72px;
-  align-items:center; gap:10px; padding:8px 12px; border-radius:8px;
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  padding:8px 12px; border-radius:8px;
   border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.2));
   background:var(--dsw-alias-bg-module-platform, transparent); transition:all 0.15s ease;
+  white-space:nowrap; overflow:hidden;
 }
 .dsh-agy-account.is-compact {
   padding:5px 10px; min-height:36px;
@@ -137,16 +142,30 @@ const SETTINGS_CSS = `
   border-color:var(--dsw-alias-brand-primary, #1677ff);
   background:rgba(22, 119, 255, 0.05);
 }
-.dsh-agy-account-main { display:flex; align-items:center; gap:8px; min-width:0; cursor:pointer; }
-.dsh-agy-account-mail { font-size:13px; font-weight:500; color:var(--dsw-alias-label-primary); word-break:break-all; }
+.dsh-agy-account-main {
+  display:flex; align-items:center; gap:8px; flex:1 1 0; min-width:0;
+  cursor:pointer; overflow:hidden; text-overflow:ellipsis;
+}
+.dsh-agy-account-mail {
+  font-size:13px; font-weight:500; color:var(--dsw-alias-label-primary);
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+}
 .dsh-agy-link { color:var(--dsw-alias-brand-primary, #1677ff); text-decoration:none; }
 .dsh-agy-link:hover { text-decoration:underline; }
 
-/* Perfect Quota Sticker Bars */
+/* Right Columns Container (Always Stays in One Line) */
+.dsh-agy-account-metrics {
+  display:flex; align-items:center; gap:8px; flex:0 0 auto;
+}
+
+/* Quota Sticker Bars with Subtext */
 .dsh-agy-capsule-bar {
-  box-sizing:border-box; width:130px; display:inline-flex; align-items:center; justify-content:space-between;
-  gap:6px; font-size:11px; padding:3px 8px; border-radius:6px;
+  box-sizing:border-box; width:135px; display:flex; flex-direction:column;
+  padding:3px 8px; border-radius:6px;
   background:rgba(128,128,128,0.08); color:var(--dsw-alias-label-secondary);
+}
+.dsh-agy-capsule-header {
+  display:flex; align-items:center; justify-content:space-between; width:100%; font-size:11px;
 }
 .dsh-agy-capsule-progress {
   width:42px; height:6px; border-radius:3px; background:rgba(128,128,128,0.2); overflow:hidden; flex:0 0 42px;
@@ -155,6 +174,9 @@ const SETTINGS_CSS = `
 .dsh-agy-capsule-fill.is-high { background:var(--dsw-alias-state-success-primary, #22a06b); }
 .dsh-agy-capsule-fill.is-med { background:#fa8c16; }
 .dsh-agy-capsule-fill.is-low { background:var(--dsw-alias-state-error-primary, #d92d20); }
+.dsh-agy-capsule-sub {
+  font-size:10px; opacity:0.75; margin-top:1px; line-height:12px;
+}
 
 /* Code Snippet Box */
 .dsh-agy-code-box {
@@ -251,9 +273,9 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
   const [networkMessage, setNetworkMessage] = useState('')
   const [savingNetwork, setSavingNetwork] = useState(false)
 
-  // Web2API state (Plan C)
+  // Web2API state (Plan C with port 18088)
   const [web2apiEnabled, setWeb2apiEnabled] = useState(false)
-  const [web2apiBaseUrl, setWeb2apiBaseUrl] = useState('http://127.0.0.1:8080/v1')
+  const [web2apiBaseUrl, setWeb2apiBaseUrl] = useState('http://127.0.0.1:18088/v1')
   const [web2apiApiKey, setWeb2apiApiKey] = useState('')
   const [web2apiImageTool, setWeb2apiImageTool] = useState(true)
   const [web2apiSaving, setWeb2apiSaving] = useState(false)
@@ -350,41 +372,37 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     }
   }
 
-  const testWeb2Api = async (urlToCheck?: string) => {
+  const testWeb2Api = async () => {
     setWeb2apiTesting(true)
     setWeb2apiFeedback(null)
-    const targetUrl = urlToCheck ?? web2apiBaseUrl
     try {
       const res = await fetch(WEB2API_TEST_PATH, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           enabled: true,
-          baseUrl: targetUrl,
+          baseUrl: web2apiBaseUrl,
           apiKey: web2apiApiKey,
         }),
       })
       const data = await res.json()
       if (data.ok) {
         setWeb2apiFeedback({ ok: true, msg: t('web2apiConnected', { latency: data.latencyMs }) })
-        return true
       } else {
         setWeb2apiFeedback({ ok: false, msg: t('web2apiFailed', { error: data.error ?? t('unknownError') }) })
-        return false
       }
     } catch (e: unknown) {
       setWeb2apiFeedback({ ok: false, msg: e instanceof Error ? e.message : t('unknownError') })
-      return false
     } finally {
       setWeb2apiTesting(false)
     }
   }
 
-  // Plan C: Auto-detect local gemini-web2api gateway
+  // Plan C: Auto-detect local gemini-web2api gateway on port 18088
   const detectLocalGateway = async () => {
     setWeb2apiDetecting(true)
     setWeb2apiFeedback(null)
-    const candidates = ['http://127.0.0.1:8080/v1', 'http://localhost:8080/v1']
+    const candidates = ['http://127.0.0.1:18088/v1', 'http://localhost:18088/v1']
     let detected = false
 
     for (const url of candidates) {
@@ -447,15 +465,16 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     }
   }
 
+  // Fast optimistic account switch
   const switchAccount = async (id: string) => {
-    setBusy(true)
+    // Optimistic UI update: instantly update activeId so radio & card reflect choice
+    setStatus(prev => prev && prev.status === 'signed-in' ? { ...prev, activeId: id } : prev)
     try {
       await jsonRequest(SWITCH_PATH, 'POST', { id })
       void refresh()
     } catch (caught: unknown) {
       setError(caught instanceof Error ? caught.message : t('requestFailed'))
-    } finally {
-      setBusy(false)
+      void refresh()
     }
   }
 
@@ -663,7 +682,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                 </div>
               </div>
 
-              {/* Strict Grid Row Layout: Account Info | 5h Capsule | Weekly Capsule | Remove Button */}
+              {/* Flexbox Row: Left main info | Right metrics container (No line wrapping) */}
               <div className="dsh-agy-account-list">
                 {filteredAccounts.length === 0 ? (
                   <div style={{ padding: '24px', textAlign: 'center', opacity: 0.6, fontSize: '13px' }}>
@@ -683,54 +702,67 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                       >
                         {/* Col 1: Account Info */}
                         <div className="dsh-agy-account-main" onClick={() => { if (!isActive) void switchAccount(account.id) }}>
-                          <input type="radio" checked={isActive} readOnly style={{ cursor: 'pointer' }} />
-                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
-                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
+                          <input type="radio" checked={isActive} readOnly style={{ cursor: 'pointer', flexShrink: 0 }} />
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0, overflow: 'hidden' }}>
+                            <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                               <span className="dsh-agy-account-mail">{account.email ?? account.id}</span>
                               {isActive ? <span className="dsh-agy-status-badge is-success">{t('activeBadge')}</span> : null}
                               {account.limited ? <span className="dsh-agy-status-badge is-error">{t('accountLimited')}</span> : null}
                               {account.dead ? <span className="dsh-agy-status-badge is-error">{t('accountNeedsRelogin')}</span> : null}
                             </div>
                             {!compactView && account.projectId ? (
-                              <span style={{ fontSize: '11px', opacity: 0.6 }}>{account.projectId}</span>
+                              <span style={{ fontSize: '11px', opacity: 0.6, overflow: 'hidden', textOverflow: 'ellipsis' }}>{account.projectId}</span>
                             ) : null}
                           </div>
                         </div>
 
-                        {/* Col 2: 5h Quota Sticker (fixed 130px) */}
-                        <div className="dsh-agy-capsule-bar" title={'5h: ' + (p5h !== undefined ? p5h + '%' : '--') + ' ' + (metrics?.reset5h ?? '')}>
-                          <span style={{ minWidth: '46px' }}>{t('quota5h')} {p5h !== undefined ? p5h + '%' : '--'}</span>
-                          <div className="dsh-agy-capsule-progress">
-                            <div
-                              className={'dsh-agy-capsule-fill ' + ((p5h ?? 0) > 40 ? 'is-high' : (p5h ?? 0) > 15 ? 'is-med' : 'is-low')}
-                              style={{ width: (p5h ?? 0) + '%' }}
-                            />
+                        {/* Col 2: Metrics container (Fixed size, never wraps to next line) */}
+                        <div className="dsh-agy-account-metrics">
+                          {/* 5h Capsule */}
+                          <div className="dsh-agy-capsule-bar" title={'5h: ' + (p5h !== undefined ? p5h + '%' : '--') + ' ' + (metrics?.reset5h ?? '')}>
+                            <div className="dsh-agy-capsule-header">
+                              <span>{t('quota5h')} {p5h !== undefined ? p5h + '%' : '--'}</span>
+                              <div className="dsh-agy-capsule-progress">
+                                <div
+                                  className={'dsh-agy-capsule-fill ' + ((p5h ?? 0) > 40 ? 'is-high' : (p5h ?? 0) > 15 ? 'is-med' : 'is-low')}
+                                  style={{ width: (p5h ?? 0) + '%' }}
+                                />
+                              </div>
+                            </div>
+                            {metrics?.reset5h ? (
+                              <span className="dsh-agy-capsule-sub">{t('quotaResetsIn')} {metrics.reset5h}</span>
+                            ) : null}
                           </div>
-                        </div>
 
-                        {/* Col 3: Weekly Quota Sticker (fixed 130px) */}
-                        <div className="dsh-agy-capsule-bar" title={'Weekly: ' + (pWeekly !== undefined ? pWeekly + '%' : '--') + ' ' + (metrics?.resetWeekly ?? '')}>
-                          <span style={{ minWidth: '46px' }}>{t('quotaWeeklyShort')} {pWeekly !== undefined ? pWeekly + '%' : '--'}</span>
-                          <div className="dsh-agy-capsule-progress">
-                            <div
-                              className={'dsh-agy-capsule-fill ' + ((pWeekly ?? 0) > 40 ? 'is-high' : (pWeekly ?? 0) > 15 ? 'is-med' : 'is-low')}
-                              style={{ width: (pWeekly ?? 0) + '%' }}
-                            />
+                          {/* Weekly Capsule */}
+                          <div className="dsh-agy-capsule-bar" title={'Weekly: ' + (pWeekly !== undefined ? pWeekly + '%' : '--') + ' ' + (metrics?.resetWeekly ?? '')}>
+                            <div className="dsh-agy-capsule-header">
+                              <span>{t('quotaWeeklyShort')} {pWeekly !== undefined ? pWeekly + '%' : '--'}</span>
+                              <div className="dsh-agy-capsule-progress">
+                                <div
+                                  className={'dsh-agy-capsule-fill ' + ((pWeekly ?? 0) > 40 ? 'is-high' : (pWeekly ?? 0) > 15 ? 'is-med' : 'is-low')}
+                                  style={{ width: (pWeekly ?? 0) + '%' }}
+                                />
+                              </div>
+                            </div>
+                            {metrics?.resetWeekly ? (
+                              <span className="dsh-agy-capsule-sub">{t('quotaResetsIn')} {metrics.resetWeekly}</span>
+                            ) : null}
                           </div>
-                        </div>
 
-                        {/* Col 4: Action Button (fixed 72px) */}
-                        <div style={{ display: 'flex', justifyContent: 'flex-end', width: '72px' }}>
-                          {!isActive ? (
-                            <button
-                              type="button"
-                              className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
-                              disabled={busy}
-                              onClick={() => { void removeAccount(account.id) }}
-                            >
-                              {t('removeAccount')}
-                            </button>
-                          ) : null}
+                          {/* Remove button */}
+                          <div style={{ width: '64px', display: 'flex', justifyContent: 'flex-end', flexShrink: 0 }}>
+                            {!isActive ? (
+                              <button
+                                type="button"
+                                className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
+                                disabled={busy}
+                                onClick={() => { void removeAccount(account.id) }}
+                              >
+                                {t('removeAccount')}
+                              </button>
+                            ) : null}
+                          </div>
                         </div>
                       </div>
                     )
@@ -837,16 +869,16 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                   <button
                     type="button"
                     className="dsh-agy-chip"
-                    onClick={() => setWeb2apiBaseUrl('http://127.0.0.1:8080/v1')}
+                    onClick={() => setWeb2apiBaseUrl('http://127.0.0.1:18088/v1')}
                   >
-                    127.0.0.1:8080
+                    127.0.0.1:18088
                   </button>
                   <button
                     type="button"
                     className="dsh-agy-chip"
-                    onClick={() => setWeb2apiBaseUrl('http://localhost:8080/v1')}
+                    onClick={() => setWeb2apiBaseUrl('http://localhost:18088/v1')}
                   >
-                    localhost:8080
+                    localhost:18088
                   </button>
                 </div>
 
@@ -857,7 +889,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                   <input
                     type="text"
                     className="dsh-agy-input"
-                    placeholder="http://127.0.0.1:8080/v1"
+                    placeholder="http://127.0.0.1:18088/v1"
                     value={web2apiBaseUrl}
                     disabled={web2apiSaving}
                     onChange={e => setWeb2apiBaseUrl(e.target.value)}

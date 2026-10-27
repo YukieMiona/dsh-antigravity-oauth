@@ -45,12 +45,12 @@ describe('Web2API Types and Store', () => {
       const initial = await store.read()
       expect(initial.enabled).toBe(false)
 
-      const saved = await store.save({ enabled: true, baseUrl: 'http://127.0.0.1:8080/v1' })
+      const saved = await store.save({ enabled: true, baseUrl: 'http://127.0.0.1:18088/v1' })
       expect(saved.enabled).toBe(true)
 
       const reloaded = await store.read()
       expect(reloaded.enabled).toBe(true)
-      expect(reloaded.baseUrl).toBe('http://127.0.0.1:8080/v1')
+      expect(reloaded.baseUrl).toBe('http://127.0.0.1:18088/v1')
     } finally {
       await rm(dir, { recursive: true, force: true })
     }

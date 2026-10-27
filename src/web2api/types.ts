@@ -23,7 +23,7 @@ export const DEFAULT_WEB2API_MODELS: readonly Web2ApiModelConfig[] = [
 
 export const DEFAULT_WEB2API_SETTINGS: Web2ApiSettings = {
   enabled: false,
-  baseUrl: 'http://127.0.0.1:8080/v1',
+  baseUrl: 'http://127.0.0.1:18088/v1',
   apiKey: '',
   models: DEFAULT_WEB2API_MODELS.map(m => m.id),
   enableImageTool: true,
