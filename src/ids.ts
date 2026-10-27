@@ -56,3 +56,5 @@ export const WEB2API_FILENAME = '.dsh-antigravity-oauth.web2api.json'
 export const WEB2API_ROUTE = 'agy-web'
 export const WEB2API_SETTINGS_PATH = '/plugins/dsh-antigravity-oauth/web2api/settings'
 export const WEB2API_TEST_PATH = '/plugins/dsh-antigravity-oauth/web2api/test'
+
+export const THOUGHT_SIGNATURE_MAX_ENTRIES = 5000

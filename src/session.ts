@@ -1,5 +1,6 @@
 import { createServer } from 'node:http'
-import { existsSync, readFileSync, writeFileSync } from 'node:fs'
+import { existsSync, readFileSync } from 'node:fs'
+import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import {
   CALLBACK_PATH,
@@ -12,6 +13,7 @@ import {
   QUOTA_SUMMARY_PATH,
   RATE_LIMIT_COOLDOWN_MAX_MS,
   RATE_LIMIT_COOLDOWN_MS,
+  THOUGHT_SIGNATURE_MAX_ENTRIES,
 } from './ids.ts'
 import { CcaClient } from './cca-client.ts'
 import { createCcaSession } from './envelope.ts'
@@ -37,6 +39,7 @@ import type {
 } from './types.ts'
 import { AntigravityNetwork } from './network.ts'
 import { AntigravityWeb2ApiStore } from './web2api/store.ts'
+import { evaluateQuotaMetrics } from './quota-core.ts'
 import { antigravityUserAgent, ensureAntigravityVersion } from './user-agent.ts'
 
 export type FetchImpl = typeof fetch
@@ -91,7 +94,7 @@ export class ThoughtSignatureStore implements ReadonlyMap<string, string> {
 
   set(id: string, signature: string): this {
     this.signatures.set(id, signature)
-    if (this.signatures.size > 5000) {
+    if (this.signatures.size > THOUGHT_SIGNATURE_MAX_ENTRIES) {
       const first = this.signatures.keys().next().value
       if (first !== undefined) this.signatures.delete(first)
     }
@@ -144,7 +147,7 @@ export class ThoughtSignatureStore implements ReadonlyMap<string, string> {
       this.saveTimer = undefined
       try {
         const obj = Object.fromEntries(this.signatures)
-        writeFileSync(this.filename, JSON.stringify(obj), 'utf8')
+        void writeFileAtomic(this.filename, `${JSON.stringify(obj)}\n`, { mode: 0o600, dirMode: 0o700 }).catch(() => {})
       } catch {}
     }, 1000)
   }
@@ -243,17 +246,8 @@ export class AntigravitySession {
           scores.set(acc.id, 50) // unknown defaults to 50%
           continue
         }
-        let minFraction = 1
-        for (const g of q.groups) {
-          for (const b of g.buckets) {
-            const isGemini = /^gemini[-_]/i.test(b.bucketId || '')
-            if (options?.family === 'gemini' && !isGemini) continue
-            if (typeof b.remainingFraction === 'number') {
-              minFraction = Math.min(minFraction, b.remainingFraction)
-            }
-          }
-        }
-        scores.set(acc.id, minFraction * 100)
+        const metrics = evaluateQuotaMetrics(q)
+        scores.set(acc.id, metrics?.score ?? 50)
       }
       available.sort((a, b) => (scores.get(b.id) ?? 0) - (scores.get(a.id) ?? 0))
       const best = available[0]
