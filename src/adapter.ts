@@ -134,18 +134,23 @@ function convertMessages(
           const blockSignature = typeof rawBlock.thoughtSignature === 'string' && rawBlock.thoughtSignature.length > 0
             ? rawBlock.thoughtSignature
             : undefined
-          // Prefer stored signature, fallback to block metadata, or synthesize a fallback signature so Google WAF never rejects with CCA 400
-          const thoughtSignature = thoughtSignatures.get(block.id)
-            ?? blockSignature
-            ?? `sig_${Buffer.from(block.id + ':' + block.name).toString('base64url')}`
-          parts.push({
-            functionCall: { name: block.name, args, id },
-            thoughtSignature,
-          })
-          emittedNames.set(id, block.name)
-          const queue = pendingCallIds.get(block.id)
-          if (queue === undefined) pendingCallIds.set(block.id, [id])
-          else queue.push(id)
+          const thoughtSignature = thoughtSignatures.get(block.id) ?? blockSignature
+          if (thoughtSignature !== undefined && thoughtSignature.length > 0) {
+            parts.push({
+              functionCall: { name: block.name, args, id },
+              thoughtSignature,
+            })
+            emittedNames.set(id, block.name)
+            const queue = pendingCallIds.get(block.id)
+            if (queue === undefined) pendingCallIds.set(block.id, [id])
+            else queue.push(id)
+          } else {
+            // Degrade functionCall without authentic thoughtSignature to structured text
+            // to satisfy Google WAF without triggering 'Corrupted thought signature' or 'missing a thought_signature'
+            parts.push({
+              text: `[Tool Call: ${block.name}(${block.arguments})]`,
+            })
+          }
         }
       }
       if (parts.length > 0) contents.push({ role: 'model', parts })

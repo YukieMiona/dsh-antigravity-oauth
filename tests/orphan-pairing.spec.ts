@@ -227,6 +227,8 @@ describe('Orphaned tool result and duplicate functionCall ID pairing', () => {
 
   it('pairs multiple concurrent tool calls within a single assistant message in FIFO order', async () => {
     const fake = createFakeAdapterSession()
+    fake.thoughtSignatures.set('concurrent_batch', 'sig-batch')
+    fake.thoughtSignatures.set('independent_call', 'sig-indep')
     const adapter = createAntigravityAdapter(fake.session, {
       nativeTools: true,
       nativeSearch: true,

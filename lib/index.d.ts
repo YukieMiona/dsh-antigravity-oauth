@@ -274,9 +274,28 @@ declare class AntigravityWeb2ApiStore {
 //#endregion
 //#region src/session.d.ts
 type FetchImpl = typeof fetch;
+declare class ThoughtSignatureStore implements ReadonlyMap<string, string> {
+  private readonly signatures;
+  private readonly filename;
+  private saveTimer;
+  constructor(filename: string);
+  private load;
+  get(id: string): string | undefined;
+  set(id: string, signature: string): this;
+  has(id: string): boolean;
+  delete(id: string): boolean;
+  clear(): void;
+  get size(): number;
+  forEach(callbackfn: (value: string, key: string, map: ReadonlyMap<string, string>) => void, thisArg?: unknown): void;
+  [Symbol.iterator](): IterableIterator<[string, string]>;
+  entries(): IterableIterator<[string, string]>;
+  keys(): IterableIterator<string>;
+  values(): IterableIterator<string>;
+  private scheduleSave;
+}
 declare class AntigravitySession {
   readonly store: AntigravityCredentialStore;
-  readonly thoughtSignatures: Map<string, string>;
+  readonly thoughtSignatures: ThoughtSignatureStore;
   readonly network: AntigravityNetwork;
   readonly web2api: AntigravityWeb2ApiStore;
   private readonly fetchImpl;

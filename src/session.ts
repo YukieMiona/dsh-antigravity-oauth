@@ -1,4 +1,5 @@
 import { createServer } from 'node:http'
+import { existsSync, readFileSync, writeFileSync } from 'node:fs'
 import type { IncomingMessage, ServerResponse } from 'node:http'
 import {
   CALLBACK_PATH,
@@ -60,9 +61,98 @@ type AccountRuntime = {
   dead?: boolean
 }
 
+
+export class ThoughtSignatureStore implements ReadonlyMap<string, string> {
+  private readonly signatures = new Map<string, string>()
+  private readonly filename: string
+  private saveTimer: NodeJS.Timeout | undefined
+
+  constructor(filename: string) {
+    this.filename = filename
+    this.load()
+  }
+
+  private load(): void {
+    try {
+      if (existsSync(this.filename)) {
+        const raw = JSON.parse(readFileSync(this.filename, 'utf8'))
+        if (raw && typeof raw === 'object') {
+          for (const [k, v] of Object.entries(raw)) {
+            if (typeof v === 'string') this.signatures.set(k, v)
+          }
+        }
+      }
+    } catch {}
+  }
+
+  get(id: string): string | undefined {
+    return this.signatures.get(id)
+  }
+
+  set(id: string, signature: string): this {
+    this.signatures.set(id, signature)
+    if (this.signatures.size > 5000) {
+      const first = this.signatures.keys().next().value
+      if (first !== undefined) this.signatures.delete(first)
+    }
+    this.scheduleSave()
+    return this
+  }
+
+  has(id: string): boolean {
+    return this.signatures.has(id)
+  }
+
+  delete(id: string): boolean {
+    const res = this.signatures.delete(id)
+    if (res) this.scheduleSave()
+    return res
+  }
+
+  clear(): void {
+    this.signatures.clear()
+    this.scheduleSave()
+  }
+
+  get size(): number {
+    return this.signatures.size
+  }
+
+  forEach(callbackfn: (value: string, key: string, map: ReadonlyMap<string, string>) => void, thisArg?: unknown): void {
+    this.signatures.forEach((v, k) => callbackfn.call(thisArg, v, k, this))
+  }
+
+  [Symbol.iterator](): IterableIterator<[string, string]> {
+    return this.signatures[Symbol.iterator]()
+  }
+
+  entries(): IterableIterator<[string, string]> {
+    return this.signatures.entries()
+  }
+
+  keys(): IterableIterator<string> {
+    return this.signatures.keys()
+  }
+
+  values(): IterableIterator<string> {
+    return this.signatures.values()
+  }
+
+  private scheduleSave(): void {
+    if (this.saveTimer) return
+    this.saveTimer = setTimeout(() => {
+      this.saveTimer = undefined
+      try {
+        const obj = Object.fromEntries(this.signatures)
+        writeFileSync(this.filename, JSON.stringify(obj), 'utf8')
+      } catch {}
+    }, 1000)
+  }
+}
+
 export class AntigravitySession {
   readonly store: AntigravityCredentialStore
-  readonly thoughtSignatures = new Map<string, string>()
+  readonly thoughtSignatures: ThoughtSignatureStore
   readonly network: AntigravityNetwork
   readonly web2api: AntigravityWeb2ApiStore
   private readonly fetchImpl: FetchImpl
@@ -86,6 +176,7 @@ export class AntigravitySession {
     this.network = new AntigravityNetwork(store.filename + '.network.json')
     this.web2api = new AntigravityWeb2ApiStore(store.filename + '.web2api.json')
     this.fetchImpl = fetchImpl ?? this.network.fetch
+    this.thoughtSignatures = new ThoughtSignatureStore(store.filename + '.signatures.json')
   }
 
   private runtimeFor(accountId: string): AccountRuntime {
