@@ -9,6 +9,7 @@ const LOGOUT_PATH = '/plugins/dsh-antigravity-oauth/auth/logout'
 const SWITCH_PATH = '/plugins/dsh-antigravity-oauth/auth/accounts/switch'
 const REMOVE_PATH = '/plugins/dsh-antigravity-oauth/auth/accounts/remove'
 const QUOTAS_PATH = '/plugins/dsh-antigravity-oauth/auth/accounts/quotas'
+const ADVANCED_PATH = '/plugins/dsh-antigravity-oauth/advanced'
 const NETWORK_PATH = '/plugins/dsh-antigravity-oauth/network'
 const WEB2API_SETTINGS_PATH = '/plugins/dsh-antigravity-oauth/web2api/settings'
 const WEB2API_TEST_PATH = '/plugins/dsh-antigravity-oauth/web2api/test'
@@ -18,7 +19,7 @@ const DOCKER_CMD = 'docker run -d --name gemini-web2api -p 18088:18088 zexadev/g
 const DISMISSED_BANNER_KEY = 'dsh-antigravity-oauth.dismissed-banner'
 
 type Network = { mode: 'auto' | 'direct' | 'proxy', url: string, effective: string }
-type ActiveTab = 'accounts' | 'web2api' | 'network'
+type ActiveTab = 'accounts' | 'advanced' | 'web2api' | 'network'
 
 export interface AntigravitySettingsInjected {
   t: (key: AntigravityKey, params?: Record<string, unknown>) => string
@@ -372,9 +373,15 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
   const [quotas, setQuotas] = useState<Record<string, AccountQuotaSummary>>({})
   const [loadingQuotas, setLoadingQuotas] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [filterMode, setFilterMode] = useState<'all' | 'available' | 'exhausted'>('all')
   const [compactView, setCompactView] = useState(false)
   const [sortBy, setSortBy] = useState<'default' | 'quota'>('default')
+
+  // Advanced settings state
+  const [advancedEffort, setAdvancedEffort] = useState<'low' | 'medium' | 'high'>('medium')
+  const [advancedContextWindow, setAdvancedContextWindow] = useState<number>(1_048_576)
+  const [advancedStrategy, setAdvancedStrategy] = useState<'failover_429' | 'proactive_threshold' | 'round_robin' | 'manual'>('failover_429')
+  const [advancedThreshold, setAdvancedThreshold] = useState<number>(20)
+  const [savingAdvanced, setSavingAdvanced] = useState(false)
 
   // One-time dismissible banner state (persisted)
   const [bannerDismissed, setBannerDismissed] = useState<boolean>(() => {
@@ -430,6 +437,37 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     }
   }, [t])
 
+  const loadAdvanced = useCallback(async () => {
+    try {
+      const res = await jsonRequest<{ ok: boolean, settings: any }>(ADVANCED_PATH)
+      if (res?.settings) {
+        if (res.settings.defaultReasoningEffort) setAdvancedEffort(res.settings.defaultReasoningEffort)
+        if (res.settings.modelContextWindow) setAdvancedContextWindow(Number(res.settings.modelContextWindow))
+        if (res.settings.switchingStrategy) setAdvancedStrategy(res.settings.switchingStrategy)
+        if (typeof res.settings.proactiveThreshold === 'number') setAdvancedThreshold(res.settings.proactiveThreshold)
+      }
+    } catch {}
+  }, [])
+
+  const saveAdvanced = async () => {
+    setSavingAdvanced(true)
+    setError(undefined)
+    try {
+      await jsonRequest(ADVANCED_PATH, 'POST', {
+        defaultReasoningEffort: advancedEffort,
+        modelContextWindow: advancedContextWindow,
+        switchingStrategy: advancedStrategy,
+        proactiveThreshold: advancedThreshold,
+      })
+      setToastMessage(t('advancedSaved'))
+      setTimeout(() => setToastMessage(null), 3000)
+    } catch (caught: unknown) {
+      setError(caught instanceof Error ? caught.message : 'Failed to save advanced settings')
+    } finally {
+      setSavingAdvanced(false)
+    }
+  }
+
   const loadNetwork = useCallback(async () => {
     try {
       setNetwork(await jsonRequest<Network>(NETWORK_PATH))
@@ -454,7 +492,8 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     void refreshQuotas()
     void loadNetwork()
     void loadWeb2Api()
-  }, [refresh, refreshQuotas, loadNetwork, loadWeb2Api])
+    void loadAdvanced()
+  }, [refresh, refreshQuotas, loadNetwork, loadWeb2Api, loadAdvanced])
 
   const dismissBanner = () => {
     setBannerDismissed(true)
@@ -659,11 +698,6 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
         || a.projectId?.toLowerCase().includes(query),
       )
     }
-    if (filterMode === 'available') {
-      list = list.filter(a => !a.limited && a.ready && !a.dead)
-    } else if (filterMode === 'exhausted') {
-      list = list.filter(a => a.limited || a.dead)
-    }
     if (sortBy === 'quota') {
       list.sort((a, b) => {
         if (a.id === activeAccountId) return -1
@@ -674,7 +708,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
       })
     }
     return list
-  }, [accounts, searchQuery, filterMode, sortBy, quotas, activeAccountId])
+  }, [accounts, searchQuery, sortBy, quotas, activeAccountId])
 
   const signing = status?.status === 'signing-in'
 
@@ -715,6 +749,15 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
             ) : null}
           </button>
 
+          <button
+            type="button"
+            role="tab"
+            aria-selected={activeTab === 'advanced'}
+            className={'dsh-agy-tab-btn ' + (activeTab === 'advanced' ? 'is-active' : '')}
+            onClick={() => setActiveTab('advanced')}
+          >
+            <span>{t('tabAdvanced')}</span>
+          </button>
           <button
             type="button"
             role="tab"
@@ -790,9 +833,9 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
           {/* Accounts List & Filter Controls Card */}
           {accounts.length > 0 ? (
             <div className="dsh-agy-card">
-              {/* Toolbar */}
-              <div className="dsh-agy-row" style={{ gap: '8px' }}>
-                <div style={{ position: 'relative', flex: '1 1 180px' }}>
+              {/* Single-Line Minimal Toolbar */}
+              <div className="dsh-agy-row" style={{ gap: '10px', alignItems: 'center' }}>
+                <div style={{ position: 'relative', flex: '1 1 200px' }}>
                   <input
                     type="text"
                     className="dsh-agy-input"
@@ -813,35 +856,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                   ) : null}
                 </div>
 
-                <div className="dsh-agy-chips">
-                  <button
-                    type="button"
-                    className={'dsh-agy-chip ' + (filterMode === 'all' ? 'is-active' : '')}
-                    onClick={() => setFilterMode('all')}
-                  >
-                    {t('filterAll')} ({accounts.length})
-                  </button>
-                  <button
-                    type="button"
-                    className={'dsh-agy-chip ' + (filterMode === 'available' ? 'is-active' : '')}
-                    onClick={() => setFilterMode('available')}
-                  >
-                    {t('filterAvailable')} ({accounts.filter(a => !a.limited && a.ready && !a.dead).length})
-                  </button>
-                  <button
-                    type="button"
-                    className={'dsh-agy-chip ' + (filterMode === 'exhausted' ? 'is-active' : '')}
-                    onClick={() => setFilterMode('exhausted')}
-                  >
-                    {t('filterExhausted')} ({accounts.filter(a => a.limited || a.dead).length})
-                  </button>
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px', cursor: 'pointer', color: '#b0b4ba' }}>
-                    <input type="checkbox" checked={compactView} onChange={e => setCompactView(e.target.checked)} />
-                    <span>{t('compactView')}</span>
-                  </label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
                   <select
                     className="dsh-agy-select"
                     value={sortBy}
@@ -850,6 +865,10 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                     <option value="default">{t('sortDefault')}</option>
                     <option value="quota">{t('sortQuota')}</option>
                   </select>
+                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '12px', cursor: 'pointer', color: '#b0b4ba' }}>
+                    <input type="checkbox" checked={compactView} onChange={e => setCompactView(e.target.checked)} />
+                    <span>{t('compactView')}</span>
+                  </label>
                 </div>
               </div>
 
@@ -907,26 +926,36 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                           {/* 5h Quota Bar */}
                           {p5h !== undefined ? (
                             <div className="dsh-agy-capsule-bar" title={title5h}>
-                              <span>5h {p5h}%</span>
-                              <div className="dsh-agy-capsule-progress">
-                                <div
-                                  className={'dsh-agy-capsule-fill ' + (p5h > 40 ? 'is-high' : p5h > 15 ? 'is-med' : 'is-low')}
-                                  style={{ width: p5h + '%' }}
-                                />
+                              <div className="dsh-agy-capsule-main">
+                                <span>5h {p5h}%</span>
+                                <div className="dsh-agy-capsule-progress">
+                                  <div
+                                    className={'dsh-agy-capsule-fill ' + (p5h > 40 ? 'is-high' : p5h > 15 ? 'is-med' : 'is-low')}
+                                    style={{ width: p5h + '%' }}
+                                  />
+                                </div>
                               </div>
+                              <span className="dsh-agy-capsule-reset">
+                                {metrics?.reset5h ? metrics.reset5h : t('quotaFullyAvailable')}
+                              </span>
                             </div>
                           ) : null}
 
                           {/* Weekly Quota Bar */}
                           {pWeekly !== undefined ? (
                             <div className="dsh-agy-capsule-bar" title={titleWeekly}>
-                              <span>{t('quotaWeeklyShort')} {pWeekly}%</span>
-                              <div className="dsh-agy-capsule-progress">
-                                <div
-                                  className={'dsh-agy-capsule-fill ' + (pWeekly > 40 ? 'is-high' : pWeekly > 15 ? 'is-med' : 'is-low')}
-                                  style={{ width: pWeekly + '%' }}
-                                />
+                              <div className="dsh-agy-capsule-main">
+                                <span>{t('quotaWeeklyShort')} {pWeekly}%</span>
+                                <div className="dsh-agy-capsule-progress">
+                                  <div
+                                    className={'dsh-agy-capsule-fill ' + (pWeekly > 40 ? 'is-high' : pWeekly > 15 ? 'is-med' : 'is-low')}
+                                    style={{ width: pWeekly + '%' }}
+                                  />
+                                </div>
                               </div>
+                              <span className="dsh-agy-capsule-reset">
+                                {metrics?.resetWeekly ? metrics.resetWeekly : t('quotaFullyAvailable')}
+                              </span>
                             </div>
                           ) : null}
                         </div>
@@ -988,7 +1017,172 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
         </div>
       ) : null}
 
-      {/* TAB 2: WEB2API GATEWAY (PLAN C) */}
+      {/* TAB 2: ADVANCED CONFIGURATION */}
+      {activeTab === 'advanced' ? (
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {/* Card 1: Model Reasoning & Context Window */}
+          <div className="dsh-agy-card">
+            <div className="dsh-agy-row">
+              <p className="dsh-agy-card-title">
+                <span>🧠</span>
+                <span>{t('modelTuningTitle')}</span>
+              </p>
+            </div>
+            <p className="dsh-agy-body">{t('modelTuningDesc')}</p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '4px' }}>
+              <div>
+                <label style={{ fontSize: '12px', display: 'block', marginBottom: '6px', fontWeight: 500, color: '#f0f0f0' }}>
+                  {t('defaultReasoningEffort')}
+                </label>
+                <div className="dsh-agy-segmented" role="radiogroup">
+                  <button
+                    type="button"
+                    className={'dsh-agy-segmented-btn ' + (advancedEffort === 'low' ? 'is-active' : '')}
+                    onClick={() => setAdvancedEffort('low')}
+                  >
+                    {t('effortLow')}
+                  </button>
+                  <button
+                    type="button"
+                    className={'dsh-agy-segmented-btn ' + (advancedEffort === 'medium' ? 'is-active' : '')}
+                    onClick={() => setAdvancedEffort('medium')}
+                  >
+                    {t('effortMedium')}
+                  </button>
+                  <button
+                    type="button"
+                    className={'dsh-agy-segmented-btn ' + (advancedEffort === 'high' ? 'is-active' : '')}
+                    onClick={() => setAdvancedEffort('high')}
+                  >
+                    {t('effortHigh')}
+                  </button>
+                </div>
+              </div>
+
+              <div>
+                <label style={{ fontSize: '12px', display: 'block', marginBottom: '6px', fontWeight: 500, color: '#f0f0f0' }}>
+                  {t('modelContextWindow')}
+                </label>
+                <div className="dsh-agy-segmented" role="radiogroup">
+                  <button
+                    type="button"
+                    className={'dsh-agy-segmented-btn ' + (advancedContextWindow === 131072 ? 'is-active' : '')}
+                    onClick={() => setAdvancedContextWindow(131072)}
+                  >
+                    {t('contextWindow128K')}
+                  </button>
+                  <button
+                    type="button"
+                    className={'dsh-agy-segmented-btn ' + (advancedContextWindow === 262144 ? 'is-active' : '')}
+                    onClick={() => setAdvancedContextWindow(262144)}
+                  >
+                    {t('contextWindow256K')}
+                  </button>
+                  <button
+                    type="button"
+                    className={'dsh-agy-segmented-btn ' + (advancedContextWindow === 524288 ? 'is-active' : '')}
+                    onClick={() => setAdvancedContextWindow(524288)}
+                  >
+                    {t('contextWindow512K')}
+                  </button>
+                  <button
+                    type="button"
+                    className={'dsh-agy-segmented-btn ' + (advancedContextWindow === 1048576 ? 'is-active' : '')}
+                    onClick={() => setAdvancedContextWindow(1048576)}
+                  >
+                    {t('contextWindow1M')}
+                  </button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          {/* Card 2: Account Switching Strategies */}
+          <div className="dsh-agy-card">
+            <div className="dsh-agy-row">
+              <p className="dsh-agy-card-title">
+                <span>🔄</span>
+                <span>{t('switchingStrategyTitle')}</span>
+              </p>
+            </div>
+            <p className="dsh-agy-body">{t('switchingStrategyDesc')}</p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
+              <div
+                className={'dsh-agy-radio-card ' + (advancedStrategy === 'failover_429' ? 'is-active' : '')}
+                onClick={() => setAdvancedStrategy('failover_429')}
+              >
+                <input type="radio" checked={advancedStrategy === 'failover_429'} readOnly style={{ cursor: 'pointer' }} />
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#f0f0f0' }}>{t('strategyFailover')}</span>
+                  <span style={{ fontSize: '11px', color: '#9a9ea5' }}>Switch to the account with highest quota only when 429 quota exhaustion occurs.</span>
+                </div>
+              </div>
+
+              <div
+                className={'dsh-agy-radio-card ' + (advancedStrategy === 'proactive_threshold' ? 'is-active' : '')}
+                onClick={() => setAdvancedStrategy('proactive_threshold')}
+              >
+                <input type="radio" checked={advancedStrategy === 'proactive_threshold'} readOnly style={{ cursor: 'pointer' }} />
+                <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#f0f0f0' }}>{t('strategyProactive')}</span>
+                  <span style={{ fontSize: '11px', color: '#9a9ea5' }}>{t('thresholdLabel', { threshold: advancedThreshold })}</span>
+                  {advancedStrategy === 'proactive_threshold' ? (
+                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px' }} onClick={e => e.stopPropagation()}>
+                      <input
+                        type="range"
+                        min="10"
+                        max="40"
+                        step="5"
+                        value={advancedThreshold}
+                        onChange={e => setAdvancedThreshold(Number(e.target.value))}
+                        style={{ flex: '1 1 140px', cursor: 'pointer' }}
+                      />
+                      <span style={{ fontSize: '12px', fontWeight: 600, color: '#1677ff', minWidth: '35px' }}>{advancedThreshold}%</span>
+                    </div>
+                  ) : null}
+                </div>
+              </div>
+
+              <div
+                className={'dsh-agy-radio-card ' + (advancedStrategy === 'round_robin' ? 'is-active' : '')}
+                onClick={() => setAdvancedStrategy('round_robin')}
+              >
+                <input type="radio" checked={advancedStrategy === 'round_robin'} readOnly style={{ cursor: 'pointer' }} />
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#f0f0f0' }}>{t('strategyRoundRobin')}</span>
+                  <span style={{ fontSize: '11px', color: '#9a9ea5' }}>Rotate through all available accounts per turn to balance rolling usage.</span>
+                </div>
+              </div>
+
+              <div
+                className={'dsh-agy-radio-card ' + (advancedStrategy === 'manual' ? 'is-active' : '')}
+                onClick={() => setAdvancedStrategy('manual')}
+              >
+                <input type="radio" checked={advancedStrategy === 'manual'} readOnly style={{ cursor: 'pointer' }} />
+                <div style={{ display: 'flex', flexDirection: 'column' }}>
+                  <span style={{ fontSize: '13px', fontWeight: 500, color: '#f0f0f0' }}>{t('strategyManual')}</span>
+                  <span style={{ fontSize: '11px', color: '#9a9ea5' }}>Never auto-switch accounts; stay strictly on the currently selected account.</span>
+                </div>
+              </div>
+            </div>
+
+            <div style={{ marginTop: '8px' }}>
+              <button
+                type="button"
+                className="dsh-agy-btn dsh-agy-btn-primary"
+                disabled={savingAdvanced}
+                onClick={() => { void saveAdvanced() }}
+              >
+                {savingAdvanced ? t('working') : t('saveAdvanced')}
+              </button>
+            </div>
+          </div>
+        </div>
+      ) : null}
+
+      {/* TAB 3: WEB2API GATEWAY (PLAN C) */}
       {activeTab === 'web2api' ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
           <div className="dsh-agy-guide-card">
@@ -1166,7 +1360,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
         </div>
       ) : null}
 
-      {/* TAB 3: NETWORK & PROXY */}
+      {/* TAB 4: NETWORK & PROXY */}
       {activeTab === 'network' && network ? (
         <div className="dsh-agy-card">
           <p className="dsh-agy-card-title">{t('network')}</p>

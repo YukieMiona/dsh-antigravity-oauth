@@ -687,6 +687,20 @@ export class AntigravitySession {
     })
   }
 
+  private cachedAdvanced?: AdvancedSettings
+
+  async getAdvancedSettings(): Promise<AdvancedSettings> {
+    if (this.cachedAdvanced) return this.cachedAdvanced
+    this.cachedAdvanced = await this.store.getAdvanced()
+    return this.cachedAdvanced
+  }
+
+  async saveAdvancedSettings(settings: Partial<AdvancedSettings>): Promise<AdvancedSettings> {
+    const saved = await this.store.setAdvanced(settings)
+    this.cachedAdvanced = saved
+    return saved
+  }
+
   async retrieveAllQuotas(): Promise<Record<string, AccountQuotaSummary>> {
     const accounts = await this.store.list()
     const result: Record<string, AccountQuotaSummary> = {}

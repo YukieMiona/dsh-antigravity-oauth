@@ -15,12 +15,27 @@ const MIGRATED_ACCOUNT_ID = 'acc_default'
 const OAUTH_FIELDS = new Set(['type', 'access', 'refresh', 'expires', 'projectId', 'email'])
 const ACCOUNT_FIELDS = new Set([...OAUTH_FIELDS, 'id', 'addedAt'])
 
+export interface AdvancedSettings {
+  defaultReasoningEffort: 'low' | 'medium' | 'high'
+  modelContextWindow: number
+  switchingStrategy: 'failover_429' | 'proactive_threshold' | 'round_robin' | 'manual'
+  proactiveThreshold: number
+}
+
+export const DEFAULT_ADVANCED_SETTINGS: AdvancedSettings = {
+  defaultReasoningEffort: 'medium',
+  modelContextWindow: 1_048_576,
+  switchingStrategy: 'failover_429',
+  proactiveThreshold: 20,
+}
+
 export type StoredAccount = AntigravityGrant & { id: string, addedAt?: string }
 
 interface AuthDocument {
   version: typeof AUTH_FORMAT_VERSION
   activeId?: string
   accounts: StoredAccount[]
+  advanced?: AdvancedSettings
 }
 
 function isENOENT(error: unknown): boolean {
@@ -130,7 +145,7 @@ function parseDocument(text: string, filename: string): ParsedDocument {
   if (value.version !== AUTH_FORMAT_VERSION) {
     throw new Error(`dsh-antigravity-oauth: ${filename} has unsupported auth format version ${String(value.version)}`)
   }
-  if (Object.keys(value).some(key => key !== 'version' && key !== 'activeId' && key !== 'accounts')) {
+  if (Object.keys(value).some(key => key !== 'version' && key !== 'activeId' && key !== 'accounts' && key !== 'advanced')) {
     throw new Error(`dsh-antigravity-oauth: ${filename} contains an unknown top-level field`)
   }
   if (!Array.isArray(value.accounts)) {
@@ -156,7 +171,27 @@ function parseDocument(text: string, filename: string): ParsedDocument {
   } else if (accounts.length > 0) {
     activeId = accounts[0]!.id
   }
-  return { fromV1: false, document: { version: AUTH_FORMAT_VERSION, activeId, accounts } }
+    let advanced: AdvancedSettings | undefined
+  if (value.advanced !== undefined && isRecord(value.advanced)) {
+    const rawEffort = String(value.advanced.defaultReasoningEffort || '')
+    const defaultReasoningEffort = ['low', 'medium', 'high'].includes(rawEffort)
+      ? rawEffort as AdvancedSettings['defaultReasoningEffort']
+      : DEFAULT_ADVANCED_SETTINGS.defaultReasoningEffort
+    const rawWindow = Number(value.advanced.modelContextWindow)
+    const modelContextWindow = Number.isFinite(rawWindow) && rawWindow > 0
+      ? rawWindow
+      : DEFAULT_ADVANCED_SETTINGS.modelContextWindow
+    const rawStrategy = String(value.advanced.switchingStrategy || '')
+    const switchingStrategy = ['failover_429', 'proactive_threshold', 'round_robin', 'manual'].includes(rawStrategy)
+      ? rawStrategy as AdvancedSettings['switchingStrategy']
+      : DEFAULT_ADVANCED_SETTINGS.switchingStrategy
+    const rawThresh = Number(value.advanced.proactiveThreshold)
+    const proactiveThreshold = Number.isFinite(rawThresh) && rawThresh >= 0 && rawThresh <= 100
+      ? rawThresh
+      : DEFAULT_ADVANCED_SETTINGS.proactiveThreshold
+    advanced = { defaultReasoningEffort, modelContextWindow, switchingStrategy, proactiveThreshold }
+  }
+  return { fromV1: false, document: { version: AUTH_FORMAT_VERSION, activeId, accounts, ...advanced ? { advanced } : {} } }
 }
 
 export function antigravityAuthPath(dshHome?: string): string {
@@ -249,7 +284,7 @@ export class AntigravityCredentialStore {
         }, this.filename)
         accounts.push(added)
       }
-      await this.writeDocument({ version: AUTH_FORMAT_VERSION, activeId: added.id, accounts }, parsed?.fromV1 === true)
+      await this.writeDocument({ version: AUTH_FORMAT_VERSION, activeId: added.id, accounts, ...parsed?.document.advanced ? { advanced: parsed.document.advanced } : {} }, parsed?.fromV1 === true)
       return structuredClone(added)
     })
   }
@@ -265,7 +300,7 @@ export class AntigravityCredentialStore {
         return updated
       })
       if (updated === undefined) throw new Error(`dsh-antigravity-oauth: unknown account ${id}`)
-      await this.writeDocument({ version: AUTH_FORMAT_VERSION, activeId: parsed.document.activeId, accounts }, parsed.fromV1)
+      await this.writeDocument({ version: AUTH_FORMAT_VERSION, activeId: parsed.document.activeId, accounts, ...parsed.document.advanced ? { advanced: parsed.document.advanced } : {} }, parsed.fromV1)
       return structuredClone(updated)
     })
   }
@@ -289,8 +324,42 @@ export class AntigravityCredentialStore {
       if (account === undefined) throw new Error(`dsh-antigravity-oauth: unknown account ${id}`)
       const accounts = parsed.document.accounts.filter(entry => entry.id !== id)
       const activeId = parsed.document.activeId === id ? accounts[0]?.id : parsed.document.activeId
-      await this.writeDocument({ version: AUTH_FORMAT_VERSION, activeId, accounts }, parsed.fromV1)
+      await this.writeDocument({ version: AUTH_FORMAT_VERSION, activeId, accounts, ...parsed.document.advanced ? { advanced: parsed.document.advanced } : {} }, parsed.fromV1)
       return structuredClone(account)
     })
   }
+  async getAdvanced(): Promise<AdvancedSettings> {
+    const parsed = await this.readParsed()
+    return parsed?.document.advanced ? structuredClone(parsed.document.advanced) : { ...DEFAULT_ADVANCED_SETTINGS }
+  }
+
+  async setAdvanced(settings: Partial<AdvancedSettings>): Promise<AdvancedSettings> {
+    return withFileLock(this.filename, async () => {
+      const parsed = await this.readParsed()
+      const current = parsed?.document.advanced ?? DEFAULT_ADVANCED_SETTINGS
+      const rawEffort = String(settings.defaultReasoningEffort || current.defaultReasoningEffort)
+      const defaultReasoningEffort = ['low', 'medium', 'high'].includes(rawEffort)
+        ? rawEffort as AdvancedSettings['defaultReasoningEffort']
+        : current.defaultReasoningEffort
+      const rawWindow = Number(settings.modelContextWindow ?? current.modelContextWindow)
+      const modelContextWindow = Number.isFinite(rawWindow) && rawWindow > 0
+        ? rawWindow
+        : current.modelContextWindow
+      const rawStrategy = String(settings.switchingStrategy || current.switchingStrategy)
+      const switchingStrategy = ['failover_429', 'proactive_threshold', 'round_robin', 'manual'].includes(rawStrategy)
+        ? rawStrategy as AdvancedSettings['switchingStrategy']
+        : current.switchingStrategy
+      const rawThresh = Number(settings.proactiveThreshold ?? current.proactiveThreshold)
+      const proactiveThreshold = Number.isFinite(rawThresh) && rawThresh >= 0 && rawThresh <= 100
+        ? rawThresh
+        : current.proactiveThreshold
+      const nextAdv: AdvancedSettings = { defaultReasoningEffort, modelContextWindow, switchingStrategy, proactiveThreshold }
+      const nextDoc: AuthDocument = parsed === undefined
+        ? { version: AUTH_FORMAT_VERSION, accounts: [], advanced: nextAdv }
+        : { ...parsed.document, advanced: nextAdv }
+      await this.writeDocument(nextDoc, parsed?.fromV1 === true)
+      return structuredClone(nextAdv)
+    })
+  }
 }
+

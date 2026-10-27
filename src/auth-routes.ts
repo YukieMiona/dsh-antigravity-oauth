@@ -3,6 +3,7 @@ import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-host-webserver'
 import {
   ACCOUNT_QUOTAS_PATH,
+  ADVANCED_SETTINGS_PATH,
   ACCOUNT_REMOVE_PATH,
   ACCOUNT_SWITCH_PATH,
   AUTH_COMPLETE_PATH,
@@ -226,6 +227,33 @@ export function registerAntigravityAuthRoutes(
           } catch (error: unknown) {
             json(res, 500, { error: safeMessage(error) })
           }
+        },
+      }),
+      ctx.webServer.register({
+        kind: 'exact',
+        path: ADVANCED_SETTINGS_PATH,
+        handler: async (req, res) => {
+          if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
+          if (req.method === 'GET') {
+            try {
+              const settings = await session.getAdvancedSettings()
+              json(res, 200, { ok: true, settings })
+            } catch (err: unknown) {
+              json(res, 500, { error: safeMessage(err) })
+            }
+            return
+          }
+          if (req.method === 'POST') {
+            try {
+              const body = await readJson(req)
+              const settings = await session.saveAdvancedSettings(body as any)
+              json(res, 200, { ok: true, settings })
+            } catch (err: unknown) {
+              json(res, 500, { error: safeMessage(err) })
+            }
+            return
+          }
+          json(res, 405, { error: 'method not allowed' })
         },
       }),
       ctx.webServer.register({
