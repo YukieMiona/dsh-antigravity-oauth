@@ -35,8 +35,8 @@ const SETTINGS_CSS = `
 /* Navigation Tabs */
 .dsh-agy-tabs {
   display:inline-flex; align-items:center; gap:4px; padding:3px;
-  background:var(--dsw-alias-bg-module-platform, rgba(128,128,128,0.08));
-  border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.2));
+  background:var(--dsw-alias-bg-module-platform, rgba(128,128,128,0.1));
+  border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.25));
   border-radius:10px; width:fit-content; margin-bottom:4px;
 }
 .dsh-agy-tab-btn {
@@ -45,7 +45,7 @@ const SETTINGS_CSS = `
   color:var(--dsw-alias-label-secondary); font:inherit; font-size:13px; font-weight:500;
   cursor:pointer; transition:all 0.15s ease;
 }
-.dsh-agy-tab-btn:hover { color:var(--dsw-alias-label-primary); background:rgba(128,128,128,0.06); }
+.dsh-agy-tab-btn:hover { color:var(--dsw-alias-label-primary); background:rgba(128,128,128,0.08); }
 .dsh-agy-tab-btn.is-active {
   color:#ffffff !important; background:var(--dsw-alias-brand-primary, #1677ff) !important;
   box-shadow:0 1px 4px rgba(22, 119, 255, 0.35); font-weight:600;
@@ -63,16 +63,17 @@ const SETTINGS_CSS = `
 /* Status Badges */
 .dsh-agy-status-badge {
   display:inline-flex; align-items:center; gap:5px; padding:2px 8px; border-radius:10px;
-  font-size:11px; font-weight:500; background:rgba(128,128,128,0.1); color:var(--dsw-alias-label-secondary);
+  font-size:11px; font-weight:500; background:rgba(128,128,128,0.12); color:var(--dsw-alias-label-secondary);
 }
-.dsh-agy-status-badge.is-success { background:rgba(34,160,107,0.15); color:var(--dsw-alias-state-success-primary, #22a06b); }
-.dsh-agy-status-badge.is-error { background:rgba(217,45,32,0.15); color:var(--dsw-alias-state-error-primary, #d92d20); }
+.dsh-agy-status-badge.is-success { background:rgba(34,160,107,0.18); color:var(--dsw-alias-state-success-primary, #22a06b); font-weight:600; }
+.dsh-agy-status-badge.is-error { background:rgba(217,45,32,0.18); color:var(--dsw-alias-state-error-primary, #d92d20); }
+.dsh-agy-status-badge.is-switching { background:rgba(250,140,22,0.18); color:#fa8c16; font-weight:600; }
 .dsh-agy-dot { width:8px; height:8px; border-radius:50%; flex:0 0 auto; background:var(--dsw-alias-label-dimmed, #9aa0a6); }
 .dsh-agy-dot.is-signed-in, .dsh-agy-dot.is-active { background:var(--dsw-alias-state-success-primary, #22a06b); }
 .dsh-agy-dot.is-error { background:var(--dsw-alias-state-error-primary, #d92d20); }
 .dsh-agy-dot.is-signing-in { background:var(--dsw-alias-brand-primary, #1677ff); }
 
-/* Buttons */
+/* Buttons - Solid contrast colors that never wash out */
 .dsh-agy-btn {
   box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center;
   min-height:30px; padding:4px 14px; border-radius:8px; font:inherit; font-size:13px; line-height:20px;
@@ -80,20 +81,21 @@ const SETTINGS_CSS = `
 }
 .dsh-agy-btn:disabled { opacity:0.5; cursor:not-allowed; }
 .dsh-agy-btn-primary {
-  background:var(--dsw-alias-brand-primary, #1677ff) !important; color:#ffffff !important;
-  border:1px solid transparent; box-shadow:0 1px 2px rgba(0,0,0,0.1); font-weight:500;
+  background:#1677ff !important; color:#ffffff !important;
+  border:1px solid #1677ff !important; box-shadow:0 1px 2px rgba(0,0,0,0.15); font-weight:500;
 }
-.dsh-agy-btn-primary:hover:not(:disabled) { opacity:0.9; }
+.dsh-agy-btn-primary:hover:not(:disabled) { background:#0958d9 !important; border-color:#0958d9 !important; }
 .dsh-agy-btn-secondary {
-  border:1px solid var(--dsw-alias-border-l1, rgba(128,128,128,0.35)) !important;
-  background:var(--dsw-alias-bg-module-platform, rgba(128,128,128,0.12)) !important;
-  color:var(--dsw-alias-label-primary, #e0e0e0) !important;
+  border:1px solid rgba(128,128,128,0.3) !important;
+  background:#2b2d30 !important;
+  color:#f0f0f0 !important;
 }
 .dsh-agy-btn-secondary:hover:not(:disabled) {
-  background:rgba(128,128,128,0.2) !important;
-  border-color:var(--dsw-alias-brand-primary, #1677ff) !important;
+  background:#3c3f41 !important;
+  border-color:#1677ff !important;
+  color:#ffffff !important;
 }
-.dsh-agy-btn-compact { min-height:24px; padding:2px 8px; font-size:11px; border-radius:6px; }
+.dsh-agy-btn-compact { min-height:24px; padding:2px 10px; font-size:11px; border-radius:6px; }
 
 /* Inputs */
 .dsh-agy-input {
@@ -102,7 +104,7 @@ const SETTINGS_CSS = `
   background:var(--dsw-alias-bg-page-primary, #1e1e1e); color:var(--dsw-alias-label-primary, inherit);
   font:inherit; font-size:13px; outline:none; transition:border-color 0.15s ease;
 }
-.dsh-agy-input:focus { border-color:var(--dsw-alias-brand-primary, #1677ff); }
+.dsh-agy-input:focus { border-color:#1677ff; }
 .dsh-agy-select {
   box-sizing:border-box; min-height:28px; padding:2px 8px; border-radius:6px;
   border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.3));
@@ -118,13 +120,13 @@ const SETTINGS_CSS = `
   background:rgba(128,128,128,0.05); color:var(--dsw-alias-label-secondary);
   transition:all 0.15s ease;
 }
-.dsh-agy-chip:hover { border-color:var(--dsw-alias-brand-primary); color:var(--dsw-alias-label-primary); }
+.dsh-agy-chip:hover { border-color:#1677ff; color:var(--dsw-alias-label-primary); }
 .dsh-agy-chip.is-active {
-  border-color:var(--dsw-alias-brand-primary, #1677ff);
-  background:rgba(22, 119, 255, 0.12); color:var(--dsw-alias-brand-primary, #1677ff); font-weight:600;
+  border-color:#1677ff;
+  background:rgba(22, 119, 255, 0.15); color:#1677ff; font-weight:600;
 }
 
-/* Accounts List & Flexbox Grid Row Alignment (No Wrapping) */
+/* Accounts List & Single Row Alignment */
 .dsh-agy-account-list {
   max-height:480px; overflow-y:auto; padding-right:2px; display:flex; flex-direction:column; gap:6px;
 }
@@ -139,8 +141,8 @@ const SETTINGS_CSS = `
   padding:5px 10px; min-height:36px;
 }
 .dsh-agy-account.is-active {
-  border-color:var(--dsw-alias-brand-primary, #1677ff);
-  background:rgba(22, 119, 255, 0.05);
+  border-color:#1677ff;
+  background:rgba(22, 119, 255, 0.06);
 }
 .dsh-agy-account-main {
   display:flex; align-items:center; gap:8px; flex:1 1 0; min-width:0;
@@ -150,33 +152,28 @@ const SETTINGS_CSS = `
   font-size:13px; font-weight:500; color:var(--dsw-alias-label-primary);
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
-.dsh-agy-link { color:var(--dsw-alias-brand-primary, #1677ff); text-decoration:none; }
+.dsh-agy-link { color:#1677ff; text-decoration:none; }
 .dsh-agy-link:hover { text-decoration:underline; }
 
 /* Right Columns Container (Always Stays in One Line) */
 .dsh-agy-account-metrics {
-  display:flex; align-items:center; gap:8px; flex:0 0 auto;
+  display:flex; align-items:center; gap:10px; flex:0 0 auto;
 }
 
-/* Quota Sticker Bars with Subtext */
+/* Compact Clean Quota Capsule */
 .dsh-agy-capsule-bar {
-  box-sizing:border-box; width:135px; display:flex; flex-direction:column;
-  padding:3px 8px; border-radius:6px;
-  background:rgba(128,128,128,0.08); color:var(--dsw-alias-label-secondary);
-}
-.dsh-agy-capsule-header {
-  display:flex; align-items:center; justify-content:space-between; width:100%; font-size:11px;
+  box-sizing:border-box; width:130px; display:inline-flex; align-items:center; justify-content:space-between;
+  gap:6px; font-size:11px; padding:4px 8px; border-radius:6px;
+  background:rgba(128,128,128,0.1); color:var(--dsw-alias-label-secondary);
+  cursor:help;
 }
 .dsh-agy-capsule-progress {
-  width:42px; height:6px; border-radius:3px; background:rgba(128,128,128,0.2); overflow:hidden; flex:0 0 42px;
+  width:44px; height:6px; border-radius:3px; background:rgba(128,128,128,0.25); overflow:hidden; flex:0 0 44px;
 }
 .dsh-agy-capsule-fill { height:100%; border-radius:3px; transition:width 0.3s ease; }
 .dsh-agy-capsule-fill.is-high { background:var(--dsw-alias-state-success-primary, #22a06b); }
 .dsh-agy-capsule-fill.is-med { background:#fa8c16; }
 .dsh-agy-capsule-fill.is-low { background:var(--dsw-alias-state-error-primary, #d92d20); }
-.dsh-agy-capsule-sub {
-  font-size:10px; opacity:0.75; margin-top:1px; line-height:12px;
-}
 
 /* Code Snippet Box */
 .dsh-agy-code-box {
@@ -227,11 +224,13 @@ function getAccountQuotaMetrics(quota?: AccountQuotaSummary) {
 
 function ensureThemeStyles(): void {
   if (typeof document === 'undefined') return
-  if (document.getElementById(STYLE_ID) !== null) return
-  const style = document.createElement('style')
-  style.id = STYLE_ID
+  let style = document.getElementById(STYLE_ID) as HTMLStyleElement | null
+  if (!style) {
+    style = document.createElement('style')
+    style.id = STYLE_ID
+    document.head.appendChild(style)
+  }
   style.textContent = SETTINGS_CSS
-  document.head.appendChild(style)
 }
 
 async function jsonRequest<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
@@ -260,6 +259,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
   const [status, setStatus] = useState<AntigravityStatus | undefined>(undefined)
   const [error, setError] = useState<string | undefined>(undefined)
   const [busy, setBusy] = useState(false)
+  const [switchingId, setSwitchingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const [quotas, setQuotas] = useState<Record<string, AccountQuotaSummary>>({})
   const [loadingQuotas, setLoadingQuotas] = useState(false)
@@ -398,7 +398,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     }
   }
 
-  // Plan C: Auto-detect local gemini-web2api gateway on port 18088
+  // Plan C: Auto-detect local gateway
   const detectLocalGateway = async () => {
     setWeb2apiDetecting(true)
     setWeb2apiFeedback(null)
@@ -465,16 +465,16 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     }
   }
 
-  // Fast optimistic account switch
+  // Account switch with clean switching state
   const switchAccount = async (id: string) => {
-    // Optimistic UI update: instantly update activeId so radio & card reflect choice
-    setStatus(prev => prev && prev.status === 'signed-in' ? { ...prev, activeId: id } : prev)
+    setSwitchingId(id)
     try {
       await jsonRequest(SWITCH_PATH, 'POST', { id })
-      void refresh()
+      await refresh()
     } catch (caught: unknown) {
       setError(caught instanceof Error ? caught.message : t('requestFailed'))
-      void refresh()
+    } finally {
+      setSwitchingId(null)
     }
   }
 
@@ -556,7 +556,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
         >
           <span>{t('tabAccounts')}</span>
           {accounts.length > 0 ? (
-            <span style={{ fontSize: '11px', opacity: 0.85, background: 'rgba(255,255,255,0.2)', padding: '1px 6px', borderRadius: '10px' }}>
+            <span style={{ fontSize: '11px', opacity: 0.85, background: 'rgba(255,255,255,0.25)', padding: '1px 6px', borderRadius: '10px' }}>
               {accounts.length}
             </span>
           ) : null}
@@ -682,7 +682,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                 </div>
               </div>
 
-              {/* Flexbox Row: Left main info | Right metrics container (No line wrapping) */}
+              {/* Strict Clean Flex Row */}
               <div className="dsh-agy-account-list">
                 {filteredAccounts.length === 0 ? (
                   <div style={{ padding: '24px', textAlign: 'center', opacity: 0.6, fontSize: '13px' }}>
@@ -691,6 +691,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                 ) : (
                   filteredAccounts.map(account => {
                     const isActive = account.id === activeAccountId
+                    const isSwitching = account.id === switchingId
                     const metrics = getAccountQuotaMetrics(quotas[account.id])
                     const p5h = metrics?.p5h
                     const pWeekly = metrics?.pWeekly
@@ -701,12 +702,13 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                         className={'dsh-agy-account ' + (isActive ? 'is-active ' : '') + (compactView ? 'is-compact' : '')}
                       >
                         {/* Col 1: Account Info */}
-                        <div className="dsh-agy-account-main" onClick={() => { if (!isActive) void switchAccount(account.id) }}>
+                        <div className="dsh-agy-account-main" onClick={() => { if (!isActive && !switchingId) void switchAccount(account.id) }}>
                           <input type="radio" checked={isActive} readOnly style={{ cursor: 'pointer', flexShrink: 0 }} />
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0, overflow: 'hidden' }}>
                             <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                               <span className="dsh-agy-account-mail">{account.email ?? account.id}</span>
-                              {isActive ? <span className="dsh-agy-status-badge is-success">{t('activeBadge')}</span> : null}
+                              {isSwitching ? <span className="dsh-agy-status-badge is-switching">{t('working')}...</span> : null}
+                              {!isSwitching && isActive ? <span className="dsh-agy-status-badge is-success">{t('activeBadge')}</span> : null}
                               {account.limited ? <span className="dsh-agy-status-badge is-error">{t('accountLimited')}</span> : null}
                               {account.dead ? <span className="dsh-agy-status-badge is-error">{t('accountNeedsRelogin')}</span> : null}
                             </div>
@@ -716,38 +718,34 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                           </div>
                         </div>
 
-                        {/* Col 2: Metrics container (Fixed size, never wraps to next line) */}
+                        {/* Col 2: Metrics container */}
                         <div className="dsh-agy-account-metrics">
                           {/* 5h Capsule */}
-                          <div className="dsh-agy-capsule-bar" title={'5h: ' + (p5h !== undefined ? p5h + '%' : '--') + ' ' + (metrics?.reset5h ?? '')}>
-                            <div className="dsh-agy-capsule-header">
-                              <span>{t('quota5h')} {p5h !== undefined ? p5h + '%' : '--'}</span>
-                              <div className="dsh-agy-capsule-progress">
-                                <div
-                                  className={'dsh-agy-capsule-fill ' + ((p5h ?? 0) > 40 ? 'is-high' : (p5h ?? 0) > 15 ? 'is-med' : 'is-low')}
-                                  style={{ width: (p5h ?? 0) + '%' }}
-                                />
-                              </div>
+                          <div
+                            className="dsh-agy-capsule-bar"
+                            title={'5h: ' + (p5h !== undefined ? p5h + '%' : '--') + (metrics?.reset5h ? ' (' + t('quotaResetsIn') + ' ' + metrics.reset5h + ')' : '')}
+                          >
+                            <span>{t('quota5h')} {p5h !== undefined ? p5h + '%' : '--'}</span>
+                            <div className="dsh-agy-capsule-progress">
+                              <div
+                                className={'dsh-agy-capsule-fill ' + ((p5h ?? 0) > 40 ? 'is-high' : (p5h ?? 0) > 15 ? 'is-med' : 'is-low')}
+                                style={{ width: (p5h ?? 0) + '%' }}
+                              />
                             </div>
-                            {metrics?.reset5h ? (
-                              <span className="dsh-agy-capsule-sub">{t('quotaResetsIn')} {metrics.reset5h}</span>
-                            ) : null}
                           </div>
 
                           {/* Weekly Capsule */}
-                          <div className="dsh-agy-capsule-bar" title={'Weekly: ' + (pWeekly !== undefined ? pWeekly + '%' : '--') + ' ' + (metrics?.resetWeekly ?? '')}>
-                            <div className="dsh-agy-capsule-header">
-                              <span>{t('quotaWeeklyShort')} {pWeekly !== undefined ? pWeekly + '%' : '--'}</span>
-                              <div className="dsh-agy-capsule-progress">
-                                <div
-                                  className={'dsh-agy-capsule-fill ' + ((pWeekly ?? 0) > 40 ? 'is-high' : (pWeekly ?? 0) > 15 ? 'is-med' : 'is-low')}
-                                  style={{ width: (pWeekly ?? 0) + '%' }}
-                                />
-                              </div>
+                          <div
+                            className="dsh-agy-capsule-bar"
+                            title={'Weekly: ' + (pWeekly !== undefined ? pWeekly + '%' : '--') + (metrics?.resetWeekly ? ' (' + t('quotaResetsIn') + ' ' + metrics.resetWeekly + ')' : '')}
+                          >
+                            <span>{t('quotaWeeklyShort')} {pWeekly !== undefined ? pWeekly + '%' : '--'}</span>
+                            <div className="dsh-agy-capsule-progress">
+                              <div
+                                className={'dsh-agy-capsule-fill ' + ((pWeekly ?? 0) > 40 ? 'is-high' : (pWeekly ?? 0) > 15 ? 'is-med' : 'is-low')}
+                                style={{ width: (pWeekly ?? 0) + '%' }}
+                              />
                             </div>
-                            {metrics?.resetWeekly ? (
-                              <span className="dsh-agy-capsule-sub">{t('quotaResetsIn')} {metrics.resetWeekly}</span>
-                            ) : null}
                           </div>
 
                           {/* Remove button */}
@@ -756,7 +754,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                               <button
                                 type="button"
                                 className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
-                                disabled={busy}
+                                disabled={busy || Boolean(switchingId)}
                                 onClick={() => { void removeAccount(account.id) }}
                               >
                                 {t('removeAccount')}
@@ -810,7 +808,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
       {activeTab === 'web2api' ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           {/* Quick Setup Card (Plan C) */}
-          <div className="dsh-agy-card" style={{ borderLeft: '3px solid var(--dsw-alias-brand-primary, #1677ff)' }}>
+          <div className="dsh-agy-card" style={{ borderLeft: '3px solid #1677ff' }}>
             <div className="dsh-agy-row">
               <p className="dsh-agy-card-title">{t('quickSetupTitle')}</p>
               <button
