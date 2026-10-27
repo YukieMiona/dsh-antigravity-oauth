@@ -13,8 +13,8 @@ const NETWORK_PATH = '/plugins/dsh-antigravity-oauth/network'
 const WEB2API_SETTINGS_PATH = '/plugins/dsh-antigravity-oauth/web2api/settings'
 const WEB2API_TEST_PATH = '/plugins/dsh-antigravity-oauth/web2api/test'
 
-const POLL_INTERVAL_MS = 1_000
 const STYLE_ID = 'dsh-antigravity-oauth-settings-theme'
+const DOCKER_CMD = 'docker run -d --name gemini-web2api -p 8080:8080 zexadev/gemini-web2api-go:latest'
 
 type Network = { mode: 'auto' | 'direct' | 'proxy', url: string, effective: string }
 type ActiveTab = 'accounts' | 'web2api' | 'network'
@@ -27,11 +27,12 @@ export type AntigravitySettingsProps = Partial<AntigravitySettingsInjected>
 
 const SETTINGS_CSS = `
 .dsh-agy-page { display:flex; flex-direction:column; gap:16px; max-width:680px; color:var(--dsw-alias-label-primary); font-family:inherit; }
-.dsh-agy-header { display:flex; flex-direction:column; gap:4px; margin-bottom:4px; }
+.dsh-agy-header { display:flex; flex-direction:column; gap:4px; margin-bottom:2px; }
 .dsh-agy-title { margin:0; font-size:20px; line-height:28px; font-weight:600; color:var(--dsw-alias-label-primary); }
 .dsh-agy-body { margin:0; font-size:13px; line-height:20px; color:var(--dsw-alias-label-secondary); }
 .dsh-agy-error { margin:0; font-size:13px; line-height:20px; color:var(--dsw-alias-state-error-primary); }
 
+/* Navigation Tabs */
 .dsh-agy-tabs {
   display:inline-flex; align-items:center; gap:4px; padding:3px;
   background:var(--dsw-alias-bg-module-platform, rgba(128,128,128,0.08));
@@ -46,60 +47,66 @@ const SETTINGS_CSS = `
 }
 .dsh-agy-tab-btn:hover { color:var(--dsw-alias-label-primary); background:rgba(128,128,128,0.06); }
 .dsh-agy-tab-btn.is-active {
-  color:var(--dsw-alias-label-primary); background:var(--dsw-alias-bg-page-primary, #fff);
-  box-shadow:0 1px 3px rgba(0,0,0,0.08); font-weight:600;
+  color:#ffffff !important; background:var(--dsw-alias-brand-primary, #1677ff) !important;
+  box-shadow:0 1px 4px rgba(22, 119, 255, 0.35); font-weight:600;
 }
 
+/* Cards */
 .dsh-agy-card {
-  display:flex; flex-direction:column; gap:12px; padding:16px 18px;
+  display:flex; flex-direction:column; gap:12px; padding:14px 16px;
   border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.2));
-  border-radius:14px; background:var(--dsw-alias-bg-module-platform, rgba(128,128,128,0.03));
+  border-radius:12px; background:var(--dsw-alias-bg-module-platform, rgba(128,128,128,0.03));
 }
 .dsh-agy-row { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px; }
-.dsh-agy-card-title { margin:0; font-size:15px; font-weight:600; color:var(--dsw-alias-label-primary); display:flex; align-items:center; gap:8px; }
+.dsh-agy-card-title { margin:0; font-size:14px; font-weight:600; color:var(--dsw-alias-label-primary); display:flex; align-items:center; gap:8px; }
 
+/* Status Badges */
 .dsh-agy-status-badge {
-  display:inline-flex; align-items:center; gap:6px; padding:2px 8px; border-radius:12px;
-  font-size:12px; font-weight:500; background:rgba(128,128,128,0.1); color:var(--dsw-alias-label-secondary);
+  display:inline-flex; align-items:center; gap:5px; padding:2px 8px; border-radius:10px;
+  font-size:11px; font-weight:500; background:rgba(128,128,128,0.1); color:var(--dsw-alias-label-secondary);
 }
-.dsh-agy-status-badge.is-success { background:rgba(34,160,107,0.12); color:var(--dsw-alias-state-success-primary, #22a06b); }
-.dsh-agy-status-badge.is-error { background:rgba(217,45,32,0.12); color:var(--dsw-alias-state-error-primary, #d92d20); }
+.dsh-agy-status-badge.is-success { background:rgba(34,160,107,0.15); color:var(--dsw-alias-state-success-primary, #22a06b); }
+.dsh-agy-status-badge.is-error { background:rgba(217,45,32,0.15); color:var(--dsw-alias-state-error-primary, #d92d20); }
 .dsh-agy-dot { width:8px; height:8px; border-radius:50%; flex:0 0 auto; background:var(--dsw-alias-label-dimmed, #9aa0a6); }
 .dsh-agy-dot.is-signed-in, .dsh-agy-dot.is-active { background:var(--dsw-alias-state-success-primary, #22a06b); }
 .dsh-agy-dot.is-error { background:var(--dsw-alias-state-error-primary, #d92d20); }
 .dsh-agy-dot.is-signing-in { background:var(--dsw-alias-brand-primary, #1677ff); }
 
+/* Buttons */
 .dsh-agy-btn {
   box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center;
-  min-height:30px; padding:4px 14px; border-radius:15px; font:inherit; font-size:13px; line-height:20px;
-  cursor:pointer; transition:all 0.15s ease; border:none; text-decoration:none;
+  min-height:30px; padding:4px 14px; border-radius:8px; font:inherit; font-size:13px; line-height:20px;
+  cursor:pointer; transition:all 0.15s ease; text-decoration:none;
 }
 .dsh-agy-btn:disabled { opacity:0.5; cursor:not-allowed; }
-.dsh-agy-btn-primary { background:var(--dsw-alias-brand-primary, #1677ff); color:#fff; font-weight:500; }
+.dsh-agy-btn-primary {
+  background:var(--dsw-alias-brand-primary, #1677ff) !important; color:#ffffff !important;
+  border:1px solid transparent; box-shadow:0 1px 2px rgba(0,0,0,0.1); font-weight:500;
+}
 .dsh-agy-btn-primary:hover:not(:disabled) { opacity:0.9; }
 .dsh-agy-btn-secondary {
-  border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.3));
-  background:var(--dsw-alias-bg-module-platform, transparent);
-  color:var(--dsw-alias-label-primary);
+  border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.25));
+  background:rgba(128,128,128,0.06); color:var(--dsw-alias-label-primary);
 }
-.dsh-agy-btn-secondary:hover:not(:disabled) {
-  background:rgba(128,128,128,0.08); border-color:var(--dsw-alias-border-l1, rgba(128,128,128,0.5));
-}
-.dsh-agy-btn-compact { min-height:24px; padding:1px 10px; font-size:11px; border-radius:12px; }
+.dsh-agy-btn-secondary:hover:not(:disabled) { background:rgba(128,128,128,0.12); }
+.dsh-agy-btn-compact { min-height:24px; padding:2px 8px; font-size:11px; border-radius:6px; }
 
+/* Inputs */
 .dsh-agy-input {
-  box-sizing:border-box; width:100%; min-height:32px; padding:6px 12px; border-radius:8px;
+  box-sizing:border-box; width:100%; min-height:32px; padding:6px 10px; border-radius:8px;
   border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.3));
   background:var(--dsw-alias-bg-page-primary, #1e1e1e); color:var(--dsw-alias-label-primary, inherit);
   font:inherit; font-size:13px; outline:none; transition:border-color 0.15s ease;
 }
 .dsh-agy-input:focus { border-color:var(--dsw-alias-brand-primary, #1677ff); }
 .dsh-agy-select {
-  box-sizing:border-box; min-height:28px; padding:2px 10px; border-radius:8px;
+  box-sizing:border-box; min-height:28px; padding:2px 8px; border-radius:6px;
   border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.3));
   background:var(--dsw-alias-bg-page-primary, #1e1e1e); color:var(--dsw-alias-label-primary, inherit);
   font:inherit; font-size:12px; cursor:pointer; outline:none;
 }
+
+/* Filter Chips */
 .dsh-agy-chips { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
 .dsh-agy-chip {
   padding:3px 10px; border-radius:12px; font-size:11px; cursor:pointer;
@@ -109,38 +116,52 @@ const SETTINGS_CSS = `
 }
 .dsh-agy-chip:hover { border-color:var(--dsw-alias-brand-primary); color:var(--dsw-alias-label-primary); }
 .dsh-agy-chip.is-active {
-  background:var(--dsw-alias-brand-primary, #1677ff); color:#fff; border-color:transparent; font-weight:600;
+  border-color:var(--dsw-alias-brand-primary, #1677ff);
+  background:rgba(22, 119, 255, 0.12); color:var(--dsw-alias-brand-primary, #1677ff); font-weight:600;
 }
 
+/* Accounts List & Grid Alignment */
 .dsh-agy-account-list {
-  max-height:480px; overflow-y:auto; padding-right:4px; display:flex; flex-direction:column; gap:8px;
+  max-height:480px; overflow-y:auto; padding-right:2px; display:flex; flex-direction:column; gap:6px;
 }
 .dsh-agy-account {
-  display:flex; align-items:center; gap:10px; flex-wrap:wrap; padding:10px 12px;
-  border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.25)); border-radius:10px;
+  display:grid; grid-template-columns:minmax(180px, 1fr) 130px 130px 72px;
+  align-items:center; gap:10px; padding:8px 12px; border-radius:8px;
+  border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.2));
   background:var(--dsw-alias-bg-module-platform, transparent); transition:all 0.15s ease;
 }
-.dsh-agy-account.is-compact { padding:6px 10px; flex-wrap:nowrap; min-height:36px; }
+.dsh-agy-account.is-compact {
+  padding:5px 10px; min-height:36px;
+}
 .dsh-agy-account.is-active {
   border-color:var(--dsw-alias-brand-primary, #1677ff);
   background:rgba(22, 119, 255, 0.05);
 }
-.dsh-agy-account-main { display:flex; align-items:center; gap:8px; flex:1 1 auto; min-width:0; cursor:pointer; }
+.dsh-agy-account-main { display:flex; align-items:center; gap:8px; min-width:0; cursor:pointer; }
 .dsh-agy-account-mail { font-size:13px; font-weight:500; color:var(--dsw-alias-label-primary); word-break:break-all; }
 .dsh-agy-link { color:var(--dsw-alias-brand-primary, #1677ff); text-decoration:none; }
 .dsh-agy-link:hover { text-decoration:underline; }
 
+/* Perfect Quota Sticker Bars */
 .dsh-agy-capsule-bar {
-  display:inline-flex; align-items:center; gap:6px; font-size:11px; padding:2px 8px;
-  border-radius:10px; background:rgba(128,128,128,0.08); color:var(--dsw-alias-label-secondary);
+  box-sizing:border-box; width:130px; display:inline-flex; align-items:center; justify-content:space-between;
+  gap:6px; font-size:11px; padding:3px 8px; border-radius:6px;
+  background:rgba(128,128,128,0.08); color:var(--dsw-alias-label-secondary);
 }
 .dsh-agy-capsule-progress {
-  width:42px; height:6px; border-radius:3px; background:rgba(128,128,128,0.2); overflow:hidden;
+  width:42px; height:6px; border-radius:3px; background:rgba(128,128,128,0.2); overflow:hidden; flex:0 0 42px;
 }
 .dsh-agy-capsule-fill { height:100%; border-radius:3px; transition:width 0.3s ease; }
 .dsh-agy-capsule-fill.is-high { background:var(--dsw-alias-state-success-primary, #22a06b); }
 .dsh-agy-capsule-fill.is-med { background:#fa8c16; }
 .dsh-agy-capsule-fill.is-low { background:var(--dsw-alias-state-error-primary, #d92d20); }
+
+/* Code Snippet Box */
+.dsh-agy-code-box {
+  display:flex; align-items:center; justify-content:space-between; gap:8px; padding:8px 10px;
+  border-radius:6px; background:rgba(0,0,0,0.25); border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.2));
+  font-family:ui-monospace, SFMono-Regular, Menlo, Consolas, monospace; font-size:12px;
+}
 `
 
 function formatReset(iso?: string): string {
@@ -164,8 +185,8 @@ function getAccountQuotaMetrics(quota?: AccountQuotaSummary) {
 
   const f5h = b5h?.remainingFraction
   const fWeekly = bWeekly?.remainingFraction
-  const p5h = f5h !== undefined ? Math.round(f5h * 1000) / 10 : undefined
-  const pWeekly = fWeekly !== undefined ? Math.round(fWeekly * 1000) / 10 : undefined
+  const p5h = f5h !== undefined ? Math.round(f5h * 100) : undefined
+  const pWeekly = fWeekly !== undefined ? Math.round(fWeekly * 100) : undefined
 
   const is5hExhausted = f5h !== undefined ? f5h <= 0 : false
   const isWeeklyExhausted = fWeekly !== undefined ? fWeekly <= 0 : false
@@ -179,16 +200,7 @@ function getAccountQuotaMetrics(quota?: AccountQuotaSummary) {
   const reset5h = b5h ? formatReset(b5h.resetTime) : ''
   const resetWeekly = bWeekly ? formatReset(bWeekly.resetTime) : ''
 
-  return {
-    b5h,
-    bWeekly,
-    p5h,
-    pWeekly,
-    isExhausted,
-    score,
-    reset5h,
-    resetWeekly,
-  }
+  return { b5h, bWeekly, p5h, pWeekly, isExhausted, score, reset5h, resetWeekly }
 }
 
 function ensureThemeStyles(): void {
@@ -220,7 +232,6 @@ async function jsonRequest<T>(path: string, method = 'GET', body?: unknown): Pro
 export function AntigravitySettings({ t }: AntigravitySettingsProps) {
   if (t === undefined) throw new Error('Antigravity settings requires its translation function')
 
-  // Navigation tab
   const [activeTab, setActiveTab] = useState<ActiveTab>('accounts')
 
   // Accounts state
@@ -240,14 +251,16 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
   const [networkMessage, setNetworkMessage] = useState('')
   const [savingNetwork, setSavingNetwork] = useState(false)
 
-  // Web2API state
+  // Web2API state (Plan C)
   const [web2apiEnabled, setWeb2apiEnabled] = useState(false)
   const [web2apiBaseUrl, setWeb2apiBaseUrl] = useState('http://127.0.0.1:8080/v1')
   const [web2apiApiKey, setWeb2apiApiKey] = useState('')
   const [web2apiImageTool, setWeb2apiImageTool] = useState(true)
   const [web2apiSaving, setWeb2apiSaving] = useState(false)
   const [web2apiTesting, setWeb2apiTesting] = useState(false)
+  const [web2apiDetecting, setWeb2apiDetecting] = useState(false)
   const [web2apiFeedback, setWeb2apiFeedback] = useState<{ ok: boolean, msg: string } | null>(null)
+  const [copiedDocker, setCopiedDocker] = useState(false)
 
   useEffect(() => { ensureThemeStyles() }, [])
 
@@ -308,19 +321,20 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     }
   }
 
-  const saveWeb2Api = async () => {
+  const saveWeb2Api = async (override?: Partial<{ enabled: boolean, baseUrl: string }>) => {
     setWeb2apiSaving(true)
     setWeb2apiFeedback(null)
+    const payload = {
+      enabled: override?.enabled ?? web2apiEnabled,
+      baseUrl: override?.baseUrl ?? web2apiBaseUrl,
+      apiKey: web2apiApiKey,
+      enableImageTool: web2apiImageTool,
+    }
     try {
       const res = await fetch(WEB2API_SETTINGS_PATH, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          enabled: web2apiEnabled,
-          baseUrl: web2apiBaseUrl,
-          apiKey: web2apiApiKey,
-          enableImageTool: web2apiImageTool,
-        }),
+        body: JSON.stringify(payload),
       })
       if (res.ok) {
         setWeb2apiFeedback({ ok: true, msg: t('web2apiSaved') })
@@ -336,29 +350,73 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     }
   }
 
-  const testWeb2Api = async () => {
+  const testWeb2Api = async (urlToCheck?: string) => {
     setWeb2apiTesting(true)
     setWeb2apiFeedback(null)
+    const targetUrl = urlToCheck ?? web2apiBaseUrl
     try {
       const res = await fetch(WEB2API_TEST_PATH, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
-          enabled: web2apiEnabled,
-          baseUrl: web2apiBaseUrl,
+          enabled: true,
+          baseUrl: targetUrl,
           apiKey: web2apiApiKey,
         }),
       })
       const data = await res.json()
       if (data.ok) {
         setWeb2apiFeedback({ ok: true, msg: t('web2apiConnected', { latency: data.latencyMs }) })
+        return true
       } else {
         setWeb2apiFeedback({ ok: false, msg: t('web2apiFailed', { error: data.error ?? t('unknownError') }) })
+        return false
       }
     } catch (e: unknown) {
       setWeb2apiFeedback({ ok: false, msg: e instanceof Error ? e.message : t('unknownError') })
+      return false
     } finally {
       setWeb2apiTesting(false)
+    }
+  }
+
+  // Plan C: Auto-detect local gemini-web2api gateway
+  const detectLocalGateway = async () => {
+    setWeb2apiDetecting(true)
+    setWeb2apiFeedback(null)
+    const candidates = ['http://127.0.0.1:8080/v1', 'http://localhost:8080/v1']
+    let detected = false
+
+    for (const url of candidates) {
+      try {
+        const res = await fetch(WEB2API_TEST_PATH, {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ enabled: true, baseUrl: url, apiKey: web2apiApiKey }),
+        })
+        const data = await res.json()
+        if (data.ok) {
+          setWeb2apiBaseUrl(url)
+          setWeb2apiEnabled(true)
+          setWeb2apiFeedback({ ok: true, msg: t('detectedSuccess', { url, latency: data.latencyMs }) })
+          await saveWeb2Api({ enabled: true, baseUrl: url })
+          detected = true
+          break
+        }
+      } catch {}
+    }
+
+    if (!detected) {
+      setWeb2apiFeedback({ ok: false, msg: t('detectedNotFound') })
+    }
+    setWeb2apiDetecting(false)
+  }
+
+  const copyDockerCommand = () => {
+    if (typeof navigator !== 'undefined' && navigator.clipboard) {
+      void navigator.clipboard.writeText(DOCKER_CMD)
+      setCopiedDocker(true)
+      setTimeout(() => setCopiedDocker(false), 2000)
     }
   }
 
@@ -468,6 +526,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
 
       {error ? <p className="dsh-agy-error">{error}</p> : null}
 
+      {/* Tabs */}
       <nav className="dsh-agy-tabs" role="tablist">
         <button
           type="button"
@@ -478,7 +537,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
         >
           <span>{t('tabAccounts')}</span>
           {accounts.length > 0 ? (
-            <span style={{ fontSize: '11px', opacity: 0.75, background: 'rgba(128,128,128,0.2)', padding: '1px 6px', borderRadius: '10px' }}>
+            <span style={{ fontSize: '11px', opacity: 0.85, background: 'rgba(255,255,255,0.2)', padding: '1px 6px', borderRadius: '10px' }}>
               {accounts.length}
             </span>
           ) : null}
@@ -506,8 +565,9 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
         </button>
       </nav>
 
+      {/* TAB 1: ACCOUNTS & QUOTA */}
       {activeTab === 'accounts' ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
           <div className="dsh-agy-card">
             <div className="dsh-agy-row">
               <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
@@ -542,7 +602,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
           {accounts.length > 0 ? (
             <div className="dsh-agy-card">
               <div className="dsh-agy-row" style={{ gap: '8px' }}>
-                <div style={{ position: 'relative', flex: '1 1 200px' }}>
+                <div style={{ position: 'relative', flex: '1 1 180px' }}>
                   <input
                     type="text"
                     className="dsh-agy-input"
@@ -603,6 +663,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                 </div>
               </div>
 
+              {/* Strict Grid Row Layout: Account Info | 5h Capsule | Weekly Capsule | Remove Button */}
               <div className="dsh-agy-account-list">
                 {filteredAccounts.length === 0 ? (
                   <div style={{ padding: '24px', textAlign: 'center', opacity: 0.6, fontSize: '13px' }}>
@@ -620,6 +681,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                         key={account.id}
                         className={'dsh-agy-account ' + (isActive ? 'is-active ' : '') + (compactView ? 'is-compact' : '')}
                       >
+                        {/* Col 1: Account Info */}
                         <div className="dsh-agy-account-main" onClick={() => { if (!isActive) void switchAccount(account.id) }}>
                           <input type="radio" checked={isActive} readOnly style={{ cursor: 'pointer' }} />
                           <div style={{ display: 'flex', flexDirection: 'column', gap: '2px', minWidth: 0 }}>
@@ -635,31 +697,30 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                           </div>
                         </div>
 
-                        <div style={{ display: 'flex', alignItems: 'center', gap: '6px', marginLeft: 'auto' }}>
-                          {p5h !== undefined ? (
-                            <div className="dsh-agy-capsule-bar" title={'5h: ' + p5h + '% ' + (metrics?.reset5h ?? '')}>
-                              <span>{t('quota5h')} {p5h}%</span>
-                              <div className="dsh-agy-capsule-progress">
-                                <div
-                                  className={'dsh-agy-capsule-fill ' + (p5h > 40 ? 'is-high' : p5h > 15 ? 'is-med' : 'is-low')}
-                                  style={{ width: p5h + '%' }}
-                                />
-                              </div>
-                            </div>
-                          ) : null}
+                        {/* Col 2: 5h Quota Sticker (fixed 130px) */}
+                        <div className="dsh-agy-capsule-bar" title={'5h: ' + (p5h !== undefined ? p5h + '%' : '--') + ' ' + (metrics?.reset5h ?? '')}>
+                          <span style={{ minWidth: '46px' }}>{t('quota5h')} {p5h !== undefined ? p5h + '%' : '--'}</span>
+                          <div className="dsh-agy-capsule-progress">
+                            <div
+                              className={'dsh-agy-capsule-fill ' + ((p5h ?? 0) > 40 ? 'is-high' : (p5h ?? 0) > 15 ? 'is-med' : 'is-low')}
+                              style={{ width: (p5h ?? 0) + '%' }}
+                            />
+                          </div>
+                        </div>
 
-                          {pWeekly !== undefined ? (
-                            <div className="dsh-agy-capsule-bar" title={'Weekly: ' + pWeekly + '% ' + (metrics?.resetWeekly ?? '')}>
-                              <span>{t('quotaWeeklyShort')} {pWeekly}%</span>
-                              <div className="dsh-agy-capsule-progress">
-                                <div
-                                  className={'dsh-agy-capsule-fill ' + (pWeekly > 40 ? 'is-high' : pWeekly > 15 ? 'is-med' : 'is-low')}
-                                  style={{ width: pWeekly + '%' }}
-                                />
-                              </div>
-                            </div>
-                          ) : null}
+                        {/* Col 3: Weekly Quota Sticker (fixed 130px) */}
+                        <div className="dsh-agy-capsule-bar" title={'Weekly: ' + (pWeekly !== undefined ? pWeekly + '%' : '--') + ' ' + (metrics?.resetWeekly ?? '')}>
+                          <span style={{ minWidth: '46px' }}>{t('quotaWeeklyShort')} {pWeekly !== undefined ? pWeekly + '%' : '--'}</span>
+                          <div className="dsh-agy-capsule-progress">
+                            <div
+                              className={'dsh-agy-capsule-fill ' + ((pWeekly ?? 0) > 40 ? 'is-high' : (pWeekly ?? 0) > 15 ? 'is-med' : 'is-low')}
+                              style={{ width: (pWeekly ?? 0) + '%' }}
+                            />
+                          </div>
+                        </div>
 
+                        {/* Col 4: Action Button (fixed 72px) */}
+                        <div style={{ display: 'flex', justifyContent: 'flex-end', width: '72px' }}>
                           {!isActive ? (
                             <button
                               type="button"
@@ -713,8 +774,40 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
         </div>
       ) : null}
 
+      {/* TAB 2: WEB2API GATEWAY (PLAN C) */}
       {activeTab === 'web2api' ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
+          {/* Quick Setup Card (Plan C) */}
+          <div className="dsh-agy-card" style={{ borderLeft: '3px solid var(--dsw-alias-brand-primary, #1677ff)' }}>
+            <div className="dsh-agy-row">
+              <p className="dsh-agy-card-title">{t('quickSetupTitle')}</p>
+              <button
+                type="button"
+                className="dsh-agy-btn dsh-agy-btn-primary dsh-agy-btn-compact"
+                disabled={web2apiDetecting}
+                onClick={() => { void detectLocalGateway() }}
+              >
+                {web2apiDetecting ? t('detecting') : t('detectService')}
+              </button>
+            </div>
+            <p className="dsh-agy-body">{t('quickSetupDesc')}</p>
+
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '4px' }}>
+              <span style={{ fontSize: '11px', fontWeight: 600, opacity: 0.8 }}>{t('dockerOneLiner')}</span>
+              <div className="dsh-agy-code-box">
+                <code style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{DOCKER_CMD}</code>
+                <button
+                  type="button"
+                  className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
+                  onClick={copyDockerCommand}
+                >
+                  {copiedDocker ? t('copied') : t('copyCommand')}
+                </button>
+              </div>
+            </div>
+          </div>
+
+          {/* Gateway Configuration Card */}
           <div className="dsh-agy-card">
             <div className="dsh-agy-row">
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
@@ -738,7 +831,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
             <p className="dsh-agy-body">{t('web2apiHelp')}</p>
 
             {web2apiEnabled ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '6px' }}>
+              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '4px' }}>
                 <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
                   <span style={{ fontSize: '12px', opacity: 0.7 }}>{t('presetLocal')}:</span>
                   <button
@@ -823,6 +916,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
             ) : null}
           </div>
 
+          {/* Credit Banner */}
           <div className="dsh-agy-card" style={{ background: 'transparent', opacity: 0.85 }}>
             <div className="dsh-agy-row">
               <p className="dsh-agy-card-title" style={{ fontSize: '13px' }}>{t('creditTitle')}</p>
@@ -841,6 +935,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
         </div>
       ) : null}
 
+      {/* TAB 3: NETWORK & PROXY */}
       {activeTab === 'network' && network ? (
         <div className="dsh-agy-card">
           <p className="dsh-agy-card-title">{t('network')}</p>

@@ -89,6 +89,15 @@ export const en = {
   creditTitle: 'Open Source Attribution',
   creditBody: 'Web2API reverse-proxy protocol and inspiration courtesy of zexadev/gemini-web2api-go.',
   visitRepo: 'Visit GitHub Repository',
+  detectService: 'Detect Local Gateway',
+  detecting: 'Detecting…',
+  detectedSuccess: 'Detected local gateway at {url} ({latency}ms)',
+  detectedNotFound: 'No local gateway detected at 127.0.0.1:8080. Ensure the container or binary is running.',
+  dockerOneLiner: 'Docker One-Liner:',
+  copyCommand: 'Copy',
+  copied: 'Copied!',
+  quickSetupTitle: 'Quick Setup Guide',
+  quickSetupDesc: 'Run gemini-web2api-go locally via Docker or binary to bypass Google WAF with genuine Chrome TLS fingerprinting.',
 } as const
 
 export type AntigravityKey = keyof typeof en
@@ -184,4 +193,13 @@ export const zh: { [Key in AntigravityKey]: string } = {
   creditTitle: '开源致谢',
   creditBody: 'Web2API 逆向协议设计与特性对接基于 zexadev/gemini-web2api-go 开源项目。',
   visitRepo: '访问 GitHub 仓库',
+  detectService: '自动探测本地网关',
+  detecting: '探测中…',
+  detectedSuccess: '在 {url} 成功连通网关 ({latency}ms)',
+  detectedNotFound: '在 127.0.0.1:8080 未探测到运行中的服务，请先启动 Docker 容器或二进制。',
+  dockerOneLiner: 'Docker 一键运行命令：',
+  copyCommand: '复制',
+  copied: '已复制！',
+  quickSetupTitle: '快速部署与接入指引 (Plan C)',
+  quickSetupDesc: '本地使用 Docker 或独立二进制运行 gemini-web2api-go，自带 Chrome 146 TLS 指纹绕过 Google 盾。',
 }
