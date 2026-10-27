@@ -104,6 +104,7 @@ export const en = {
   step2Desc: 'Detect and link the running gateway automatically:',
   accountSwitched: 'Switched to {email}',
   resetsIn: 'resets in {time}',
+  dismissNotice: 'Dismiss banner',
 } as const
 
 export type AntigravityKey = keyof typeof en
@@ -214,4 +215,5 @@ export const zh: { [Key in AntigravityKey]: string } = {
   step2Desc: '点击自动探测并绑定本地网关：',
   accountSwitched: '已成功切换至 {email}',
   resetsIn: '{time} 后重置',
+  dismissNotice: '隐藏此提示',
 }

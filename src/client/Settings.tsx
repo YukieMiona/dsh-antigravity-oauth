@@ -15,6 +15,7 @@ const WEB2API_TEST_PATH = '/plugins/dsh-antigravity-oauth/web2api/test'
 
 const STYLE_ID = 'dsh-antigravity-oauth-settings-theme'
 const DOCKER_CMD = 'docker run -d --name gemini-web2api -p 18088:18088 zexadev/gemini-web2api-go:latest'
+const DISMISSED_NOTICE_KEY = 'dsh-antigravity-oauth.dismissed-notice'
 
 type Network = { mode: 'auto' | 'direct' | 'proxy', url: string, effective: string }
 type ActiveTab = 'accounts' | 'web2api' | 'network'
@@ -26,19 +27,43 @@ export interface AntigravitySettingsInjected {
 export type AntigravitySettingsProps = Partial<AntigravitySettingsInjected>
 
 const SETTINGS_CSS = `
-.dsh-agy-page { display:flex; flex-direction:column; gap:14px; width:100%; max-width:800px; color:#e0e0e0; font-family:inherit; }
-.dsh-agy-header { display:flex; align-items:baseline; justify-content:space-between; flex-wrap:wrap; gap:8px; margin-bottom:2px; }
+.dsh-agy-page { display:flex; flex-direction:column; gap:12px; width:100%; max-width:800px; color:#e0e0e0; font-family:inherit; position:relative; }
+.dsh-agy-header { display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:8px; }
+.dsh-agy-title-row { display:flex; align-items:center; gap:12px; }
 .dsh-agy-title { margin:0; font-size:18px; line-height:24px; font-weight:600; color:#ffffff; }
 .dsh-agy-body { margin:0; font-size:12px; line-height:18px; color:#9a9ea5; }
 .dsh-agy-error { margin:0; font-size:12px; line-height:18px; color:#f25a5a; padding:6px 12px; border-radius:6px; background:rgba(242,90,90,0.12); border:1px solid rgba(242,90,90,0.25); }
-.dsh-agy-toast { padding:6px 12px; border-radius:6px; background:rgba(34,160,107,0.15); border:1px solid rgba(34,160,107,0.3); color:#41c977; font-size:12px; font-weight:500; }
+
+/* Fixed Floating Notification (Zero Layout Shift) */
+.dsh-agy-toast-float {
+  position:fixed; top:24px; right:24px; z-index:9999;
+  display:flex; align-items:center; gap:8px;
+  padding:10px 16px; border-radius:8px;
+  background:#1a231e; border:1px solid #41c977;
+  color:#41c977; font-size:13px; font-weight:500;
+  box-shadow:0 8px 24px rgba(0,0,0,0.4);
+  animation:dsh-agy-fadein 0.2s ease-out;
+}
+@keyframes dsh-agy-fadein { from { opacity:0; transform:translateY(-8px); } to { opacity:1; transform:translateY(0); } }
+
+/* Dismissible Description Banner */
+.dsh-agy-notice-banner {
+  display:flex; align-items:center; justify-content:space-between; gap:12px;
+  padding:8px 12px; border-radius:8px;
+  background:#1e2023; border:1px solid rgba(255,255,255,0.06);
+}
+.dsh-agy-notice-close {
+  background:none; border:none; color:#9a9ea5; cursor:pointer;
+  font-size:16px; line-height:1; padding:2px 6px; border-radius:4px;
+}
+.dsh-agy-notice-close:hover { color:#ffffff; background:rgba(255,255,255,0.08); }
 
 /* Modern Segmented Navigation Tabs */
 .dsh-agy-tabs-container {
   display:inline-flex; align-items:center; gap:4px; padding:3px;
   background:#1a1c1e !important;
   border:1px solid rgba(255,255,255,0.1) !important;
-  border-radius:10px; width:fit-content; margin-bottom:2px;
+  border-radius:10px; width:fit-content;
 }
 .dsh-agy-tab-btn {
   display:inline-flex; align-items:center; gap:6px; padding:6px 14px;
@@ -62,13 +87,13 @@ const SETTINGS_CSS = `
   background:rgba(255,255,255,0.15); color:#ffffff;
 }
 
-/* Compact Slim Status Bar (Replaces Huge Auth Card) */
+/* Slim Compact Status Bar */
 .dsh-agy-compact-auth {
   display:flex; align-items:center; justify-content:space-between; flex-wrap:wrap; gap:10px;
-  padding:8px 14px; border-radius:8px;
+  padding:8px 12px; border-radius:8px;
   background:#1e2023; border:1px solid rgba(255,255,255,0.08);
 }
-.dsh-agy-compact-auth-left { display:flex; align-items:center; gap:8px; font-size:13px; }
+.dsh-agy-compact-auth-left { display:flex; align-items:center; gap:8px; font-size:12px; }
 
 /* Status Badges */
 .dsh-agy-status-badge {
@@ -83,7 +108,7 @@ const SETTINGS_CSS = `
 .dsh-agy-dot.is-error { background:#f25a5a; }
 .dsh-agy-dot.is-signing-in { background:#1677ff; }
 
-/* Buttons - Solid contrast colors */
+/* Buttons */
 .dsh-agy-btn {
   box-sizing:border-box; display:inline-flex; align-items:center; justify-content:center;
   min-height:28px; padding:3px 12px; border-radius:6px; font:inherit; font-size:12px; line-height:18px;
@@ -107,19 +132,7 @@ const SETTINGS_CSS = `
 }
 .dsh-agy-btn-compact { min-height:22px; padding:1px 8px; font-size:11px; border-radius:4px; }
 
-/* Filter Chips & Search */
-.dsh-agy-chips { display:flex; align-items:center; gap:6px; flex-wrap:wrap; }
-.dsh-agy-chip {
-  padding:2px 8px; border-radius:10px; font-size:11px; cursor:pointer;
-  border:1px solid rgba(255,255,255,0.1);
-  background:rgba(255,255,255,0.04); color:#9a9ea5;
-  transition:all 0.15s ease;
-}
-.dsh-agy-chip:hover { border-color:#1677ff; color:#ffffff; }
-.dsh-agy-chip.is-active {
-  border-color:#1677ff;
-  background:rgba(22, 119, 255, 0.18); color:#1677ff; font-weight:600;
-}
+/* Inputs */
 .dsh-agy-input {
   box-sizing:border-box; width:100%; min-height:30px; padding:4px 8px; border-radius:6px;
   border:1px solid rgba(255,255,255,0.12);
@@ -140,26 +153,23 @@ const SETTINGS_CSS = `
 }
 .dsh-agy-account {
   display:flex; align-items:center; justify-content:space-between; gap:12px;
-  padding:10px 14px; border-radius:8px;
+  padding:8px 12px; border-radius:8px;
   border:1px solid rgba(255,255,255,0.08);
   background:rgba(255,255,255,0.02); transition:all 0.15s ease;
-  overflow:hidden;
+  overflow:hidden; cursor:pointer;
 }
-.dsh-agy-account:hover {
-  background:rgba(255,255,255,0.04);
-}
+.dsh-agy-account:hover { background:rgba(255,255,255,0.04); }
 .dsh-agy-account.is-active {
   border-color:#1677ff;
   background:rgba(22, 119, 255, 0.08);
 }
 
-/* Compact mode: truly slim and dense */
+/* Compact mode: absolute single line */
 .dsh-agy-account.is-compact {
-  padding:4px 10px; min-height:30px; gap:8px;
+  padding:3px 10px; min-height:28px; gap:8px;
 }
 .dsh-agy-account-main {
-  display:flex; align-items:center; gap:8px; flex:1 1 0; min-width:0;
-  cursor:pointer; overflow:hidden;
+  display:flex; align-items:center; gap:8px; flex:1 1 0; min-width:0; overflow:hidden;
 }
 .dsh-agy-account-mail {
   font-size:13px; font-weight:500; color:#f0f0f0;
@@ -169,13 +179,13 @@ const SETTINGS_CSS = `
 
 /* Metrics container */
 .dsh-agy-account-metrics {
-  display:flex; align-items:center; gap:10px; flex:0 0 auto;
+  display:flex; align-items:center; gap:8px; flex:0 0 auto;
 }
 
-/* Default Quota Capsule: Clean Dual-Line with explicit reset timer */
+/* Standard Quota Capsule */
 .dsh-agy-capsule-bar {
-  box-sizing:border-box; width:140px; display:flex; flex-direction:column;
-  gap:2px; padding:4px 8px; border-radius:6px;
+  box-sizing:border-box; width:135px; display:flex; flex-direction:column;
+  gap:2px; padding:3px 8px; border-radius:6px;
   background:rgba(255,255,255,0.06); color:#b0b4ba;
   user-select:none;
 }
@@ -193,10 +203,13 @@ const SETTINGS_CSS = `
   font-size:10px; opacity:0.75; line-height:12px; white-space:nowrap;
 }
 
-/* Compact Quota Capsule: Slim Single-Line */
+/* Compact View: Strictly synchronized single-line layout for BOTH 5h and weekly quotas */
 .dsh-agy-account.is-compact .dsh-agy-capsule-bar {
-  width:95px; flex-direction:row; align-items:center; justify-content:space-between;
+  width:95px; height:22px; flex-direction:row; align-items:center; justify-content:space-between;
   padding:2px 6px; gap:4px;
+}
+.dsh-agy-account.is-compact .dsh-agy-capsule-header {
+  display:flex; align-items:center; justify-content:space-between; width:100%; font-size:10px;
 }
 .dsh-agy-account.is-compact .dsh-agy-capsule-progress {
   width:32px; height:5px; flex:0 0 32px;
@@ -237,7 +250,8 @@ const SETTINGS_CSS = `
 function formatReset(iso?: string): string {
   if (!iso) return ''
   const t = new Date(iso).getTime() - Date.now()
-  if (t <= 0) return ''
+  // If the time is within a slight negative drift (e.g. clock skew < 1 min), count as 1m
+  if (t <= 0) return '1m'
   const m = Math.floor(t / 60000)
   const h = Math.floor(m / 60)
   const d = Math.floor(h / 24)
@@ -316,9 +330,16 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
   const [quotas, setQuotas] = useState<Record<string, AccountQuotaSummary>>({})
   const [loadingQuotas, setLoadingQuotas] = useState(false)
   const [searchQuery, setSearchQuery] = useState('')
-  const [filterMode, setFilterMode] = useState<'all' | 'available' | 'exhausted'>('all')
   const [compactView, setCompactView] = useState(false)
   const [sortBy, setSortBy] = useState<'default' | 'quota'>('default')
+
+  // Notice banner dismiss state (persists across reloads)
+  const [noticeDismissed, setNoticeDismissed] = useState<boolean>(() => {
+    if (typeof localStorage !== 'undefined') {
+      return localStorage.getItem(DISMISSED_NOTICE_KEY) === 'true'
+    }
+    return false
+  })
 
   // Network state
   const [network, setNetwork] = useState<Network>()
@@ -381,6 +402,13 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     void loadNetwork()
     void loadWeb2Api()
   }, [refresh, refreshQuotas, loadNetwork, loadWeb2Api])
+
+  const dismissNotice = () => {
+    setNoticeDismissed(true)
+    if (typeof localStorage !== 'undefined') {
+      localStorage.setItem(DISMISSED_NOTICE_KEY, 'true')
+    }
+  }
 
   const saveNetwork = async () => {
     if (!network) return
@@ -518,11 +546,10 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     }
   }
 
-  // Account switch with verified server return + toast feedback
+  // Account switch with verified server return + non-intrusive floating toast
   const switchAccount = async (targetAccount: AccountSummary) => {
     setSwitchingId(targetAccount.id)
     setError(undefined)
-    setToastMessage(null)
     try {
       const res = await jsonRequest<{ ok: boolean, account?: AntigravityStatus }>(SWITCH_PATH, 'POST', { id: targetAccount.id })
       if (res?.account) {
@@ -579,11 +606,6 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
         || a.projectId?.toLowerCase().includes(query),
       )
     }
-    if (filterMode === 'available') {
-      list = list.filter(a => !a.limited && a.ready && !a.dead)
-    } else if (filterMode === 'exhausted') {
-      list = list.filter(a => a.limited || a.dead)
-    }
     if (sortBy === 'quota') {
       list.sort((a, b) => {
         if (a.id === activeAccountId) return -1
@@ -594,14 +616,25 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
       })
     }
     return list
-  }, [accounts, searchQuery, filterMode, sortBy, quotas, activeAccountId])
+  }, [accounts, searchQuery, sortBy, quotas, activeAccountId])
 
   const signing = status?.status === 'signing-in'
 
   return (
     <section className="dsh-agy-page" aria-labelledby="antigravity-settings-title">
+      {/* Floating Top-Right Toast Notification (Zero Layout Shift) */}
+      {toastMessage ? (
+        <div className="dsh-agy-toast-float">
+          <span>✓</span>
+          <span>{toastMessage}</span>
+        </div>
+      ) : null}
+
       <div className="dsh-agy-header">
-        <h2 id="antigravity-settings-title" className="dsh-agy-title">{t('title')}</h2>
+        <div className="dsh-agy-title-row">
+          <h2 id="antigravity-settings-title" className="dsh-agy-title">{t('title')}</h2>
+        </div>
+
         {/* Navigation Tabs */}
         <nav className="dsh-agy-tabs-container" role="tablist">
           <button
@@ -642,13 +675,27 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
         </nav>
       </div>
 
+      {/* Dismissible Description Banner (Controlled by Compact View & Dismiss Button) */}
+      {!noticeDismissed && !compactView ? (
+        <div className="dsh-agy-notice-banner">
+          <p className="dsh-agy-body" style={{ margin: 0 }}>{t('tos')}</p>
+          <button
+            type="button"
+            className="dsh-agy-notice-close"
+            title={t('dismissNotice')}
+            onClick={dismissNotice}
+          >
+            ×
+          </button>
+        </div>
+      ) : null}
+
       {error ? <p className="dsh-agy-error">{error}</p> : null}
-      {toastMessage ? <p className="dsh-agy-toast">{toastMessage}</p> : null}
 
       {/* TAB 1: ACCOUNTS & QUOTA */}
       {activeTab === 'accounts' ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          {/* Streamlined Status Bar */}
+        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
+          {/* Streamlined Status Bar with Integrated Compact View Toggle */}
           <div className="dsh-agy-compact-auth">
             <div className="dsh-agy-compact-auth-left">
               <span className={'dsh-agy-dot ' + (signing ? 'is-signing-in' : activeAccount?.ready ? 'is-signed-in' : 'is-error')} />
@@ -658,7 +705,13 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
               </strong>
             </div>
 
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+            <div style={{ display: 'flex', alignItems: 'center', gap: '10px' }}>
+              {/* Compact View Checkbox Moved Directly Above to Action Bar */}
+              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '11px', cursor: 'pointer', color: '#b0b4ba' }}>
+                <input type="checkbox" checked={compactView} onChange={e => setCompactView(e.target.checked)} />
+                <span>{t('compactView')}</span>
+              </label>
+
               {signing ? (
                 <button type="button" className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact" onClick={() => { void recover('cancel') }}>
                   {t('cancel')}
@@ -677,10 +730,10 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
           </div>
 
           {accounts.length > 0 ? (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px' }}>
-              {/* Filter & View Toolbar */}
-              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', gap: '8px' }}>
-                <div style={{ position: 'relative', flex: '1 1 180px' }}>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '6px' }}>
+              {/* Clean Filter Toolbar (Without All/Exhausted Separators) */}
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: '8px' }}>
+                <div style={{ position: 'relative', flex: '1 1 200px' }}>
                   <input
                     type="text"
                     className="dsh-agy-input"
@@ -701,35 +754,8 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                   ) : null}
                 </div>
 
-                <div className="dsh-agy-chips">
-                  <button
-                    type="button"
-                    className={'dsh-agy-chip ' + (filterMode === 'all' ? 'is-active' : '')}
-                    onClick={() => setFilterMode('all')}
-                  >
-                    {t('filterAll')} ({accounts.length})
-                  </button>
-                  <button
-                    type="button"
-                    className={'dsh-agy-chip ' + (filterMode === 'available' ? 'is-active' : '')}
-                    onClick={() => setFilterMode('available')}
-                  >
-                    {t('filterAvailable')} ({accounts.filter(a => !a.limited && a.ready && !a.dead).length})
-                  </button>
-                  <button
-                    type="button"
-                    className={'dsh-agy-chip ' + (filterMode === 'exhausted' ? 'is-active' : '')}
-                    onClick={() => setFilterMode('exhausted')}
-                  >
-                    {t('filterExhausted')} ({accounts.filter(a => a.limited || a.dead).length})
-                  </button>
-                </div>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginLeft: 'auto' }}>
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '4px', fontSize: '11px', cursor: 'pointer' }}>
-                    <input type="checkbox" checked={compactView} onChange={e => setCompactView(e.target.checked)} />
-                    <span>{t('compactView')}</span>
-                  </label>
+                <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
+                  <span style={{ fontSize: '11px', color: '#9a9ea5' }}>{accounts.length} {t('accounts')}</span>
                   <select
                     className="dsh-agy-select"
                     value={sortBy}
@@ -1030,7 +1056,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                 </div>
 
                 {web2apiFeedback ? (
-                  <p className={web2apiFeedback.ok ? 'dsh-agy-toast' : 'dsh-agy-error'} style={{ marginTop: '2px', fontSize: '11px' }}>
+                  <p className={web2apiFeedback.ok ? 'dsh-agy-toast-float' : 'dsh-agy-error'} style={{ marginTop: '2px', fontSize: '11px' }}>
                     {web2apiFeedback.msg}
                   </p>
                 ) : null}
@@ -1108,7 +1134,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
             </button>
 
             {networkMessage ? (
-              <p role="status" className="dsh-agy-toast" style={{ fontSize: '11px' }}>
+              <p role="status" className="dsh-agy-toast-float" style={{ fontSize: '11px' }}>
                 {networkMessage}
               </p>
             ) : null}
