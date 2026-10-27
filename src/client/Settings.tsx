@@ -225,10 +225,10 @@ const SETTINGS_CSS = `
   width:64px; display:flex; align-items:center; justify-content:flex-end; flex-shrink:0;
 }
 .dsh-agy-action-pill {
-  box-sizing:border-box !important; width:62px !important; height:24px !important;
-  min-height:24px !important; max-height:24px !important; padding:0 !important;
-  font-size:11px !important; font-weight:500 !important; line-height:22px !important;
-  border-radius:6px !important; display:inline-flex !important; align-items:center !important;
+  box-sizing:border-box !important; width:58px !important; height:22px !important;
+  min-height:22px !important; max-height:22px !important; padding:0 !important;
+  font-size:11px !important; font-weight:500 !important; line-height:20px !important;
+  border-radius:5px !important; display:inline-flex !important; align-items:center !important;
   justify-content:center !important; text-align:center !important; user-select:none;
 }
 .dsh-agy-action-pill.is-active-badge {
@@ -339,10 +339,12 @@ function ensureThemeStyles(): void {
 }
 
 async function jsonRequest<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
-  const response = await fetch(path, {
+  const url = method === 'GET' ? `${path}${path.includes('?') ? '&' : '?'}t=${Date.now()}` : path
+  const response = await fetch(url, {
     method,
     headers: { accept: 'application/json', ...body === undefined ? {} : { 'content-type': 'application/json' } },
     credentials: 'same-origin',
+    cache: 'no-store',
     ...body === undefined ? {} : { body: JSON.stringify(body) },
   })
   const value: unknown = await response.json().catch(() => undefined)
@@ -772,12 +774,12 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                     {t('cancel')}
                   </button>
                 ) : (
-                  <button type="button" className="dsh-agy-btn dsh-agy-btn-primary dsh-agy-btn-compact" disabled={busy} onClick={() => { void signIn() }}>
+                  <button type="button" className="dsh-agy-btn dsh-agy-btn-primary" disabled={busy} onClick={() => { void signIn() }}>
                     {busy ? t('working') : accounts.length === 0 ? t('login') : t('addAccount')}
                   </button>
                 )}
                 {accounts.length > 0 ? (
-                  <button type="button" className="dsh-agy-action-pill is-remove-btn" disabled={busy || loadingQuotas} onClick={() => { void refreshQuotas() }}>
+                  <button type="button" className="dsh-agy-btn dsh-agy-btn-secondary" disabled={busy || loadingQuotas} onClick={() => { void refreshQuotas() }}>
                     {loadingQuotas ? '...' : t('refreshQuotas')}
                   </button>
                 ) : null}
@@ -936,7 +938,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                           ) : (
                             <button
                               type="button"
-                              className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
+                              className="dsh-agy-action-pill is-remove-btn"
                               disabled={busy || Boolean(switchingId)}
                               onClick={() => { void removeAccount(account.id) }}
                             >
