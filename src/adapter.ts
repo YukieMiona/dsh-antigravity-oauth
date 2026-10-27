@@ -363,6 +363,69 @@ export class AntigravityAdapter extends LlmAdapter {
     }
   }
 
+  private *handleThoughtEvent(event: { text: string }, state: EmitState): Iterable<StreamChunk> {
+    yield* this.closeText(state)
+    if (state.thought.length === 0) yield { type: 'block-start', index: state.index, blockType: 'reasoning' }
+    state.thought += event.text
+    yield { type: 'reasoning-delta', index: state.index, text: event.text }
+  }
+
+  private *handleTextEvent(event: { text: string }, state: EmitState): Iterable<StreamChunk> {
+    yield* this.closeThought(state)
+    if (state.text.length === 0) yield { type: 'block-start', index: state.index, blockType: 'text' }
+    state.text += event.text
+    state.sawVisibleAnswer = true
+    yield { type: 'text-delta', index: state.index, text: event.text }
+  }
+
+  private *handleFunctionCallEvent(
+    event: { id?: string, name: string, args: Record<string, unknown>, thoughtSignature?: string },
+    state: EmitState,
+    pendingSearches: SearchTurnCall[],
+  ): Iterable<StreamChunk> {
+    yield* this.closeThought(state)
+    yield* this.closeText(state)
+    if (isDroppedToolName(event.name)) return
+    if (isSearchWebToolName(event.name) && this.options.nativeSearch) {
+      const id = ToolCallId(event.id ?? `search_${state.index}`)
+      if (event.thoughtSignature !== undefined && event.thoughtSignature.length > 0) {
+        this.session.thoughtSignatures.set(id, event.thoughtSignature)
+      }
+      pendingSearches.push({
+        id,
+        name: event.name === 'web_search' ? SEARCH_WEB_TOOL : event.name,
+        args: event.args,
+        ...event.thoughtSignature === undefined || event.thoughtSignature.length === 0
+          ? {}
+          : { thoughtSignature: event.thoughtSignature },
+      })
+      return
+    }
+    const id = ToolCallId(event.id ?? `call_${state.index}`)
+    if (event.thoughtSignature !== undefined && event.thoughtSignature.length > 0) {
+      this.session.thoughtSignatures.set(id, event.thoughtSignature)
+    }
+    const args = JSON.stringify(event.args)
+    yield { type: 'block-start', index: state.index, blockType: 'tool-call' }
+    yield { type: 'tool-call-delta', index: state.index, id, name: event.name, argumentsDelta: args }
+    yield {
+      type: 'block-end',
+      index: state.index,
+      block: {
+        type: 'tool-call',
+        id,
+        name: event.name,
+        arguments: args,
+        ...event.thoughtSignature !== undefined && event.thoughtSignature.length > 0
+          ? { thoughtSignature: event.thoughtSignature }
+          : {},
+      },
+    }
+    state.toolNames.push(event.name)
+    state.index += 1
+    state.sawVisibleAnswer = true
+  }
+
   private async *emitChat(
     options: GenerateOptions,
     input: ChatGenerateInput,
@@ -380,62 +443,15 @@ export class AntigravityAdapter extends LlmAdapter {
         continue
       }
       if (event.type === 'thought') {
-        yield* this.closeText(state)
-        if (state.thought.length === 0) yield { type: 'block-start', index: state.index, blockType: 'reasoning' }
-        state.thought += event.text
-        yield { type: 'reasoning-delta', index: state.index, text: event.text }
+        yield* this.handleThoughtEvent(event, state)
         continue
       }
       if (event.type === 'text') {
-        yield* this.closeThought(state)
-        if (state.text.length === 0) yield { type: 'block-start', index: state.index, blockType: 'text' }
-        state.text += event.text
-        state.sawVisibleAnswer = true
-        yield { type: 'text-delta', index: state.index, text: event.text }
+        yield* this.handleTextEvent(event, state)
         continue
       }
       if (event.type === 'functionCall') {
-        yield* this.closeThought(state)
-        yield* this.closeText(state)
-        if (isDroppedToolName(event.name)) continue
-        if (isSearchWebToolName(event.name) && this.options.nativeSearch) {
-          const id = ToolCallId(event.id ?? `search_${state.index}`)
-          if (event.thoughtSignature !== undefined && event.thoughtSignature.length > 0) {
-            this.session.thoughtSignatures.set(id, event.thoughtSignature)
-          }
-          pendingSearches.push({
-            id,
-            name: event.name === 'web_search' ? SEARCH_WEB_TOOL : event.name,
-            args: event.args,
-            ...event.thoughtSignature === undefined || event.thoughtSignature.length === 0
-              ? {}
-              : { thoughtSignature: event.thoughtSignature },
-          })
-          continue
-        }
-        const id = ToolCallId(event.id ?? `call_${state.index}`)
-        if (event.thoughtSignature !== undefined && event.thoughtSignature.length > 0) {
-          this.session.thoughtSignatures.set(id, event.thoughtSignature)
-        }
-        const args = JSON.stringify(event.args)
-        yield { type: 'block-start', index: state.index, blockType: 'tool-call' }
-        yield { type: 'tool-call-delta', index: state.index, id, name: event.name, argumentsDelta: args }
-        yield {
-          type: 'block-end',
-          index: state.index,
-          block: {
-            type: 'tool-call',
-            id,
-            name: event.name,
-            arguments: args,
-            ...event.thoughtSignature !== undefined && event.thoughtSignature.length > 0
-              ? { thoughtSignature: event.thoughtSignature }
-              : {},
-          },
-        }
-        state.toolNames.push(event.name)
-        state.index += 1
-        state.sawVisibleAnswer = true
+        yield* this.handleFunctionCallEvent(event, state, pendingSearches)
         continue
       }
       if (event.type === 'inlineImage') {

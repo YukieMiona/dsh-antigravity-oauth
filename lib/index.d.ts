@@ -382,6 +382,9 @@ declare class AntigravityAdapter extends LlmAdapter {
   listModels(provider: string): Promise<readonly LlmModelInfo[]>;
   resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo>;
   stream(options: GenerateOptions): AsyncIterable<StreamChunk>;
+  private handleThoughtEvent;
+  private handleTextEvent;
+  private handleFunctionCallEvent;
   private emitChat;
   private collectSearch;
   private closeText;

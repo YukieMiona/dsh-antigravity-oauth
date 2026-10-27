@@ -15,14 +15,14 @@ Remediate code decay identified in Brooks-Lint review, enhance crash resiliency,
   - **Actions:** Extracted pure quota evaluation and countdown formatting into `src/quota-core.ts`; deduplicated logic between client UI and server failover.
   - **Status:** Done
 
-- [ ] **Task 3: Stream Handling Decomposition in Adapter**
+- [x] **Task 3: Stream Handling Decomposition in Adapter**
   - **Scope:** `src/adapter.ts`
-  - **Actions:** Extract stream chunk handlers into modular helper functions (`extractReasoningPart`, `sanitizeToolTurn`, `handleFailoverRetry`).
-  - **Status:** Pending
+  - **Actions:** Decomposed monolithic `emitChat` event loop into dedicated handlers (`handleThoughtEvent`, `handleTextEvent`, `handleFunctionCallEvent`).
+  - **Status:** Done
 
-- [x] **Task 4: Modular Settings UI Decomposition (Phase 1: Theme & Quota Decoupling)**
-  - **Scope:** `src/client/theme.ts`, `src/client/Settings.tsx`
-  - **Actions:** Extracted 270+ LOC CSS and theme injector into `src/client/theme.ts`; decoupled quota evaluation into `src/quota-core.ts`.
+- [x] **Task 4: Modular Settings UI Decomposition**
+  - **Scope:** `src/client/tabs/`, `src/client/theme.ts`, `src/client/Settings.tsx`
+  - **Actions:** Fully decomposed 1,500+ LOC `Settings.tsx` into dedicated, self-contained sub-components (`AccountsTab.tsx`, `AdvancedTab.tsx`, `Web2ApiTab.tsx`, `NetworkTab.tsx`, and `theme.ts`).
   - **Status:** Done
 
 ## Acceptance Invariants

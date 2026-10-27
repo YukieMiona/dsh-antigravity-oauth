@@ -18,7 +18,6 @@ const DOCKER_CMD = 'docker run -d --name gemini-web2api -p 18088:18088 zexadev/g
 const DISMISSED_BANNER_KEY = 'dsh-antigravity-oauth.dismissed-banner'
 const DISMISSED_WEB2API_GUIDE_KEY = 'dsh-antigravity-oauth.dismissed-web2api-guide'
 
-type Network = { mode: 'auto' | 'direct' | 'proxy', url: string, effective: string }
 type ActiveTab = 'accounts' | 'advanced' | 'web2api' | 'network'
 
 export interface AntigravitySettingsInjected {
@@ -27,6 +26,10 @@ export interface AntigravitySettingsInjected {
 
 export type AntigravitySettingsProps = Partial<AntigravitySettingsInjected>
 
+import { AccountsTab } from './tabs/AccountsTab.tsx'
+import { AdvancedTab } from './tabs/AdvancedTab.tsx'
+import { Web2ApiTab } from './tabs/Web2ApiTab.tsx'
+import { NetworkTab, type Network } from './tabs/NetworkTab.tsx'
 import { ensureThemeStyles } from './theme.ts'
 import { evaluateQuotaMetrics as getAccountQuotaMetrics, formatShortCountdown } from '../quota-core.ts'
 
@@ -745,441 +748,59 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
 
       {/* TAB 2: ADVANCED CONFIGURATION */}
       {activeTab === 'advanced' ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '12px' }}>
-          {/* Card 1: Model Reasoning & Context Window */}
-          <div className="dsh-agy-card">
-            <div className="dsh-agy-row">
-              <p className="dsh-agy-card-title">
-                <span>🧠</span>
-                <span>{t('modelTuningTitle')}</span>
-              </p>
-            </div>
-            <p className="dsh-agy-body">{t('modelTuningDesc')}</p>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '12px', marginTop: '4px' }}>
-              <div>
-                <label style={{ fontSize: '12px', display: 'block', marginBottom: '6px', fontWeight: 500, color: '#f0f0f0' }}>
-                  {t('defaultReasoningEffort')}
-                </label>
-                <div className="dsh-agy-segmented" role="radiogroup">
-                  <button
-                    type="button"
-                    className={'dsh-agy-segmented-btn ' + (advancedEffort === 'low' ? 'is-active' : '')}
-                    onClick={() => setAdvancedEffort('low')}
-                  >
-                    🌱 {t('effortLow')}
-                  </button>
-                  <button
-                    type="button"
-                    className={'dsh-agy-segmented-btn ' + (advancedEffort === 'medium' ? 'is-active' : '')}
-                    onClick={() => setAdvancedEffort('medium')}
-                  >
-                    ⚡ {t('effortMedium')}
-                  </button>
-                  <button
-                    type="button"
-                    className={'dsh-agy-segmented-btn ' + (advancedEffort === 'high' ? 'is-active' : '')}
-                    onClick={() => setAdvancedEffort('high')}
-                  >
-                    🔥 {t('effortHigh')}
-                  </button>
-                </div>
-              </div>
-
-              <div>
-                <label style={{ fontSize: '12px', display: 'block', marginBottom: '6px', fontWeight: 500, color: '#f0f0f0' }}>
-                  {t('modelContextWindow')}
-                </label>
-                <div className="dsh-agy-segmented" role="radiogroup">
-                  <button
-                    type="button"
-                    className={'dsh-agy-segmented-btn ' + (advancedContextWindow === 131072 ? 'is-active' : '')}
-                    onClick={() => setAdvancedContextWindow(131072)}
-                  >
-                    {t('contextWindow128K')}
-                  </button>
-                  <button
-                    type="button"
-                    className={'dsh-agy-segmented-btn ' + (advancedContextWindow === 262144 ? 'is-active' : '')}
-                    onClick={() => setAdvancedContextWindow(262144)}
-                  >
-                    {t('contextWindow256K')}
-                  </button>
-                  <button
-                    type="button"
-                    className={'dsh-agy-segmented-btn ' + (advancedContextWindow === 524288 ? 'is-active' : '')}
-                    onClick={() => setAdvancedContextWindow(524288)}
-                  >
-                    {t('contextWindow512K')}
-                  </button>
-                  <button
-                    type="button"
-                    className={'dsh-agy-segmented-btn ' + (advancedContextWindow === 1048576 ? 'is-active' : '')}
-                    onClick={() => setAdvancedContextWindow(1048576)}
-                  >
-                    {t('contextWindow1M')}
-                  </button>
-                </div>
-              </div>
-            </div>
-          </div>
-
-          {/* Card 2: Account Switching Strategies */}
-          <div className="dsh-agy-card">
-            <div className="dsh-agy-row">
-              <p className="dsh-agy-card-title">
-                <span>🔄</span>
-                <span>{t('switchingStrategyTitle')}</span>
-              </p>
-            </div>
-            <p className="dsh-agy-body">{t('switchingStrategyDesc')}</p>
-
-            <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
-              <div
-                className={'dsh-agy-radio-card ' + (advancedStrategy === 'failover_429' ? 'is-active' : '')}
-                onClick={() => setAdvancedStrategy('failover_429')}
-              >
-                <div className="dsh-agy-custom-radio">
-                  <div className="dsh-agy-custom-radio-dot" />
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
-                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                    <span style={{ fontSize: '13px', fontWeight: 600, color: '#f0f0f0' }}>{t('strategyFailover')}</span>
-                    <span className="dsh-agy-card-badge">Default</span>
-                  </div>
-                  <span style={{ fontSize: '11px', color: '#9a9ea5' }}>Switch to the account with highest quota only when 429 quota exhaustion occurs.</span>
-                </div>
-              </div>
-
-              <div
-                className={'dsh-agy-radio-card ' + (advancedStrategy === 'proactive_threshold' ? 'is-active' : '')}
-                onClick={() => setAdvancedStrategy('proactive_threshold')}
-              >
-                <div className="dsh-agy-custom-radio">
-                  <div className="dsh-agy-custom-radio-dot" />
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', width: '100%' }}>
-                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#f0f0f0' }}>{t('strategyProactive')}</span>
-                  <span style={{ fontSize: '11px', color: '#9a9ea5' }}>{t('thresholdLabel', { threshold: advancedThreshold })}</span>
-                  {advancedStrategy === 'proactive_threshold' ? (
-                    <div style={{ display: 'flex', alignItems: 'center', gap: '12px', marginTop: '8px' }} onClick={e => e.stopPropagation()}>
-                      <input
-                        type="range"
-                        min="10"
-                        max="40"
-                        step="5"
-                        value={advancedThreshold}
-                        onChange={e => setAdvancedThreshold(Number(e.target.value))}
-                        style={{ flex: '1 1 140px', cursor: 'pointer', accentColor: '#1677ff' }}
-                      />
-                      <span style={{ fontSize: '12px', fontWeight: 600, color: '#1677ff', minWidth: '35px' }}>{advancedThreshold}%</span>
-                    </div>
-                  ) : null}
-                </div>
-              </div>
-
-              <div
-                className={'dsh-agy-radio-card ' + (advancedStrategy === 'round_robin' ? 'is-active' : '')}
-                onClick={() => setAdvancedStrategy('round_robin')}
-              >
-                <div className="dsh-agy-custom-radio">
-                  <div className="dsh-agy-custom-radio-dot" />
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
-                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#f0f0f0' }}>{t('strategyRoundRobin')}</span>
-                  <span style={{ fontSize: '11px', color: '#9a9ea5' }}>Rotate through all available accounts per turn to balance rolling usage.</span>
-                </div>
-              </div>
-
-              <div
-                className={'dsh-agy-radio-card ' + (advancedStrategy === 'manual' ? 'is-active' : '')}
-                onClick={() => setAdvancedStrategy('manual')}
-              >
-                <div className="dsh-agy-custom-radio">
-                  <div className="dsh-agy-custom-radio-dot" />
-                </div>
-                <div style={{ display: 'flex', flexDirection: 'column', flex: 1 }}>
-                  <span style={{ fontSize: '13px', fontWeight: 600, color: '#f0f0f0' }}>{t('strategyManual')}</span>
-                  <span style={{ fontSize: '11px', color: '#9a9ea5' }}>Never auto-switch accounts; stay strictly on the currently selected account.</span>
-                </div>
-              </div>
-            </div>
-
-            <div style={{ marginTop: '8px' }}>
-              <button
-                type="button"
-                className="dsh-agy-btn dsh-agy-btn-primary"
-                disabled={savingAdvanced}
-                onClick={() => { void saveAdvanced() }}
-              >
-                {savingAdvanced ? t('working') : t('saveAdvanced')}
-              </button>
-            </div>
-          </div>
-        </div>
+        <AdvancedTab
+          t={t}
+          advancedEffort={advancedEffort}
+          setAdvancedEffort={setAdvancedEffort}
+          advancedContextWindow={advancedContextWindow}
+          setAdvancedContextWindow={setAdvancedContextWindow}
+          advancedStrategy={advancedStrategy}
+          setAdvancedStrategy={setAdvancedStrategy}
+          advancedThreshold={advancedThreshold}
+          setAdvancedThreshold={setAdvancedThreshold}
+          savingAdvanced={savingAdvanced}
+          saveAdvanced={() => { void saveAdvanced() }}
+        />
       ) : null}
 
       {/* TAB 3: WEB2API GATEWAY (PLAN C) */}
       {activeTab === 'web2api' ? (
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
-          {!guideDismissed ? (
-            <div className="dsh-agy-guide-card">
-              <div className="dsh-agy-guide-header">
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                  <span style={{ fontSize: '16px' }}>🚀</span>
-                  <span style={{ fontSize: '14px', fontWeight: 600, color: '#fff' }}>{t('quickSetupTitle')}</span>
-                  <span className="dsh-agy-status-badge is-success">Docker / Binary Ready</span>
-                </div>
-                <button
-                  type="button"
-                  className="dsh-agy-notice-close"
-                  title={t('hideGuide')}
-                  onClick={dismissGuide}
-                >
-                  ×
-                </button>
-              </div>
-              <p className="dsh-agy-body" style={{ color: '#b0b4ba' }}>{t('quickSetupDesc')}</p>
-
-              <div className="dsh-agy-step">
-                <div className="dsh-agy-step-num">1</div>
-                <div className="dsh-agy-step-content">
-                  <span style={{ fontSize: '12px', fontWeight: 600, color: '#f0f0f0' }}>{t('step1Title')}</span>
-                  <span className="dsh-agy-body" style={{ fontSize: '11px' }}>{t('step1Desc')}</span>
-                  <div className="dsh-agy-code-terminal">
-                    <code style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{DOCKER_CMD}</code>
-                    <button
-                      type="button"
-                      className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
-                      style={{ flexShrink: 0 }}
-                      onClick={copyDockerCommand}
-                    >
-                      {copiedDocker ? t('copied') : t('copyCommand')}
-                    </button>
-                  </div>
-                </div>
-              </div>
-
-              <div className="dsh-agy-step">
-                <div className="dsh-agy-step-num">2</div>
-                <div className="dsh-agy-step-content">
-                  <span style={{ fontSize: '12px', fontWeight: 600, color: '#f0f0f0' }}>{t('step2Title')}</span>
-                  <span className="dsh-agy-body" style={{ fontSize: '11px' }}>{t('step2Desc')}</span>
-                  <div>
-                    <button
-                      type="button"
-                      className="dsh-agy-btn dsh-agy-btn-primary dsh-agy-btn-compact"
-                      style={{ padding: '3px 12px' }}
-                      disabled={web2apiDetecting}
-                      onClick={() => { void detectLocalGateway() }}
-                    >
-                      {web2apiDetecting ? t('detecting') : t('detectService')}
-                    </button>
-                  </div>
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="dsh-agy-row" style={{ padding: '8px 12px', borderRadius: '8px', border: '1px dashed rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.02)' }}>
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span style={{ fontSize: '14px' }}>🚀</span>
-                <span className="dsh-agy-body" style={{ fontSize: '12px', color: '#c0c4cc' }}>{t('quickSetupTitle')}</span>
-              </div>
-              <button
-                type="button"
-                className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
-                style={{ padding: '2px 10px', fontSize: '11px' }}
-                onClick={restoreGuide}
-              >
-                {t('showGuide')}
-              </button>
-            </div>
-          )}
-
-          <div className="dsh-agy-card">
-            <div className="dsh-agy-row">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span className={'dsh-agy-dot ' + (web2apiEnabled ? 'is-signed-in' : '')} />
-                <p className="dsh-agy-card-title">{t('web2apiTitle')}</p>
-                <span className={'dsh-agy-status-badge ' + (web2apiEnabled ? 'is-success' : '')}>
-                  {web2apiEnabled ? t('statusConnected') : t('statusDisabled')}
-                </span>
-              </div>
-              <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
-                <input
-                  type="checkbox"
-                  checked={web2apiEnabled}
-                  disabled={web2apiSaving}
-                  onChange={e => setWeb2apiEnabled(e.target.checked)}
-                />
-                <span>{t('web2apiEnable')}</span>
-              </label>
-            </div>
-
-            <p className="dsh-agy-body">{t('web2apiHelp')}</p>
-
-            {web2apiEnabled ? (
-              <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '4px' }}>
-                <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-                  <span style={{ fontSize: '12px', opacity: 0.7 }}>{t('presetLocal')}:</span>
-                  <button
-                    type="button"
-                    className="dsh-agy-chip"
-                    onClick={() => setWeb2apiBaseUrl('http://127.0.0.1:18088/v1')}
-                  >
-                    127.0.0.1:18088
-                  </button>
-                  <button
-                    type="button"
-                    className="dsh-agy-chip"
-                    onClick={() => setWeb2apiBaseUrl('http://localhost:18088/v1')}
-                  >
-                    localhost:18088
-                  </button>
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px', fontWeight: 500 }}>
-                    {t('web2apiBaseUrl')}
-                  </label>
-                  <input
-                    type="text"
-                    className="dsh-agy-input"
-                    placeholder="http://127.0.0.1:18088/v1"
-                    value={web2apiBaseUrl}
-                    disabled={web2apiSaving}
-                    onChange={e => setWeb2apiBaseUrl(e.target.value)}
-                  />
-                </div>
-
-                <div>
-                  <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px', fontWeight: 500 }}>
-                    {t('web2apiApiKey')}
-                  </label>
-                  <input
-                    type="password"
-                    className="dsh-agy-input"
-                    placeholder="sk-..."
-                    value={web2apiApiKey}
-                    disabled={web2apiSaving}
-                    onChange={e => setWeb2apiApiKey(e.target.value)}
-                  />
-                </div>
-
-                <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
-                  <input
-                    type="checkbox"
-                    checked={web2apiImageTool}
-                    disabled={web2apiSaving}
-                    onChange={e => setWeb2apiImageTool(e.target.checked)}
-                  />
-                  <span>{t('web2apiImageTool')}</span>
-                </label>
-
-                <div style={{ display: 'flex', alignItems: 'center', gap: '8px', marginTop: '4px' }}>
-                  <button
-                    type="button"
-                    className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
-                    disabled={web2apiTesting || web2apiSaving}
-                    onClick={() => { void testWeb2Api() }}
-                  >
-                    {web2apiTesting ? t('web2apiTesting') : t('web2apiTest')}
-                  </button>
-                  <button
-                    type="button"
-                    className="dsh-agy-btn dsh-agy-btn-primary dsh-agy-btn-compact"
-                    disabled={web2apiSaving}
-                    onClick={() => { void saveWeb2Api() }}
-                  >
-                    {web2apiSaving ? t('web2apiSaving') : t('web2apiSave')}
-                  </button>
-                </div>
-
-                {web2apiFeedback ? (
-                  <p className={web2apiFeedback.ok ? 'dsh-agy-body' : 'dsh-agy-error'} style={{ marginTop: '2px', fontSize: '12px' }}>
-                    {web2apiFeedback.msg}
-                  </p>
-                ) : null}
-              </div>
-            ) : null}
-          </div>
-
-          <div className="dsh-agy-card" style={{ background: 'transparent', opacity: 0.85 }}>
-            <div className="dsh-agy-row">
-              <p className="dsh-agy-card-title" style={{ fontSize: '13px' }}>{t('creditTitle')}</p>
-              <a
-                href="https://github.com/zexadev/gemini-web2api-go"
-                target="_blank"
-                rel="noreferrer"
-                className="dsh-agy-link"
-                style={{ fontSize: '12px' }}
-              >
-                {t('visitRepo')} →
-              </a>
-            </div>
-            <p className="dsh-agy-body" style={{ fontSize: '12px' }}>{t('creditBody')}</p>
-          </div>
-        </div>
+        <Web2ApiTab
+          t={t}
+          guideDismissed={guideDismissed}
+          dismissGuide={dismissGuide}
+          restoreGuide={restoreGuide}
+          dockerCmd={DOCKER_CMD}
+          copiedDocker={copiedDocker}
+          copyDockerCommand={copyDockerCommand}
+          web2apiDetecting={web2apiDetecting}
+          detectLocalGateway={() => { void detectLocalGateway() }}
+          web2apiEnabled={web2apiEnabled}
+          setWeb2apiEnabled={setWeb2apiEnabled}
+          web2apiSaving={web2apiSaving}
+          web2apiBaseUrl={web2apiBaseUrl}
+          setWeb2apiBaseUrl={setWeb2apiBaseUrl}
+          web2apiApiKey={web2apiApiKey}
+          setWeb2apiApiKey={setWeb2apiApiKey}
+          web2apiImageTool={web2apiImageTool}
+          setWeb2apiImageTool={setWeb2apiImageTool}
+          saveWeb2Api={() => { void saveWeb2Api() }}
+          web2apiTesting={web2apiTesting}
+          testWeb2Api={() => { void testWeb2Api() }}
+          web2apiFeedback={web2apiFeedback}
+        />
       ) : null}
 
       {/* TAB 4: NETWORK & PROXY */}
-      {activeTab === 'network' && network ? (
-        <div className="dsh-agy-card">
-          <p className="dsh-agy-card-title">{t('network')}</p>
-          <p className="dsh-agy-body">{t('networkHelp')}</p>
-
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '6px' }}>
-            <label style={{ fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-              <span>{t('network')}</span>
-              <select
-                className="dsh-agy-select"
-                aria-label={t('network')}
-                value={network.mode}
-                disabled={savingNetwork}
-                onChange={e => setNetwork({ ...network, mode: e.target.value as Network['mode'] })}
-              >
-                <option value="auto">{t('networkAuto')}</option>
-                <option value="direct">{t('networkDirect')}</option>
-                <option value="proxy">{t('networkProxy')}</option>
-              </select>
-            </label>
-
-            {network.mode === 'proxy' ? (
-              <div>
-                <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>{t('proxyUrl')}</label>
-                <input
-                  type="text"
-                  className="dsh-agy-input"
-                  aria-label={t('proxyUrl')}
-                  placeholder="http://127.0.0.1:7890"
-                  value={network.url}
-                  disabled={savingNetwork}
-                  onChange={e => setNetwork({ ...network, url: e.target.value })}
-                />
-              </div>
-            ) : null}
-
-            <p className="dsh-agy-body" style={{ fontSize: '12px' }}>
-              {t('effectiveNetwork')} <code>{network.effective || 'direct'}</code>
-            </p>
-
-            <button
-              type="button"
-              className="dsh-agy-btn dsh-agy-btn-primary dsh-agy-btn-compact"
-              style={{ width: 'fit-content' }}
-              disabled={savingNetwork}
-              onClick={() => { void saveNetwork() }}
-            >
-              {savingNetwork ? t('working') : t('saveNetwork')}
-            </button>
-
-            {networkMessage ? (
-              <p role="status" className="dsh-agy-body" style={{ fontSize: '12px' }}>
-                {networkMessage}
-              </p>
-            ) : null}
-          </div>
-        </div>
+      {activeTab === 'network' ? (
+        <NetworkTab
+          t={t}
+          network={network}
+          setNetwork={setNetwork}
+          savingNetwork={savingNetwork}
+          saveNetwork={() => { void saveNetwork() }}
+          networkMessage={networkMessage}
+        />
       ) : null}
     </section>
   )
