@@ -70,17 +70,18 @@ const SETTINGS_CSS = `
 
 /* Navigation Tabs */
 .dsh-agy-tabs {
-  display:inline-flex; align-items:center; gap:4px; padding:3px;
+  display:grid; grid-template-columns:repeat(4, 1fr); gap:3px; padding:2px;
   background:#1a1c1e !important;
   border:1px solid rgba(255,255,255,0.12) !important;
-  border-radius:10px; width:fit-content; margin-bottom:2px;
+  border-radius:9px; width:100%; max-width:100%; box-sizing:border-box; margin-bottom:2px;
 }
 .dsh-agy-tab-btn {
-  display:inline-flex; align-items:center; gap:6px; padding:6px 14px;
+  display:inline-flex; align-items:center; justify-content:center; gap:4px; padding:6px 2px;
   border:none !important; border-radius:7px !important;
   background:transparent !important;
-  color:#9a9ea5 !important; font:inherit; font-size:13px; font-weight:500;
+  color:#9a9ea5 !important; font:inherit; font-size:12px; font-weight:500;
   cursor:pointer; transition:all 0.15s ease; user-select:none;
+  overflow:hidden; text-overflow:ellipsis; white-space:nowrap; min-width:0;
 }
 .dsh-agy-tab-btn:hover { color:#ffffff !important; background:rgba(255,255,255,0.06) !important; }
 .dsh-agy-tab-btn.is-active {
@@ -942,10 +943,11 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                         className={'dsh-agy-account ' + (isActive ? 'is-active ' : '') + (compactView ? 'is-compact' : '')}
                         onClick={() => { if (!isActive && !switchingId) void switchAccount(account) }}
                       >
-                        {/* Account Main Info */}
-                        <div className="dsh-agy-account-main">
+                        {/* Tier 1: Email + Active/Remove button */}
+                        <div className="dsh-agy-account-header">
+                          <div className="dsh-agy-account-info">
                             <input type="radio" checked={isActive} readOnly style={{ cursor: 'pointer', flexShrink: 0 }} />
-                            <div style={{ display: 'flex', flexDirection: 'column', gap: '1px', minWidth: 0, overflow: 'hidden' }}>
+                            <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
                               <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
                                 <span className="dsh-agy-account-mail">{account.email ?? account.id}</span>
                                 {isSwitching ? <span className="dsh-agy-status-badge is-switching">{t('working')}...</span> : null}
@@ -958,9 +960,24 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                             </div>
                           </div>
 
-                        {/* Quota Indicators */}
+                          <div className="dsh-agy-account-action" onClick={e => e.stopPropagation()}>
+                            {isActive ? (
+                              <span className="dsh-agy-action-pill is-active-badge">{t('activeBadge')}</span>
+                            ) : (
+                              <button
+                                type="button"
+                                className="dsh-agy-action-pill is-remove-btn"
+                                disabled={busy || Boolean(switchingId)}
+                                onClick={() => { void removeAccount(account.id) }}
+                              >
+                                {t('removeAccount')}
+                              </button>
+                            )}
+                          </div>
+                        </div>
+
+                        {/* Tier 2: Quota capsules evenly split 50/50 */}
                         <div className="dsh-agy-account-metrics" onClick={e => e.stopPropagation()} title={titleOverall}>
-                          {/* 5h Quota Bar */}
                           {p5h !== undefined ? (
                             <div className="dsh-agy-capsule-bar" title={title5h}>
                               <div className="dsh-agy-capsule-main">
@@ -978,7 +995,6 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                             </div>
                           ) : null}
 
-                          {/* Weekly Quota Bar */}
                           {pWeekly !== undefined ? (
                             <div className="dsh-agy-capsule-bar" title={titleWeekly}>
                               <div className="dsh-agy-capsule-main">
@@ -995,22 +1011,6 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                               </span>
                             </div>
                           ) : null}
-                        </div>
-
-                        {/* Rightmost Action Column: Active badge in line with Remove button! */}
-                        <div className="dsh-agy-account-action" onClick={e => e.stopPropagation()}>
-                          {isActive ? (
-                            <span className="dsh-agy-action-pill is-active-badge">{t('activeBadge')}</span>
-                          ) : (
-                            <button
-                              type="button"
-                              className="dsh-agy-action-pill is-remove-btn"
-                              disabled={busy || Boolean(switchingId)}
-                              onClick={() => { void removeAccount(account.id) }}
-                            >
-                              {t('removeAccount')}
-                            </button>
-                          )}
                         </div>
                       </div>
                     )
