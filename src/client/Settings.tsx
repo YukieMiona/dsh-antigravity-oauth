@@ -411,12 +411,22 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
 
   const refreshQuotas = useCallback(async () => {
     setLoadingQuotas(true)
+    setError(undefined)
     try {
       const res = await jsonRequest<{ ok: boolean, quotas: Record<string, AccountQuotaSummary> }>(QUOTAS_PATH)
-      if (res?.quotas) setQuotas(res.quotas)
-    } catch {}
-    finally { setLoadingQuotas(false) }
-  }, [])
+      if (res?.quotas) {
+        setQuotas(res.quotas)
+        setToastMessage(t('quotas') + ' ' + (t('statusConnected') || 'refreshed'))
+        setTimeout(() => setToastMessage(null), 2500)
+      } else {
+        setError('Quota response was empty')
+      }
+    } catch (caught: unknown) {
+      setError(caught instanceof Error ? caught.message : 'Failed to refresh quotas')
+    } finally {
+      setLoadingQuotas(false)
+    }
+  }, [t])
 
   const loadNetwork = useCallback(async () => {
     try {
@@ -767,8 +777,8 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                   </button>
                 )}
                 {accounts.length > 0 ? (
-                  <button type="button" className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact" disabled={busy || loadingQuotas} onClick={() => { void refreshQuotas() }}>
-                    {loadingQuotas ? t('working') : t('refreshQuotas')}
+                  <button type="button" className="dsh-agy-action-pill is-remove-btn" disabled={busy || loadingQuotas} onClick={() => { void refreshQuotas() }}>
+                    {loadingQuotas ? '...' : t('refreshQuotas')}
                   </button>
                 ) : null}
               </div>
