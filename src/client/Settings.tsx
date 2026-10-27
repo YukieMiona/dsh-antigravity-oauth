@@ -184,7 +184,7 @@ const SETTINGS_CSS = `
 
 /* Compact mode: truly dense and slim */
 .dsh-agy-account.is-compact {
-  padding:3px 8px; min-height:28px; gap:6px; border-radius:4px;
+  padding:4px 12px; min-height:32px;
 }
 .dsh-agy-account-main {
   display:flex; align-items:center; gap:8px; flex:1 1 0; min-width:0; overflow:hidden;
@@ -193,7 +193,6 @@ const SETTINGS_CSS = `
   font-size:13px; font-weight:500; color:#f0f0f0;
   overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
 }
-.dsh-agy-account.is-compact .dsh-agy-account-mail { font-size:11px; line-height:16px; }
 .dsh-agy-link { color:#1677ff; text-decoration:none; }
 .dsh-agy-link:hover { text-decoration:underline; }
 
@@ -211,13 +210,10 @@ const SETTINGS_CSS = `
   background:rgba(128,128,128,0.1); color:#9aa0a6; cursor:help; user-select:none;
 }
 .dsh-agy-account.is-compact .dsh-agy-capsule-bar {
-  width:88px; height:20px; padding:1px 5px; font-size:10px; border-radius:4px;
+  padding:2px 8px; height:24px;
 }
 .dsh-agy-capsule-progress {
-  width:40px; height:6px; border-radius:3px; background:rgba(128,128,128,0.25); overflow:hidden; flex:0 0 40px;
-}
-.dsh-agy-account.is-compact .dsh-agy-capsule-progress {
-  width:28px; height:4px; flex:0 0 28px;
+  width:42px; height:6px; border-radius:3px; background:rgba(128,128,128,0.25); overflow:hidden; flex:0 0 42px;
 }
 .dsh-agy-capsule-fill { height:100%; border-radius:3px; transition:width 0.3s ease; }
 .dsh-agy-capsule-fill.is-high { background:#41c977; }
@@ -228,8 +224,23 @@ const SETTINGS_CSS = `
 .dsh-agy-account-action {
   width:64px; display:flex; align-items:center; justify-content:flex-end; flex-shrink:0;
 }
-.dsh-agy-account.is-compact .dsh-agy-account-action {
-  width:58px;
+.dsh-agy-action-pill {
+  box-sizing:border-box !important; width:62px !important; height:24px !important;
+  min-height:24px !important; max-height:24px !important; padding:0 !important;
+  font-size:11px !important; font-weight:500 !important; line-height:22px !important;
+  border-radius:6px !important; display:inline-flex !important; align-items:center !important;
+  justify-content:center !important; text-align:center !important; user-select:none;
+}
+.dsh-agy-action-pill.is-active-badge {
+  background:rgba(34,160,107,0.2) !important; color:#41c977 !important;
+  border:1px solid rgba(34,160,107,0.4) !important; font-weight:600 !important;
+}
+.dsh-agy-action-pill.is-remove-btn {
+  border:1px solid rgba(255,255,255,0.15) !important; background:#2b2d30 !important;
+  color:#f0f0f0 !important; cursor:pointer !important;
+}
+.dsh-agy-action-pill.is-remove-btn:hover:not(:disabled) {
+  background:#3c3f41 !important; border-color:#1677ff !important; color:#ffffff !important;
 }
 
 /* Quick Setup Card (Plan C) */
@@ -267,7 +278,7 @@ const SETTINGS_CSS = `
 function formatShortCountdown(isoString?: string): string {
   if (!isoString) return '-'
   const diff = new Date(isoString).getTime() - Date.now()
-  if (diff <= 0) return '0m'
+  if (diff <= 0) return '已刷新'
   const totalMinutes = Math.floor(diff / 60000)
   const days = Math.floor(totalMinutes / 1440)
   const hours = Math.floor((totalMinutes % 1440) / 60)
@@ -285,11 +296,13 @@ function getAccountQuotaMetrics(quota?: AccountQuotaSummary) {
   if (!quota?.ok || !quota.groups) return undefined
   const allBuckets = quota.groups.flatMap(g => g.buckets)
   
-  // Prioritize Gemini core buckets (gemini-5h, gemini-weekly) to match antigravity_quota.mjs
-  const b5h = allBuckets.find(b => b.window === '5h' && /^gemini[-_]/i.test(b.bucketId))
-    ?? allBuckets.find(b => b.window === '5h')
-  const bWeekly = allBuckets.find(b => b.window === 'weekly' && /^gemini[-_]/i.test(b.bucketId))
-    ?? allBuckets.find(b => b.window === 'weekly')
+  // Strictly isolate Gemini core buckets (gemini-5h, gemini-weekly)
+  // NEVER fall back to 3p (Claude/GPT) buckets which are unused and falsely show 100%!
+  const geminiBuckets = allBuckets.filter(b => /^gemini[-_]/i.test(b.bucketId || ''))
+  const b5h = geminiBuckets.find(b => b.window === '5h')
+    ?? allBuckets.find(b => b.window === '5h' && !/^3p[-_]/i.test(b.bucketId || ''))
+  const bWeekly = geminiBuckets.find(b => b.window === 'weekly')
+    ?? allBuckets.find(b => b.window === 'weekly' && !/^3p[-_]/i.test(b.bucketId || ''))
   
   if (!b5h && !bWeekly) return undefined
 
@@ -745,7 +758,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
                 {signing ? (
-                  <button type="button" className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact" onClick={() => { void recover('cancel') }}>
+                  <button type="button" className="dsh-agy-action-pill is-remove-btn" onClick={() => { void recover('cancel') }}>
                     {t('cancel')}
                   </button>
                 ) : (
@@ -909,7 +922,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                         {/* Rightmost Action Column: Active badge in line with Remove button! */}
                         <div className="dsh-agy-account-action" onClick={e => e.stopPropagation()}>
                           {isActive ? (
-                            <span className="dsh-agy-status-badge is-success">{t('activeBadge')}</span>
+                            <span className="dsh-agy-action-pill is-active-badge">{t('activeBadge')}</span>
                           ) : (
                             <button
                               type="button"
