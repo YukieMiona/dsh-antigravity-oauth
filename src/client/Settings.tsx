@@ -171,52 +171,71 @@ const SETTINGS_CSS = `
   gap:3px;
 }
 .dsh-agy-account {
-  display:flex; align-items:center; justify-content:space-between; gap:10px;
-  padding:8px 12px; border-radius:8px;
-  border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.2));
-  background:var(--dsw-alias-bg-module-platform, transparent); transition:all 0.15s ease;
-  overflow:hidden; box-sizing:border-box; cursor:pointer;
+  display:flex !important; flex-direction:column !important; align-items:stretch !important; gap:7px !important;
+  padding:9px 12px !important; border-radius:10px !important;
+  border:1px solid var(--dsw-alias-border-l2, rgba(128,128,128,0.2)) !important;
+  background:var(--dsw-alias-bg-module-platform, rgba(128,128,128,0.03)) !important;
+  box-sizing:border-box !important; width:100% !important; cursor:pointer !important;
+  transition:background 0.15s ease, border-color 0.15s ease !important;
 }
 .dsh-agy-account:hover {
-  background:rgba(255,255,255,0.04);
+  background:rgba(255,255,255,0.05) !important; border-color:rgba(255,255,255,0.2) !important;
 }
 .dsh-agy-account.is-active {
-  border-color:#1677ff;
-  background:rgba(22, 119, 255, 0.06);
+  border-color:#1677ff !important; background:rgba(22, 119, 255, 0.08) !important;
+}
+.dsh-agy-account.is-compact {
+  padding:5px 10px !important; gap:4px !important;
 }
 
-/* Compact mode: truly dense and slim */
-.dsh-agy-account.is-compact {
-  padding:4px 12px; min-height:32px;
+.dsh-agy-account-header {
+  display:flex !important; align-items:center !important; justify-content:space-between !important;
+  gap:10px !important; width:100% !important; box-sizing:border-box !important;
 }
-.dsh-agy-account-main {
-  display:flex; align-items:center; gap:8px; flex:1 1 0; min-width:0; overflow:hidden;
+.dsh-agy-account-info {
+  display:flex !important; align-items:center !important; gap:8px !important;
+  flex:1 1 auto !important; min-width:0 !important; overflow:hidden !important;
 }
 .dsh-agy-account-mail {
-  font-size:13px; font-weight:500; color:#f0f0f0;
-  overflow:hidden; text-overflow:ellipsis; white-space:nowrap;
+  font-size:13px !important; font-weight:600 !important; color:#ffffff !important;
+  overflow:hidden !important; text-overflow:ellipsis !important; white-space:nowrap !important;
+}
+.dsh-agy-account.is-compact .dsh-agy-account-mail {
+  font-size:12px !important;
 }
 .dsh-agy-link { color:#1677ff; text-decoration:none; }
 .dsh-agy-link:hover { text-decoration:underline; }
 
 .dsh-agy-account-metrics {
-  display:flex; align-items:center; gap:8px; flex:0 0 auto;
-}
-.dsh-agy-account.is-compact .dsh-agy-account-metrics {
-  gap:6px;
+  display:flex !important; align-items:center !important; gap:8px !important;
+  width:100% !important; box-sizing:border-box !important;
 }
 
 /* Quota Capsule Bars */
 .dsh-agy-capsule-bar {
-  box-sizing:border-box; width:130px; display:inline-flex; align-items:center; justify-content:space-between;
-  gap:6px; font-size:11px; padding:3px 8px; border-radius:6px;
-  background:rgba(128,128,128,0.1); color:#9aa0a6; cursor:help; user-select:none;
+  flex:1 1 0 !important; min-width:0 !important; box-sizing:border-box !important;
+  display:inline-flex !important; flex-direction:column !important; justify-content:center !important;
+  gap:2px !important; font-size:11px !important; padding:4px 8px !important; border-radius:6px !important;
+  background:rgba(128,128,128,0.08) !important; border:1px solid rgba(255,255,255,0.06) !important;
+  color:#9aa0a6 !important; cursor:help !important; user-select:none !important;
 }
-.dsh-agy-account.is-compact .dsh-agy-capsule-bar {
-  padding:2px 8px; height:24px;
+.dsh-agy-capsule-main {
+  display:flex !important; align-items:center !important; justify-content:space-between !important;
+  width:100% !important; gap:6px !important;
 }
 .dsh-agy-capsule-progress {
-  width:42px; height:6px; border-radius:3px; background:rgba(128,128,128,0.25); overflow:hidden; flex:0 0 42px;
+  flex:1 1 30px !important; max-width:85px !important; min-width:25px !important;
+  height:6px !important; border-radius:3px !important; background:rgba(128,128,128,0.25) !important; overflow:hidden !important;
+}
+.dsh-agy-capsule-reset {
+  font-size:10px !important; line-height:12px !important; color:#8c9199 !important; white-space:nowrap !important; font-weight:500 !important;
+}
+.dsh-agy-account.is-compact .dsh-agy-capsule-bar {
+  flex-direction:row !important; align-items:center !important; justify-content:space-between !important;
+  padding:2px 8px !important; height:22px !important;
+}
+.dsh-agy-account.is-compact .dsh-agy-capsule-reset {
+  display:none !important;
 }
 .dsh-agy-capsule-fill { height:100%; border-radius:3px; transition:width 0.3s ease; }
 .dsh-agy-capsule-fill.is-high { background:#41c977; }
