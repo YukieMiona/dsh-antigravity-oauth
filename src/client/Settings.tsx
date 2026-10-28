@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useState } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
 import type { AntigravityKey } from './locales.ts'
 import type { AccountQuotaSummary, AccountSummary, AntigravityStatus } from '../types.ts'
 
@@ -31,7 +31,7 @@ import { AdvancedTab } from './tabs/AdvancedTab.tsx'
 import { Web2ApiTab } from './tabs/Web2ApiTab.tsx'
 import { NetworkTab, type Network } from './tabs/NetworkTab.tsx'
 import { ensureThemeStyles } from './theme.ts'
-import { evaluateQuotaMetrics as getAccountQuotaMetrics, formatShortCountdown } from '../quota-core.ts'
+import { evaluateQuotaMetrics as getAccountQuotaMetrics } from '../quota-core.ts'
 
 async function jsonRequest<T>(path: string, method = 'GET', body?: unknown): Promise<T> {
   const url = method === 'GET' ? `${path}${path.includes('?') ? '&' : '?'}t=${Date.now()}` : path
@@ -62,6 +62,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
   const [error, setError] = useState<string | undefined>(undefined)
   const [toastMessage, setToastMessage] = useState<string | null>(null)
   const [busy, setBusy] = useState(false)
+  const accountAction = useRef(false)
   const [switchingId, setSwitchingId] = useState<string | null>(null)
   const [draft, setDraft] = useState('')
   const [quotas, setQuotas] = useState<Record<string, AccountQuotaSummary>>({})
@@ -96,6 +97,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
   // Network state
   const [network, setNetwork] = useState<Network>()
   const [networkMessage, setNetworkMessage] = useState('')
+  const [networkError, setNetworkError] = useState(false)
   const [savingNetwork, setSavingNetwork] = useState(false)
 
   // Web2API state (Plan C with port 18088)
@@ -218,14 +220,22 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     }
   }
 
+  const restoreBanner = () => {
+    setBannerDismissed(false)
+    if (typeof localStorage !== 'undefined') localStorage.removeItem(DISMISSED_BANNER_KEY)
+  }
+
   const saveNetwork = async () => {
     if (!network) return
     setSavingNetwork(true)
+    setNetworkMessage('')
+    setNetworkError(false)
     try {
       const saved = await jsonRequest<Network>(NETWORK_PATH, 'POST', network)
       setNetwork(saved)
       setNetworkMessage(t('networkSaved'))
     } catch (e: unknown) {
+      setNetworkError(true)
       setNetworkMessage(e instanceof Error ? e.message : t('saveFailed'))
     } finally {
       setSavingNetwork(false)
@@ -328,6 +338,8 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
   }
 
   const signIn = async () => {
+    if (busy || switchingId || accountAction.current) return
+    accountAction.current = true
     setBusy(true)
     try {
       const challenge = await jsonRequest<{ url: string }>(LOGIN_PATH, 'POST')
@@ -336,12 +348,14 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     } catch (caught: unknown) {
       setError(caught instanceof Error ? caught.message : t('requestFailed'))
     } finally {
+      accountAction.current = false
       setBusy(false)
     }
   }
 
   const complete = async () => {
-    if (draft.trim().length === 0) return
+    if (draft.trim().length === 0 || busy || switchingId || accountAction.current) return
+    accountAction.current = true
     setBusy(true)
     try {
       await jsonRequest(COMPLETE_PATH, 'POST', { url: draft.trim() })
@@ -350,12 +364,15 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     } catch (caught: unknown) {
       setError(caught instanceof Error ? caught.message : t('requestFailed'))
     } finally {
+      accountAction.current = false
       setBusy(false)
     }
   }
 
   // Account switch with verified server return + non-intrusive floating toast
   const switchAccount = async (targetAccount: AccountSummary) => {
+    if (busy || switchingId || accountAction.current) return
+    accountAction.current = true
     setSwitchingId(targetAccount.id)
     setError(undefined)
     try {
@@ -368,14 +385,17 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
       setToastMessage(t('accountSwitched', { email: targetAccount.email ?? targetAccount.id }))
       setTimeout(() => setToastMessage(null), 3000)
     } catch (caught: unknown) {
-      setError(caught instanceof Error ? caught.message : t('requestFailed'))
       await refresh()
+      setError(caught instanceof Error ? caught.message : t('requestFailed'))
     } finally {
+      accountAction.current = false
       setSwitchingId(null)
     }
   }
 
   const removeAccount = async (id: string) => {
+    if (busy || switchingId || accountAction.current) return
+    accountAction.current = true
     setBusy(true)
     try {
       await jsonRequest(REMOVE_PATH, 'POST', { id })
@@ -383,11 +403,14 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     } catch (caught: unknown) {
       setError(caught instanceof Error ? caught.message : t('requestFailed'))
     } finally {
+      accountAction.current = false
       setBusy(false)
     }
   }
 
   const recover = async (action: 'cancel' | 'retry') => {
+    if (busy || switchingId || accountAction.current) return
+    accountAction.current = true
     setBusy(true)
     try {
       await jsonRequest('/plugins/dsh-antigravity-oauth/auth/' + action, 'POST')
@@ -396,6 +419,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     } catch (caught: unknown) {
       setError(caught instanceof Error ? caught.message : t('requestFailed'))
     } finally {
+      accountAction.current = false
       setBusy(false)
     }
   }
@@ -458,11 +482,6 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
             onClick={() => setActiveTab('accounts')}
           >
             <span>{t('tabAccounts')}</span>
-            {accounts.length > 0 ? (
-              <span style={{ fontSize: '11px', opacity: 0.85, background: 'rgba(255,255,255,0.25)', padding: '1px 6px', borderRadius: '10px' }}>
-                {accounts.length}
-              </span>
-            ) : null}
           </button>
 
           <button
@@ -497,48 +516,52 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
         </nav>
       </div>
 
-      {/* Dismissible Notice Banner (Hides automatically in Compact View) */}
-      {!bannerDismissed && !compactView ? (
+      {/* Notice visibility is independent of density. */}
+      {!bannerDismissed ? (
         <div className="dsh-agy-notice-banner">
           <p className="dsh-agy-body" style={{ margin: 0 }}>{t('tos')}</p>
           <button
             type="button"
             className="dsh-agy-notice-close"
+            aria-label={t('dismissNotice')}
             title={t('dismissNotice')}
             onClick={dismissBanner}
           >
             ×
           </button>
         </div>
-      ) : null}
+      ) : (
+        <div className="dsh-agy-actions">
+          <button type="button" className="dsh-agy-btn dsh-agy-btn-secondary" onClick={restoreBanner}>{t('restoreNotice')}</button>
+        </div>
+      )}
 
-      {error ? <p className="dsh-agy-error">{error}</p> : null}
+      {error ? <p className="dsh-agy-error" role="alert">{error}</p> : null}
 
       {/* TAB 1: ACCOUNTS & QUOTA */}
       {activeTab === 'accounts' ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          {/* Streamlined Hero Summary Bar */}
+          {/* Streamlined Summary Bar */}
           <div className="dsh-agy-card" style={{ padding: '8px 12px' }}>
             <div className="dsh-agy-row">
               <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
                 <span className={'dsh-agy-dot ' + (signing ? 'is-signing-in' : activeAccount?.ready ? 'is-signed-in' : 'is-error')} />
-                <span style={{ fontSize: '13px', fontWeight: 600, color: '#fff' }}>{t('authStatus')}:</span>
-                <span className={'dsh-agy-status-badge ' + (activeAccount?.ready ? 'is-success' : 'is-error')}>
+                <span style={{ fontSize: '12px', fontWeight: 500 }}>
                   {signing ? t('signingIn') : activeAccount ? (activeAccount.ready ? t('signedIn') : t('authorized')) : t('signedOut')}
                 </span>
               </div>
               <div style={{ display: 'flex', gap: '8px' }}>
                 {signing ? (
-                  <button type="button" className="dsh-agy-action-pill is-remove-btn" onClick={() => { void recover('cancel') }}>
+                  <button type="button" className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact" disabled={busy || Boolean(switchingId)} onClick={() => { void recover('cancel') }}>
                     {t('cancel')}
                   </button>
                 ) : (
-                  <button type="button" className="dsh-agy-btn dsh-agy-btn-primary" disabled={busy} onClick={() => { void signIn() }}>
+                  <button type="button" className="dsh-agy-btn dsh-agy-btn-primary" disabled={busy || Boolean(switchingId)} onClick={() => { void signIn() }}>
                     {busy ? t('working') : accounts.length === 0 ? t('login') : t('addAccount')}
                   </button>
                 )}
                 {accounts.length > 0 ? (
-                  <button type="button" className="dsh-agy-btn dsh-agy-btn-secondary" disabled={busy || loadingQuotas} onClick={() => { void refreshQuotas() }}>
+                  <button type="button" className="dsh-agy-btn dsh-agy-btn-secondary" disabled={busy || Boolean(switchingId) || loadingQuotas} onClick={() => { void refreshQuotas() }}>
                     {loadingQuotas ? '...' : t('refreshQuotas')}
                   </button>
                 ) : null}
@@ -546,171 +569,26 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
             </div>
           </div>
 
-          {/* Accounts List & Filter Controls Card */}
-          {accounts.length > 0 ? (
-            <div className="dsh-agy-card">
-              {/* Single-Line Minimal Toolbar */}
-              <div className="dsh-agy-row dsh-agy-toolbar-row" style={{ gap: '10px', alignItems: 'center' }}>
-                <div style={{ position: 'relative', flex: '1 1 200px' }}>
-                  <input
-                    type="text"
-                    className="dsh-agy-input"
-                    placeholder={t('searchAccountsPlaceholder')}
-                    value={searchQuery}
-                    onChange={e => setSearchQuery(e.target.value)}
-                    style={{ paddingRight: searchQuery ? '28px' : '10px' }}
-                  />
-                  {searchQuery ? (
-                    <button
-                      type="button"
-                      aria-label={t('clearSearch')}
-                      onClick={() => setSearchQuery('')}
-                      style={{ position: 'absolute', right: '6px', top: '50%', transform: 'translateY(-50%)', border: 'none', background: 'transparent', cursor: 'pointer', opacity: 0.6, color: '#fff' }}
-                    >
-                      ×
-                    </button>
-                  ) : null}
-                </div>
-
-                <div className="dsh-agy-toolbar-controls" style={{ display: 'flex', alignItems: 'center', gap: '10px', flexShrink: 0 }}>
-                  {/* Modern Segmented Sort Toggle */}
-                  <div className="dsh-agy-segmented">
-                    <button
-                      type="button"
-                      className={'dsh-agy-segmented-btn ' + (sortBy === 'default' ? 'is-active' : '')}
-                      style={{ padding: '3px 8px', fontSize: '11px' }}
-                      onClick={() => setSortBy('default')}
-                      title={t('sortDefault')}
-                    >
-                      {t('sortDefaultShort')}
-                    </button>
-                    <button
-                      type="button"
-                      className={'dsh-agy-segmented-btn ' + (sortBy === 'quota' ? 'is-active' : '')}
-                      style={{ padding: '3px 8px', fontSize: '11px' }}
-                      onClick={() => setSortBy('quota')}
-                      title={t('sortQuota')}
-                    >
-                      ⚡ {t('sortQuotaShort')}
-                    </button>
-                  </div>
-
-                  <label style={{ display: 'inline-flex', alignItems: 'center', gap: '5px', fontSize: '12px', cursor: 'pointer', color: '#b0b4ba', userSelect: 'none' }}>
-                    <input type="checkbox" checked={compactView} onChange={e => setCompactView(e.target.checked)} style={{ cursor: 'pointer' }} />
-                    <span>{t('compactView')}</span>
-                  </label>
-                </div>
-              </div>
-
-              {/* Accounts Items List */}
-              <div className={'dsh-agy-account-list ' + (compactView ? 'is-compact-mode' : '')}>
-                {filteredAccounts.length === 0 ? (
-                  <div style={{ padding: '24px', textAlign: 'center', opacity: 0.6, fontSize: '13px' }}>
-                    {t('noMatchingAccounts')}
-                  </div>
-                ) : (
-                  filteredAccounts.map(account => {
-                    const isActive = account.id === activeAccountId
-                    const isSwitching = account.id === switchingId
-                    const metrics = getAccountQuotaMetrics(quotas[account.id])
-                    const p5h = metrics?.p5h
-                    const pWeekly = metrics?.pWeekly
-                    const score = metrics?.score !== undefined ? Math.round(metrics.score) : undefined
-
-                    const title5h = p5h !== undefined
-                      ? `5h limit: ${p5h}%${metrics?.reset5h ? ` (${t('quotaResetsIn')} ${metrics.reset5h})` : ''}`
-                      : '5h limit: Quota not loaded'
-
-                    const titleWeekly = pWeekly !== undefined
-                      ? `Weekly limit: ${pWeekly}%${metrics?.resetWeekly ? ` (${t('quotaResetsIn')} ${metrics.resetWeekly})` : ''}`
-                      : 'Weekly limit: Quota not loaded'
-
-                    const titleOverall = score !== undefined
-                      ? `Effective bottleneck: ${score}% · 5h: ${p5h}% · Weekly: ${pWeekly}%`
-                      : ''
-
-                    return (
-                      <div
-                        key={account.id}
-                        className={'dsh-agy-account ' + (isActive ? 'is-active ' : '') + (compactView ? 'is-compact' : '')}
-                        onClick={() => { if (!isActive && !switchingId) void switchAccount(account) }}
-                      >
-                        {/* Tier 1: Email + Active/Remove button */}
-                        <div className="dsh-agy-account-header">
-                          <div className="dsh-agy-account-info">
-                            <input type="radio" checked={isActive} readOnly style={{ cursor: 'pointer', flexShrink: 0 }} />
-                            <div style={{ display: 'flex', flexDirection: 'column', minWidth: 0, overflow: 'hidden' }}>
-                              <div style={{ display: 'flex', alignItems: 'center', gap: '6px' }}>
-                                <span className="dsh-agy-account-mail">{account.email ?? account.id}</span>
-                                {isSwitching ? <span className="dsh-agy-status-badge is-switching">{t('working')}...</span> : null}
-                                {account.limited ? <span className="dsh-agy-status-badge is-error">{t('accountLimited')}</span> : null}
-                                {account.dead ? <span className="dsh-agy-status-badge is-error">{t('accountNeedsRelogin')}</span> : null}
-                              </div>
-                              {!compactView && account.projectId ? (
-                                <span style={{ fontSize: '11px', opacity: 0.6, overflow: 'hidden', textOverflow: 'ellipsis' }}>{account.projectId}</span>
-                              ) : null}
-                            </div>
-                          </div>
-
-                          <div className="dsh-agy-account-action" onClick={e => e.stopPropagation()}>
-                            {isActive ? (
-                              <span className="dsh-agy-action-pill is-active-badge">{t('activeBadge')}</span>
-                            ) : (
-                              <button
-                                type="button"
-                                className="dsh-agy-action-pill is-remove-btn"
-                                disabled={busy || Boolean(switchingId)}
-                                onClick={() => { void removeAccount(account.id) }}
-                              >
-                                {t('removeAccount')}
-                              </button>
-                            )}
-                          </div>
-                        </div>
-
-                        {/* Tier 2: Quota capsules evenly split 50/50 */}
-                        <div className="dsh-agy-account-metrics" onClick={e => e.stopPropagation()} title={titleOverall}>
-                          {p5h !== undefined ? (
-                            <div className="dsh-agy-capsule-bar" title={title5h}>
-                              <div className="dsh-agy-capsule-main">
-                                <span>5h {p5h}%</span>
-                                <div className="dsh-agy-capsule-progress">
-                                  <div
-                                    className={'dsh-agy-capsule-fill ' + (p5h > 40 ? 'is-high' : p5h > 15 ? 'is-med' : 'is-low')}
-                                    style={{ width: p5h + '%' }}
-                                  />
-                                </div>
-                              </div>
-                              <span className="dsh-agy-capsule-reset">
-                                {metrics?.reset5h ? metrics.reset5h : t('quotaFullyAvailable')}
-                              </span>
-                            </div>
-                          ) : null}
-
-                          {pWeekly !== undefined ? (
-                            <div className="dsh-agy-capsule-bar" title={titleWeekly}>
-                              <div className="dsh-agy-capsule-main">
-                                <span>{t('quotaWeeklyShort')} {pWeekly}%</span>
-                                <div className="dsh-agy-capsule-progress">
-                                  <div
-                                    className={'dsh-agy-capsule-fill ' + (pWeekly > 40 ? 'is-high' : pWeekly > 15 ? 'is-med' : 'is-low')}
-                                    style={{ width: pWeekly + '%' }}
-                                  />
-                                </div>
-                              </div>
-                              <span className="dsh-agy-capsule-reset">
-                                {metrics?.resetWeekly ? metrics.resetWeekly : t('quotaFullyAvailable')}
-                              </span>
-                            </div>
-                          ) : null}
-                        </div>
-                      </div>
-                    )
-                  })
-                )}
-              </div>
-            </div>
-          ) : null}
+          <AccountsTab
+            t={t}
+            language={t('quotaLanguage') === 'zh' ? 'zh' : 'en'}
+            accounts={accounts}
+            activeAccountId={activeAccountId}
+            activeAccount={activeAccount}
+            switchingId={switchingId}
+            busy={busy}
+            searchQuery={searchQuery}
+            setSearchQuery={setSearchQuery}
+            sortBy={sortBy}
+            setSortBy={setSortBy}
+            compactView={compactView}
+            setCompactView={setCompactView}
+            quotas={quotas}
+            filteredAccounts={filteredAccounts}
+            switchAccount={switchAccount}
+            removeAccount={removeAccount}
+            recover={recover}
+          />
 
           {signing && status?.url ? (
             <div className="dsh-agy-card">
@@ -721,27 +599,17 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
                 <input
                   type="text"
                   className="dsh-agy-input"
+                  aria-label={t('completePlaceholder')}
                   placeholder={t('completePlaceholder')}
                   value={draft}
-                  disabled={busy}
+                  disabled={busy || Boolean(switchingId)}
                   onChange={e => setDraft(e.target.value)}
                 />
-                <button type="submit" className="dsh-agy-btn dsh-agy-btn-primary" disabled={busy || draft.trim().length === 0}>
+                <button type="submit" className="dsh-agy-btn dsh-agy-btn-primary" disabled={busy || Boolean(switchingId) || draft.trim().length === 0}>
                   {busy ? t('working') : t('complete')}
                 </button>
               </form>
             </div>
-          ) : null}
-
-          {activeAccount !== undefined && !activeAccount.ready ? (
-            <button
-              type="button"
-              className="dsh-agy-btn dsh-agy-btn-primary"
-              disabled={busy}
-              onClick={() => { void recover('retry') }}
-            >
-              {busy ? t('working') : t('retryEligibility')}
-            </button>
           ) : null}
         </div>
       ) : null}
@@ -800,6 +668,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
           savingNetwork={savingNetwork}
           saveNetwork={() => { void saveNetwork() }}
           networkMessage={networkMessage}
+          networkError={networkError}
         />
       ) : null}
     </section>

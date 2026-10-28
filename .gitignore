@@ -4,3 +4,4 @@ coverage/
 .DS_Store
 .dshx/
 lib/*.map
+000 temp/

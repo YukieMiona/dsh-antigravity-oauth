@@ -8,6 +8,7 @@ export interface NetworkTabProps {
   setNetwork: (network: Network) => void
   savingNetwork: boolean
   saveNetwork: () => void
+  networkError?: boolean
   networkMessage: string
 }
 
@@ -19,18 +20,16 @@ export function NetworkTab(props: NetworkTabProps) {
     savingNetwork,
     saveNetwork,
     networkMessage,
+    networkError = false,
   } = props
 
   if (!network) return null
 
   return (
     <div className="dsh-agy-card">
-      <p className="dsh-agy-card-title">{t('network')}</p>
-      <p className="dsh-agy-body">{t('networkHelp')}</p>
-
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '6px' }}>
-        <label style={{ fontSize: '12px', display: 'flex', flexDirection: 'column', gap: '4px' }}>
-          <span>{t('network')}</span>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '2px' }}>
+        <label className="dsh-agy-field">
+          <span className="dsh-agy-control-label">{t('network')}</span>
           <select
             className="dsh-agy-select"
             aria-label={t('network')}
@@ -45,8 +44,10 @@ export function NetworkTab(props: NetworkTabProps) {
         </label>
 
         {network.mode === 'proxy' ? (
-          <div>
-            <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px' }}>{t('proxyUrl')}</label>
+          <label className="dsh-agy-field">
+            <span className="dsh-agy-control-label">
+              {t('proxyUrl')}
+            </span>
             <input
               type="text"
               className="dsh-agy-input"
@@ -56,28 +57,32 @@ export function NetworkTab(props: NetworkTabProps) {
               disabled={savingNetwork}
               onChange={e => setNetwork({ ...network, url: e.target.value })}
             />
-          </div>
+          </label>
         ) : null}
 
-        <p className="dsh-agy-body" style={{ fontSize: '12px' }}>
-          {t('effectiveNetwork')} <code>{network.effective || 'direct'}</code>
-        </p>
+        <div className="dsh-agy-field dsh-agy-muted">
+          <span>{t('effectiveNetwork')}</span>
+          <code className="dsh-agy-proxy-route">
+            {network.effective || 'direct'}
+          </code>
+        </div>
 
-        <button
-          type="button"
-          className="dsh-agy-btn dsh-agy-btn-primary dsh-agy-btn-compact"
-          style={{ width: 'fit-content' }}
-          disabled={savingNetwork}
-          onClick={saveNetwork}
-        >
-          {savingNetwork ? t('working') : t('saveNetwork')}
-        </button>
+        <div className="dsh-agy-actions">
+          <button
+            type="button"
+            className="dsh-agy-btn dsh-agy-btn-primary dsh-agy-btn-compact"
+            disabled={savingNetwork}
+            onClick={saveNetwork}
+          >
+            {savingNetwork ? t('working') : t('saveNetwork')}
+          </button>
 
-        {networkMessage ? (
-          <p role="status" className="dsh-agy-body" style={{ fontSize: '12px' }}>
-            {networkMessage}
-          </p>
-        ) : null}
+          {networkMessage ? (
+            <span role={networkError ? 'alert' : 'status'} className={'dsh-agy-feedback ' + (networkError ? 'is-error' : 'is-success')}>
+              {networkMessage}
+            </span>
+          ) : null}
+        </div>
       </div>
     </div>
   )

@@ -132,7 +132,9 @@ export const en = {
   step2Desc: 'Detect and link the running gateway automatically:',
   accountSwitched: 'Switched to {email}',
   resetsIn: 'resets in {time}',
-  dismissNotice: 'Dismiss banner',
+  dismissNotice: 'Dismiss notice',
+  restoreNotice: 'Show login notice',
+  quotaLanguage: 'en',
 } as const
 
 export type AntigravityKey = keyof typeof en
@@ -246,6 +248,8 @@ export const zh: { [Key in AntigravityKey]: string } = {
   accountSwitched: '已成功切换至 {email}',
   resetsIn: '{time} 后重置',
   dismissNotice: '隐藏此提示',
+  restoreNotice: '显示登录提示',
+  quotaLanguage: 'zh',
   showGuide: '查看快速部署指南',
   hideGuide: '隐藏指南',
   sortDefaultShort: '默认排序',

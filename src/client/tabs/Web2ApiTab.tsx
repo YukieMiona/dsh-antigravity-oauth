@@ -52,74 +52,54 @@ export function Web2ApiTab(props: Web2ApiTabProps) {
   } = props
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: '14px' }}>
+    <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
+      {/* Quick Setup Snippet */}
       {!guideDismissed ? (
-        <div className="dsh-agy-guide-card">
-          <div className="dsh-agy-guide-header">
-            <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-              <span style={{ fontSize: '16px' }}>🚀</span>
-              <span style={{ fontSize: '14px', fontWeight: 600, color: '#fff' }}>{t('quickSetupTitle')}</span>
-              <span className="dsh-agy-status-badge is-success">Docker / Binary Ready</span>
-            </div>
+        <div className="dsh-agy-card">
+          <div className="dsh-agy-row">
+            <span className="dsh-agy-card-title">
+              {t('quickSetupTitle')}
+            </span>
             <button
               type="button"
               className="dsh-agy-notice-close"
-              title={t('hideGuide')}
+              aria-label={t('hideGuide')}
               onClick={dismissGuide}
             >
               ×
             </button>
           </div>
-          <p className="dsh-agy-body" style={{ color: '#b0b4ba' }}>{t('quickSetupDesc')}</p>
 
-          <div className="dsh-agy-step">
-            <div className="dsh-agy-step-num">1</div>
-            <div className="dsh-agy-step-content">
-              <span style={{ fontSize: '12px', fontWeight: 600, color: '#f0f0f0' }}>{t('step1Title')}</span>
-              <span className="dsh-agy-body" style={{ fontSize: '11px' }}>{t('step1Desc')}</span>
-              <div className="dsh-agy-code-terminal">
-                <code style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dockerCmd}</code>
-                <button
-                  type="button"
-                  className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
-                  style={{ flexShrink: 0 }}
-                  onClick={copyDockerCommand}
-                >
-                  {copiedDocker ? t('copied') : t('copyCommand')}
-                </button>
-              </div>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '2px' }}>
+            <div className="dsh-agy-code-terminal">
+              <code style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{dockerCmd}</code>
+              <button
+                type="button"
+                className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
+                style={{ flexShrink: 0 }}
+                onClick={copyDockerCommand}
+              >
+                {copiedDocker ? t('copied') : t('copyCommand')}
+              </button>
             </div>
-          </div>
 
-          <div className="dsh-agy-step">
-            <div className="dsh-agy-step-num">2</div>
-            <div className="dsh-agy-step-content">
-              <span style={{ fontSize: '12px', fontWeight: 600, color: '#f0f0f0' }}>{t('step2Title')}</span>
-              <span className="dsh-agy-body" style={{ fontSize: '11px' }}>{t('step2Desc')}</span>
-              <div>
-                <button
-                  type="button"
-                  className="dsh-agy-btn dsh-agy-btn-primary dsh-agy-btn-compact"
-                  style={{ padding: '3px 12px' }}
-                  disabled={web2apiDetecting}
-                  onClick={detectLocalGateway}
-                >
-                  {web2apiDetecting ? t('detecting') : t('detectService')}
-                </button>
-              </div>
+            <div>
+              <button
+                type="button"
+                className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
+                disabled={web2apiSaving || web2apiTesting || web2apiDetecting}
+                onClick={detectLocalGateway}
+              >
+                {web2apiDetecting ? t('detecting') : t('detectService')}
+              </button>
             </div>
           </div>
         </div>
       ) : (
-        <div className="dsh-agy-row" style={{ padding: '8px 12px', borderRadius: '8px', border: '1px dashed rgba(255,255,255,0.15)', background: 'rgba(255,255,255,0.02)' }}>
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span style={{ fontSize: '14px' }}>🚀</span>
-            <span className="dsh-agy-body" style={{ fontSize: '12px', color: '#c0c4cc' }}>{t('quickSetupTitle')}</span>
-          </div>
+        <div className="dsh-agy-actions">
           <button
             type="button"
             className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
-            style={{ padding: '2px 10px', fontSize: '11px' }}
             onClick={restoreGuide}
           >
             {t('showGuide')}
@@ -127,116 +107,112 @@ export function Web2ApiTab(props: Web2ApiTabProps) {
         </div>
       )}
 
+      {/* Gateway Configuration Card */}
       <div className="dsh-agy-card">
         <div className="dsh-agy-row">
-          <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-            <span className={'dsh-agy-dot ' + (web2apiEnabled ? 'is-signed-in' : '')} />
-            <p className="dsh-agy-card-title">{t('web2apiTitle')}</p>
-            <span className={'dsh-agy-status-badge ' + (web2apiEnabled ? 'is-success' : '')}>
-              {web2apiEnabled ? t('statusConnected') : t('statusDisabled')}
-            </span>
-          </div>
-          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
+          <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', userSelect: 'none' }}>
             <input
               type="checkbox"
               checked={web2apiEnabled}
-              disabled={web2apiSaving}
+              disabled={web2apiSaving || web2apiTesting || web2apiDetecting}
               onChange={e => setWeb2apiEnabled(e.target.checked)}
             />
             <span>{t('web2apiEnable')}</span>
           </label>
         </div>
 
-        <p className="dsh-agy-body">{t('web2apiHelp')}</p>
-
         {web2apiEnabled ? (
-          <div style={{ display: 'flex', flexDirection: 'column', gap: '10px', marginTop: '4px' }}>
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '4px' }}>
             <div style={{ display: 'flex', alignItems: 'center', gap: '6px', flexWrap: 'wrap' }}>
-              <span style={{ fontSize: '12px', opacity: 0.7 }}>{t('presetLocal')}:</span>
               <button
                 type="button"
                 className="dsh-agy-chip"
+                disabled={web2apiSaving || web2apiTesting || web2apiDetecting}
                 onClick={() => setWeb2apiBaseUrl('http://127.0.0.1:18088/v1')}
               >
-                127.0.0.1:18088
+                {t('presetLocal')}
               </button>
               <button
                 type="button"
                 className="dsh-agy-chip"
+                disabled={web2apiSaving || web2apiTesting || web2apiDetecting}
                 onClick={() => setWeb2apiBaseUrl('http://localhost:18088/v1')}
               >
-                localhost:18088
+                {t('presetDocker')}
               </button>
             </div>
 
-            <div>
-              <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px', fontWeight: 500 }}>
+            <label className="dsh-agy-field">
+              <span className="dsh-agy-control-label">
                 {t('web2apiBaseUrl')}
-              </label>
+              </span>
               <input
                 type="text"
                 className="dsh-agy-input"
                 placeholder="http://127.0.0.1:18088/v1"
                 value={web2apiBaseUrl}
-                disabled={web2apiSaving}
+                disabled={web2apiSaving || web2apiTesting || web2apiDetecting}
                 onChange={e => setWeb2apiBaseUrl(e.target.value)}
               />
-            </div>
+            </label>
 
-            <div>
-              <label style={{ fontSize: '12px', display: 'block', marginBottom: '4px', fontWeight: 500 }}>
+            <label className="dsh-agy-field">
+              <span className="dsh-agy-control-label">
                 {t('web2apiApiKey')}
-              </label>
+              </span>
               <input
                 type="password"
                 className="dsh-agy-input"
                 placeholder="sk-..."
                 value={web2apiApiKey}
-                disabled={web2apiSaving}
+                disabled={web2apiSaving || web2apiTesting || web2apiDetecting}
                 onChange={e => setWeb2apiApiKey(e.target.value)}
               />
-            </div>
+            </label>
 
-            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '13px' }}>
+            <label style={{ display: 'inline-flex', alignItems: 'center', gap: '6px', cursor: 'pointer', fontSize: '12px', userSelect: 'none' }}>
               <input
                 type="checkbox"
                 checked={web2apiImageTool}
-                disabled={web2apiSaving}
+                disabled={web2apiSaving || web2apiTesting || web2apiDetecting}
                 onChange={e => setWeb2apiImageTool(e.target.checked)}
               />
               <span>{t('web2apiImageTool')}</span>
             </label>
-
-            <div style={{ display: 'flex', gap: '8px', flexWrap: 'wrap', alignItems: 'center', marginTop: '4px' }}>
-              <button
-                type="button"
-                className="dsh-agy-btn dsh-agy-btn-primary dsh-agy-btn-compact"
-                disabled={web2apiSaving}
-                onClick={saveWeb2Api}
-              >
-                {web2apiSaving ? t('working') : t('web2apiSave')}
-              </button>
-              <button
-                type="button"
-                className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
-                disabled={web2apiSaving || web2apiTesting}
-                onClick={testWeb2Api}
-              >
-                {web2apiTesting ? t('web2apiTesting') : t('web2apiTest')}
-              </button>
-            </div>
-
-            {web2apiFeedback ? (
-              <p
-                role="status"
-                className={'dsh-agy-status-badge ' + (web2apiFeedback.ok ? 'is-success' : 'is-error')}
-                style={{ width: 'fit-content' }}
-              >
-                {web2apiFeedback.msg}
-              </p>
-            ) : null}
           </div>
         ) : null}
+
+        {/* Action Row & Feedback - Visible whether enabled or disabled */}
+        <div className="dsh-agy-actions">
+          <button
+            type="button"
+            className="dsh-agy-btn dsh-agy-btn-primary dsh-agy-btn-compact"
+            disabled={web2apiSaving || web2apiTesting || web2apiDetecting}
+            onClick={saveWeb2Api}
+          >
+            {web2apiSaving ? t('working') : t('web2apiSave')}
+          </button>
+
+          {web2apiEnabled ? (
+            <button
+              type="button"
+              className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
+              disabled={web2apiSaving || web2apiTesting || web2apiDetecting}
+              onClick={testWeb2Api}
+            >
+              {web2apiTesting ? t('web2apiTesting') : t('web2apiTest')}
+            </button>
+          ) : null}
+
+          {web2apiFeedback ? (
+            <span
+              role={web2apiFeedback.ok ? "status" : "alert"}
+              className={'dsh-agy-feedback ' + (web2apiFeedback.ok ? 'is-success' : 'is-error')}
+            >
+              {web2apiFeedback.msg}
+            </span>
+          ) : null}
+        </div>
       </div>
     </div>
   )
