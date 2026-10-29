@@ -118,15 +118,15 @@ export function ccaFunctionDeclarations(
 
 export function maskDshWebAssembly<
   T extends {
-    tools: readonly { name: string }[]
+    tools?: readonly { name: string }[]
     sections: readonly { name: string, text: string }[]
   },
 >(assembly: T): T {
   return {
     ...assembly,
-    tools: assembly.tools.filter(tool => !isDshWebToolName(tool.name)),
+    ...(Array.isArray(assembly?.tools) ? { tools: assembly.tools.filter(tool => !isDshWebToolName(tool.name)) } : {}),
     sections: [
-      ...assembly.sections.filter(section => !isDshWebSectionName(section.name)),
+      ...(Array.isArray(assembly?.sections) ? assembly.sections.filter(section => !isDshWebSectionName(section.name)) : []),
       { name: 'antigravity:native-tools', text: SEARCH_GUIDANCE },
     ],
   }

@@ -190,7 +190,7 @@ afterEach(() => {
   container = undefined
 })
 function domButton(host: HTMLElement, label: string) {
-  const result = Array.from(host.querySelectorAll('button')).find(b => b.textContent === label)
+  const result = Array.from(host.querySelectorAll('button')).find(b => (b.getAttribute('aria-label') ?? b.textContent) === label)
   expect(result, label).toBeDefined()
   return result!
 }

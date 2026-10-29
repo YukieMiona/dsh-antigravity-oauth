@@ -139,7 +139,8 @@ function convertMessages(
             parts.push({
               functionCall: { name: block.name, args, id },
               thoughtSignature,
-            })
+              thought_signature: thoughtSignature,
+            } as any)
             emittedNames.set(id, block.name)
             const queue = pendingCallIds.get(block.id)
             if (queue === undefined) pendingCallIds.set(block.id, [id])

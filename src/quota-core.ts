@@ -16,15 +16,25 @@ export interface QuotaMetrics {
  */
 export function formatShortCountdown(isoString?: string, lang: 'zh' | 'en' = 'zh'): string {
   if (!isoString) return '-'
-  const diff = new Date(isoString).getTime() - Date.now()
-  if (diff <= 0) return lang === 'zh' ? '已刷新' : 'Refreshed'
+  const deadline = new Date(isoString).getTime()
+  if (!Number.isFinite(deadline)) return '-'
+  const diff = deadline - Date.now()
+  if (diff <= 0) return lang === 'zh' ? '已到重置时间' : 'Reset due'
   const totalMinutes = Math.floor(diff / 60000)
   const days = Math.floor(totalMinutes / 1440)
   const hours = Math.floor((totalMinutes % 1440) / 60)
   const mins = totalMinutes % 60
+  if (lang === 'zh') {
+    if (days > 0) {
+      return hours > 0 ? `${days}天${hours}小时` : `${days}天`
+    }
+    if (hours > 0) {
+      return mins > 0 ? `${hours}小时${mins}分` : `${hours}小时`
+    }
+    return `${mins}分`
+  }
   if (days > 0) {
-    const dayUnit = lang === 'zh' ? '天' : 'd'
-    return hours > 0 ? `${days}${dayUnit}${hours}h` : `${days}${dayUnit}`
+    return hours > 0 ? `${days}d${hours}h` : `${days}d`
   }
   if (hours > 0) {
     return `${hours}h${String(mins).padStart(2, '0')}m`

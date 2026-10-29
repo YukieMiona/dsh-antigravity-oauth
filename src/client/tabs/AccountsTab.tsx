@@ -1,3 +1,4 @@
+import { useEffect, useState } from 'react'
 import type { AccountQuotaSummary, AccountSummary } from '../../types.ts'
 import type { AntigravityKey } from '../locales.ts'
 import { evaluateQuotaMetrics as getAccountQuotaMetrics } from '../../quota-core.ts'
@@ -23,6 +24,57 @@ export interface AccountsTabProps {
   recover: (action: 'retry' | 'cancel') => void | Promise<void>
 }
 
+function RemoveAccountAction({ label, title, disabled, onRemove }: {
+  label: string
+  title: string
+  disabled: boolean
+  onRemove: () => void
+}) {
+  const [hovered, setHovered] = useState(false)
+  const [focused, setFocused] = useState(false)
+  const [dismissed, setDismissed] = useState(false)
+  const visible = !disabled && !dismissed && (hovered || focused)
+
+  useEffect(() => {
+    if (!visible) return
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      // Consume this Escape before the host handles it. Keep button focus unchanged.
+      event.preventDefault()
+      event.stopPropagation()
+      setDismissed(true)
+    }
+    document.addEventListener('keydown', dismiss, true)
+    return () => document.removeEventListener('keydown', dismiss, true)
+  }, [visible])
+
+  return (
+    <div
+      className="dsh-agy-remove-control"
+      onPointerEnter={() => { setHovered(true); setDismissed(false) }}
+      onPointerLeave={() => setHovered(false)}
+    >
+      <button
+        type="button"
+        className="dsh-agy-btn-icon is-remove-btn"
+        disabled={disabled}
+        aria-label={label}
+        title={title}
+        onFocus={() => { setFocused(true); setDismissed(false) }}
+        onBlur={() => setFocused(false)}
+        onClick={onRemove}
+      >
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true">
+          <path d="M3 6h18M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2" />
+        </svg>
+      </button>
+      <span className={'dsh-agy-remove-tooltip' + (visible ? ' is-visible' : '')} aria-hidden="true">
+        <span className="dsh-agy-remove-tooltip-text">{title}</span>
+      </span>
+    </div>
+  )
+}
+
 export function AccountsTab(props: AccountsTabProps) {
   const {
     t,
@@ -46,7 +98,7 @@ export function AccountsTab(props: AccountsTabProps) {
   } = props
 
   return (
-<div className="dsh-agy-field">
+    <div className="dsh-agy-field dsh-agy-account-panel">
       {/* Accounts List & Filter Controls Card */}
       {accounts.length > 0 ? (
         <div className="dsh-agy-card">
@@ -130,33 +182,53 @@ export function AccountsTab(props: AccountsTabProps) {
               filteredAccounts.map(account => {
                 const isActive = account.id === activeAccountId
                 const isSwitching = account.id === switchingId
-                const metrics = getAccountQuotaMetrics(quotas[account.id], language)
-                const p5h = metrics?.p5h
-                const pWeekly = metrics?.pWeekly
+                const summary = quotas[account.id]
+                const metrics = getAccountQuotaMetrics(summary, language)
+                const identity = account.email ?? account.id
+                const pending = summary === undefined
+                const unavailable = !pending && !metrics
+                const cells = [
+                  { period: t('quota5h'), value: metrics?.p5h, deadline: metrics?.b5h?.resetTime, countdown: metrics?.reset5h },
+                  { period: t('quotaWeekly'), value: metrics?.pWeekly, deadline: metrics?.bWeekly?.resetTime, countdown: metrics?.resetWeekly },
+                ]
+                const formatReset = (deadline?: string, countdown?: string) => {
+                  const resetAt = deadline ? Date.parse(deadline) : NaN
+                  if (!Number.isFinite(resetAt)) return ''
+                  return resetAt <= Date.now() ? t('quotaResetDue') : t('resetsIn', { time: countdown })
+                }
 
                 return (
                   <div
                     key={account.id}
                     className={'dsh-agy-account ' + (isActive ? 'is-active ' : '') + (compactView ? 'is-compact' : '')}
                   >
-                    {/* Header: Identity Button, Status Badges */}
+                    {/* Header: Identity Button on Left, Action Slot on Right */}
                     <div className="dsh-agy-account-header">
                       <div className="dsh-agy-account-info">
                         <button
                           type="button"
                           className="dsh-agy-account-mail"
                           title={account.email ?? account.id}
-                          aria-label={account.email ?? account.id}
+                          aria-label={isActive ? t('currentAccountAria', { email: identity }) : identity}
                           aria-pressed={isActive}
                           disabled={busy || Boolean(switchingId) || isActive}
                           onClick={() => {
                             if (!busy && !switchingId && !isActive) switchAccount(account)
                           }}
                         >
-                          {account.email ?? account.id}
+                          <span className="dsh-agy-account-email-text">{account.email ?? account.id}</span>
+                          {isActive ? (
+                            <span className="dsh-agy-account-check" aria-hidden="true">
+                              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2.5" strokeLinecap="round" strokeLinejoin="round">
+                                <polyline points="20 6 9 17 4 12" />
+                              </svg>
+                            </span>
+                          ) : (
+                            <span className="dsh-agy-account-check is-placeholder" aria-hidden="true" />
+                          )}
                         </button>
                         {isSwitching ? (
-                          <span className="dsh-agy-status-badge is-switching">{t('working')}...</span>
+                          <span className="dsh-agy-status-badge is-switching">{t('working')}</span>
                         ) : null}
                         {account.limited ? (
                           <span className="dsh-agy-status-badge is-error">{t('accountLimited')}</span>
@@ -165,66 +237,55 @@ export function AccountsTab(props: AccountsTabProps) {
                           <span className="dsh-agy-status-badge is-error">{t('accountNeedsRelogin')}</span>
                         ) : null}
                       </div>
-                    </div>
-                    {/* Consistent 64px Action Slot across active and inactive */}
-                    <div className="dsh-agy-account-action">
-                      {isActive ? (
-                        <span className="dsh-agy-action-pill is-active-badge">{t('activeBadge')}</span>
-                      ) : (
-                        <button
-                          type="button"
-                          className="dsh-agy-action-pill is-remove-btn"
-                          disabled={busy || Boolean(switchingId)}
-                          aria-label={t('removeAccount') + ' ' + (account.email ?? account.id)}
-                          onClick={() => {
-                            if (!busy && !switchingId) removeAccount(account.id)
-                          }}
-                        >{t('removeAccount')}</button>
-                      )}
-                    </div>
 
-                    {/* Fluid Quota Metrics Row */}
-                    {(p5h !== undefined || pWeekly !== undefined) ? (
-                      <div className="dsh-agy-account-metrics">
-                        {p5h !== undefined ? (
-                          <div className="dsh-agy-capsule-bar">
-                            <span className="dsh-agy-muted">5h</span>
-                            <div className="dsh-agy-capsule-main">
-                              <div className="dsh-agy-capsule-progress">
-                                <div
-                                  className={'dsh-agy-capsule-fill ' + (p5h > 40 ? 'is-high' : p5h > 15 ? 'is-med' : 'is-low')}
-                                  style={{ width: p5h + '%' }}
-                                />
-                              </div>
-                              <span className="dsh-agy-capsule-val">{`${p5h}%`}</span>
-                            </div>
-                            {metrics?.reset5h ? (
-                              <span className="dsh-agy-capsule-reset">{metrics.reset5h}</span>
-                            ) : null}
-                          </div>
-                        ) : null}
-
-                        {pWeekly !== undefined ? (
-                          <div className="dsh-agy-capsule-bar">
-                            <span className="dsh-agy-muted">
-                              {t('quotaWeeklyShort')}
-                            </span>
-                            <div className="dsh-agy-capsule-main">
-                              <div className="dsh-agy-capsule-progress">
-                                <div
-                                  className={'dsh-agy-capsule-fill ' + (pWeekly > 40 ? 'is-high' : pWeekly > 15 ? 'is-med' : 'is-low')}
-                                  style={{ width: pWeekly + '%' }}
-                                />
-                              </div>
-                              <span className="dsh-agy-capsule-val">{`${pWeekly}%`}</span>
-                            </div>
-                            {metrics?.resetWeekly ? (
-                              <span className="dsh-agy-capsule-reset">{metrics.resetWeekly}</span>
-                            ) : null}
-                          </div>
+                      <div className="dsh-agy-account-action">
+                        {!isActive ? (
+                          <RemoveAccountAction
+                            disabled={busy || Boolean(switchingId)}
+                            label={t('removeAccountAria', { email: account.email ?? account.id })}
+                            title={t('removeAccount')}
+                            onRemove={() => {
+                              if (!busy && !switchingId) removeAccount(account.id)
+                            }}
+                          />
                         ) : null}
                       </div>
+                    </div>
+
+                    {pending || unavailable ? (
+                      <div className="dsh-agy-account-quota-state">
+                        {t(pending ? 'quotaPending' : 'quotaUnavailable')}
+                      </div>
                     ) : null}
+                    <div className="dsh-agy-account-metrics">
+                      {cells.map(({ period, value: rawValue, deadline, countdown }, index) => {
+                        const value = Number.isFinite(rawValue) ? rawValue : undefined
+                        return (
+                          <div className="dsh-agy-quota-col" key={index}>
+                            <div className="dsh-agy-quota-row-label">
+                              <span className="dsh-agy-quota-period">{period}</span>
+                              <span className="dsh-agy-quota-pct">{value !== undefined ? `${value}%` : '—'}</span>
+                            </div>
+                            <div
+                              className="dsh-agy-quota-track"
+                              role="progressbar"
+                              aria-label={value === undefined
+                                ? t(pending ? 'meterPendingAria' : 'meterUnknownAria', { period })
+                                : t('meterAria', { period, pct: value })}
+                              aria-valuenow={value}
+                              aria-valuemin={value !== undefined ? 0 : undefined}
+                              aria-valuemax={value !== undefined ? 100 : undefined}
+                            >
+                              <div
+                                className={'dsh-agy-capsule-fill ' + (value !== undefined ? (value > 40 ? 'is-high' : value > 15 ? 'is-med' : 'is-low') : '')}
+                                style={{ width: value !== undefined ? `${value}%` : '0%' }}
+                              />
+                            </div>
+                            <div className="dsh-agy-quota-reset">{formatReset(deadline, countdown)}</div>
+                          </div>
+                        )
+                      })}
+                    </div>
                   </div>
                 )
               })

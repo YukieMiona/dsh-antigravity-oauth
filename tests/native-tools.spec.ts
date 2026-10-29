@@ -82,11 +82,19 @@ describe('native tools', () => {
       sections: [{ name: 'tool:web_search', text: 'search' }, { name: 'other', text: 'ok' }],
     })
     expect(masked.tools.map(tool => tool.name)).toEqual(['read_file'])
-    expect(masked.sections.some(section => section.name === 'antigravity:native-tools')).toBe(true)
+    expect(masked.sections.some((section: { name: string }) => section.name === 'antigravity:native-tools')).toBe(true)
     expect(masked.sections.some(section => section.name === 'tool:web_search')).toBe(false)
     const guidance = masked.sections.find(section => section.name === 'antigravity:native-tools')?.text ?? ''
     expect(guidance).toContain('This route has no image generation')
     expect(guidance).toContain('tool result')
     expect(guidance).not.toContain('Call generate_image only')
+  })
+
+  it('handles DSH 0.2.2 assembly where tools is undefined', () => {
+    const masked = maskDshWebAssembly({
+      sections: [{ name: 'persona', text: 'hello' }],
+    })
+    const list: readonly { name: string }[] = masked.sections
+    expect(list.some(s => s.name === 'antigravity:native-tools')).toBe(true)
   })
 })
