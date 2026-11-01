@@ -397,8 +397,9 @@ declare function createAntigravityAdapter(session: AntigravitySession, options: 
 declare const WEB2API_ROUTE = "agy-web";
 declare class Web2ApiAdapter extends LlmAdapter {
   private readonly getSettings;
+  private readonly resolveAttachments?;
   private readonly client;
-  constructor(getSettings: () => Promise<Web2ApiSettings>);
+  constructor(getSettings: () => Promise<Web2ApiSettings>, resolveAttachments?: (() => AttachmentStore | undefined) | undefined);
   providerInfo(provider: string): LlmProviderInfo;
   listModels(provider: string): Promise<readonly LlmModelInfo[]>;
   resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo>;

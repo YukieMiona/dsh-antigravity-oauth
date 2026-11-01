@@ -66,7 +66,7 @@ describe('Web2API Types and Store', () => {
 })
 
 describe('Web2API Message Conversion', () => {
-  it('converts system prompt and user/assistant messages to OpenAI schema', () => {
+  it('converts system prompt and user/assistant messages to OpenAI schema', async () => {
     const messages = [
       {
         id: 'msg_1' as MessageId,
@@ -85,13 +85,122 @@ describe('Web2API Message Conversion', () => {
       },
     ]
 
-    const result = convertMessagesToOpenAi(messages, 'You are a helpful assistant.')
+    const result = await convertMessagesToOpenAi(messages, 'You are a helpful assistant.')
     expect(result).toEqual([
       { role: 'system', content: 'You are a helpful assistant.' },
       { role: 'user', content: 'Hello, what is your name?' },
       { role: 'assistant', content: 'I am Gemini.' },
       { role: 'user', content: 'Tell me a joke.' },
     ])
+  })
+})
+
+describe('Web2API image input', () => {
+  const png = Uint8Array.from([0x89, 0x50, 0x4e, 0x47])
+  const base64 = Buffer.from(png).toString('base64')
+  const attachment = { attachmentId: 'att-1', mediaType: 'image/png', name: 'photo.png' }
+  const userMessage = (content: unknown[]) => [{ id: 'u1' as MessageId, role: 'user' as const, content }] as any
+  const store = (readImage: (...args: any[]) => Promise<unknown>) => ({ readImage }) as any
+
+  it('sends text and images in order as OpenAI content parts', async () => {
+    const result = await convertMessagesToOpenAi(userMessage([
+      { type: 'text', text: 'Look at this' },
+      { type: 'image', attachment },
+      { type: 'text', text: 'What is it?' },
+    ]), undefined, store(async ref => ({ ref, data: png })))
+
+    expect(result).toEqual([{
+      role: 'user',
+      content: [
+        { type: 'text', text: 'Look at this' },
+        { type: 'image_url', image_url: { url: `data:image/png;base64,${base64}` } },
+        { type: 'text', text: 'What is it?' },
+      ],
+    }])
+  })
+
+  it('sends an image with no text', async () => {
+    const result = await convertMessagesToOpenAi(
+      userMessage([{ type: 'image', attachment }]),
+      undefined,
+      store(async ref => ({ ref, data: png })),
+    )
+    expect(result[0]?.content).toEqual([
+      { type: 'image_url', image_url: { url: `data:image/png;base64,${base64}` } },
+    ])
+  })
+
+  it.each([
+    ['no store', undefined],
+    ['a read failure', store(async () => { throw new Error('disk read failed') })],
+    ['zero bytes', store(async ref => ({ ref, data: new Uint8Array() }))],
+  ])('falls back to a string placeholder with %s', async (_name, attachments) => {
+    const result = await convertMessagesToOpenAi(
+      userMessage([{ type: 'text', text: 'See ' }, { type: 'image', attachment }]),
+      undefined,
+      attachments,
+    )
+    expect(result).toEqual([{ role: 'user', content: 'See [Image: photo.png]' }])
+  })
+
+  it('does not read an offloaded image', async () => {
+    let reads = 0
+    const result = await convertMessagesToOpenAi(
+      userMessage([{ type: 'image', attachment, offloaded: true }]),
+      undefined,
+      store(async ref => { reads += 1; return { ref, data: png } }),
+    )
+    expect(reads).toBe(0)
+    expect(result).toEqual([{ role: 'user', content: '[Image: photo.png (offloaded)]' }])
+  })
+
+  it('rethrows a read failure after the user cancels', async () => {
+    const controller = new AbortController()
+    const attachments = store(async () => {
+      controller.abort()
+      throw new Error('aborted')
+    })
+    await expect(convertMessagesToOpenAi(
+      userMessage([{ type: 'image', attachment }]),
+      undefined,
+      attachments,
+      controller.signal,
+    )).rejects.toThrow('aborted')
+  })
+
+  it('posts the image through the adapter', async () => {
+    let body: any
+    const server = createServer((req, res) => {
+      let raw = ''
+      req.on('data', chunk => { raw += chunk })
+      req.on('end', () => {
+        body = JSON.parse(raw)
+        res.writeHead(200, { 'Content-Type': 'text/event-stream' })
+        res.write('data: {"choices":[{"delta":{"content":"ok"}}]}\n\n')
+        res.write('data: [DONE]\n\n')
+        res.end()
+      })
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('Bad server address')
+    try {
+      const adapter = new Web2ApiAdapter(
+        async () => ({ ...DEFAULT_WEB2API_SETTINGS, enabled: true, baseUrl: `http://127.0.0.1:${address.port}/v1` }),
+        () => store(async ref => ({ ref, data: png })),
+      )
+      for await (const _ of adapter.stream({
+        provider: WEB2API_ROUTE,
+        model: 'gemini-2.5-flash',
+        messages: userMessage([{ type: 'image', attachment }]),
+      } as GenerateOptions)) { /* drain */ }
+    } finally {
+      await new Promise<void>(resolve => server.close(() => resolve()))
+    }
+    expect(body.messages[0].content[0]).toEqual({
+      type: 'image_url',
+      image_url: { url: `data:image/png;base64,${base64}` },
+    })
   })
 })
 

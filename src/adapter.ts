@@ -9,6 +9,7 @@ import type {
   TokenUsage,
 } from '@deepseek-ai/dsh-llm'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
+import { resolveImageBlock } from './image-input.ts'
 import { HARNESS_ROUTE, STREAM_IDLE_TIMEOUT_MS } from './ids.ts'
 import {
   DEFAULT_REASONING_EFFORT,
@@ -85,28 +86,10 @@ async function userPartsOf(
       continue
     }
     if (block.type === 'image') {
-      if (block.offloaded === true) {
-        const name = block.attachment?.name || block.attachment?.attachmentId || 'image'
-        parts.push({ text: `[Image: ${name} (offloaded)]` })
-        continue
-      }
-      if (attachments !== undefined && block.attachment !== undefined) {
-        try {
-          const stored = await attachments.readImage(block.attachment, signal)
-          if (stored?.data && stored.data.length > 0) {
-            const data = Buffer.from(stored.data).toString('base64')
-            const mimeType = stored.ref?.mediaType || block.attachment?.mediaType || 'image/png'
-            parts.push({ inlineData: { mimeType, data } })
-            continue
-          }
-        } catch (error) {
-          if (signal?.aborted) throw error
-          // Graceful fallback to placeholder text if storage read fails
-        }
-      }
-      const name = block.attachment?.name || block.attachment?.attachmentId || 'image'
-      parts.push({ text: `[Image: ${name}]` })
-      continue
+      const image = await resolveImageBlock(block, attachments, signal)
+      parts.push(image.type === 'inline'
+        ? { inlineData: { mimeType: image.mimeType, data: image.data } }
+        : { text: image.text })
     }
   }
   return parts

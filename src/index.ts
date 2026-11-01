@@ -99,7 +99,10 @@ export function apply(ctx: Context, config: Config): void {
       resolveAttachments: () => ctx.get('attachments'),
     }),
   )
-  const web2apiAdapter = new Web2ApiAdapter(() => session.web2api.read())
+  const web2apiAdapter = new Web2ApiAdapter(
+    () => session.web2api.read(),
+    () => ctx.get('attachments'),
+  )
   const web2apiRegistration = ctx.llm.registerAdapter([WEB2API_ROUTE], web2apiAdapter)
   const refreshRoutes = (): Promise<void> => syncAuthenticatedRoute(session, registration, web2apiRegistration)
   void refreshRoutes()

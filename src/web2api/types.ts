@@ -30,9 +30,13 @@ export const DEFAULT_WEB2API_SETTINGS: Web2ApiSettings = {
   timeoutMs: 120_000,
 }
 
+export type OpenAiContentPart =
+  | { type: 'text', text: string }
+  | { type: 'image_url', image_url: { url: string } }
+
 export interface OpenAiMessage {
   role: 'system' | 'user' | 'assistant' | 'tool'
-  content: string
+  content: string | OpenAiContentPart[]
   name?: string
   tool_call_id?: string
 }

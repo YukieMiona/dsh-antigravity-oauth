@@ -8,10 +8,13 @@ import type {
   Message,
   StreamChunk,
 } from '@deepseek-ai/dsh-llm'
+import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
+import { resolveImageBlock } from '../image-input.ts'
 import { Web2ApiClient } from './client.ts'
 import {
   DEFAULT_WEB2API_MODELS,
   type OpenAiChatPayload,
+  type OpenAiContentPart,
   type OpenAiMessage,
   type Web2ApiSettings,
 } from './types.ts'
@@ -25,7 +28,38 @@ function textOf(blocks: readonly ContentBlock[]): string {
     .join('')
 }
 
-export function convertMessagesToOpenAi(messages: readonly { role: string, content: readonly ContentBlock[] }[], systemPrompt?: string): OpenAiMessage[] {
+async function userContentOf(
+  blocks: readonly ContentBlock[],
+  attachments?: AttachmentStore,
+  signal?: AbortSignal,
+): Promise<string | OpenAiContentPart[]> {
+  const parts: OpenAiContentPart[] = []
+  let hasImage = false
+  for (const block of blocks) {
+    if (block.type === 'text') {
+      if (block.text.length > 0) parts.push({ type: 'text', text: block.text })
+      continue
+    }
+    if (block.type === 'image') {
+      const image = await resolveImageBlock(block, attachments, signal)
+      if (image.type === 'inline') {
+        hasImage = true
+        parts.push({ type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.data}` } })
+      } else {
+        parts.push({ type: 'text', text: image.text })
+      }
+    }
+  }
+  if (hasImage) return parts
+  return parts.map(part => part.type === 'text' ? part.text : '').join('')
+}
+
+export async function convertMessagesToOpenAi(
+  messages: readonly { role: string, content: readonly ContentBlock[] }[],
+  systemPrompt?: string,
+  attachments?: AttachmentStore,
+  signal?: AbortSignal,
+): Promise<OpenAiMessage[]> {
   const result: OpenAiMessage[] = []
   if (systemPrompt && systemPrompt.trim().length > 0) {
     result.push({ role: 'system', content: systemPrompt.trim() })
@@ -33,8 +67,7 @@ export function convertMessagesToOpenAi(messages: readonly { role: string, conte
 
   for (const message of messages) {
     if (message.role === 'user') {
-      const text = textOf(message.content)
-      result.push({ role: 'user', content: text })
+      result.push({ role: 'user', content: await userContentOf(message.content, attachments, signal) })
     } else if (message.role === 'assistant') {
       const text = textOf(message.content)
       result.push({ role: 'assistant', content: text })
@@ -49,6 +82,7 @@ export class Web2ApiAdapter extends LlmAdapter {
 
   constructor(
     private readonly getSettings: () => Promise<Web2ApiSettings>,
+    private readonly resolveAttachments?: () => AttachmentStore | undefined,
   ) {
     super()
     this.client = new Web2ApiClient(getSettings)
@@ -102,7 +136,12 @@ export class Web2ApiAdapter extends LlmAdapter {
 
     const payload: OpenAiChatPayload = {
       model: options.model,
-      messages: convertMessagesToOpenAi(options.messages, options.system),
+      messages: await convertMessagesToOpenAi(
+        options.messages,
+        options.system,
+        this.resolveAttachments?.(),
+        options.signal,
+      ),
       stream: true,
       temperature: options.temperature,
       max_tokens: options.maxTokens,
