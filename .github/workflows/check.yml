@@ -1,0 +1,45 @@
+name: Check
+
+on:
+  pull_request:
+    branches: [dev]
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      HARNESS_REF: dsh-v0.2.0-rc.2
+      npm_config_auto_install_peers: 'false'
+      PNPM_CONFIG_AUTO_INSTALL_PEERS: 'false'
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 12.9.1
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 24
+          cache: pnpm
+
+      # Build-time only: the dshx client bundler reads the public Harness source.
+      - name: Prepare DSH Harness source and dshx adapter
+        run: |
+          H="$RUNNER_TEMP/harness"
+          git clone --quiet --depth 1 --branch "$HARNESS_REF" https://github.com/deepseek-ai/deepseek-harness.git "$H"
+          git clone --quiet --depth 1 https://github.com/aa2246740/dsh-external-plugin-devkit.git "$H/tools/dshx"
+          npm ci --prefix "$H/tools/dshx" --ignore-scripts --no-audit --no-fund
+          echo "DSHX_HARNESS=$H" >> "$GITHUB_ENV"
+
+      - run: pnpm install --frozen-lockfile --config.auto-install-peers=false --config.strict-dep-builds=false
+      - run: pnpm run check
+
+      - name: Check that lib/index.js matches the source
+        run: git diff --exit-code -- lib/index.js

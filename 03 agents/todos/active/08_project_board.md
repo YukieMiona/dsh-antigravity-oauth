@@ -9,12 +9,12 @@ This board says what is open, who owns it, and how we accept it. Evidence for ea
 ## Image input
 
 - [x] Send user photos to Gemini on the `agy-google-antigravity` route. (`bdab7d7`)
-- [ ] **I1 (P1) Send photos on the Web2API route.** Owner: Claude. In review: #4
-- [ ] **I2 (P1) Live test of photos on `dev`.** Owner: maintainer.
+- [x] **I1 (P1) Send photos on the Web2API route.** (#4)
+- [ ] **I2 (P1) Live test of photos on `dev`.** Offered to @YiLianqaq.
 - [ ] **I3 (P1) Image request budget.** Owner: unassigned.
 - [ ] **I4 (P2) Use the standard placeholder for offloaded images.** Owner: unassigned.
 - [ ] **I5 (P2) Test with the real attachment store.** Owner: unassigned.
-- [ ] **I6 (P3) Log when an image cannot be read.** Owner: Claude. #3
+- [ ] **I6 (P3) Log when an image cannot be read.** Owner: @YiLianqaq. #3
 
 - [ ] **W1 (P2) Check for the system prompt on the Web2API route.** Owner: unassigned.
 - [ ] **W2 (P2) Send tool calls and tool results on the Web2API route.** Owner: unassigned.
@@ -23,7 +23,7 @@ This board says what is open, who owns it, and how we accept it. Evidence for ea
 ## Project process
 
 - [x] **P1 Turn on GitHub Issues and move this board to an issue.** (#2)
-- [ ] **P2 Run tests on each pull request.** Owner: unassigned.
+- [ ] **P2 Run tests on each pull request.** Owner: Claude.
 - [ ] **P3 Add `CONTRIBUTING.md`.** Good first issue. Owner: unassigned.
 - [ ] **P4 Test against the DSH version that users run.** Owner: unassigned.
 
