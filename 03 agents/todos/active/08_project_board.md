@@ -9,7 +9,7 @@ This board says what is open, who owns it, and how we accept it. Evidence for ea
 ## Image input
 
 - [x] Send user photos to Gemini on the `agy-google-antigravity` route. (`bdab7d7`)
-- [ ] **I1 (P1) Send photos on the Web2API route.** Owner: Claude. In review: 
+- [ ] **I1 (P1) Send photos on the Web2API route.** Owner: Claude. In review: #4
 - [ ] **I2 (P1) Live test of photos on `dev`.** Offered to @YiLianqaq.
 - [ ] **I3 (P1) Image request budget.** Owner: unassigned.
 - [ ] **I4 (P2) Use the standard placeholder for offloaded images.** Owner: unassigned.
