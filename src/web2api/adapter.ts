@@ -9,7 +9,7 @@ import type {
   StreamChunk,
 } from '@deepseek-ai/dsh-llm'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
-import { resolveImageBlock } from '../image-input.ts'
+import { resolveImageBlock, type ImageAccessResolver } from '../image-input.ts'
 import { Web2ApiClient } from './client.ts'
 import {
   DEFAULT_WEB2API_MODELS,
@@ -33,6 +33,7 @@ async function userContentOf(
   blocks: readonly ContentBlock[],
   attachments?: AttachmentStore,
   signal?: AbortSignal,
+  resolveAccess?: ImageAccessResolver,
 ): Promise<string | OpenAiContentPart[]> {
   const parts: OpenAiContentPart[] = []
   for (const block of blocks) {
@@ -41,7 +42,7 @@ async function userContentOf(
       continue
     }
     if (block.type === 'image') {
-      const image = await resolveImageBlock(block, attachments, signal)
+      const image = await resolveImageBlock(block, attachments, signal, resolveAccess)
       parts.push(image.type === 'inline'
         ? { type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.data}` } }
         : { type: 'text', text: image.text })
@@ -60,6 +61,7 @@ export async function convertMessagesToOpenAi(
   systemPrompt?: string,
   attachments?: AttachmentStore,
   signal?: AbortSignal,
+  resolveAccess?: ImageAccessResolver,
 ): Promise<OpenAiMessage[]> {
   const result: OpenAiMessage[] = []
   if (systemPrompt && systemPrompt.trim().length > 0) {
@@ -72,7 +74,7 @@ export async function convertMessagesToOpenAi(
   for (const [index, message] of messages.entries()) {
     if (message.role === 'user') {
       const store = index === newestUser ? attachments : undefined
-      result.push({ role: 'user', content: await userContentOf(message.content, store, signal) })
+      result.push({ role: 'user', content: await userContentOf(message.content, store, signal, resolveAccess) })
     } else if (message.role === 'assistant') {
       const text = textOf(message.content)
       result.push({ role: 'assistant', content: text })
@@ -88,6 +90,7 @@ export class Web2ApiAdapter extends LlmAdapter {
   constructor(
     private readonly getSettings: () => Promise<Web2ApiSettings>,
     private readonly resolveAttachments?: () => AttachmentStore | undefined,
+    private readonly resolveImageAccess?: ImageAccessResolver,
   ) {
     super()
     this.client = new Web2ApiClient(getSettings)
@@ -146,6 +149,7 @@ export class Web2ApiAdapter extends LlmAdapter {
         options.system,
         this.resolveAttachments?.(),
         options.signal,
+        this.resolveImageAccess,
       ),
       stream: true,
       temperature: options.temperature,

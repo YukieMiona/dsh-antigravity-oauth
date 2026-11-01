@@ -1,9 +1,11 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-host-webserver'
+import { resolveImageAttachmentAccess } from '@deepseek-ai/dsh-llm'
 import type { AdapterRegistrationHandle } from '@deepseek-ai/dsh-llm'
 import { createAntigravityAdapter } from './adapter.ts'
 import { registerAntigravityAuthRoutes } from './auth-routes.ts'
+import type { ImageAccessResolver } from './image-input.ts'
 import { HARNESS_ROUTE, OAUTH_REFRESH_POLL_MS, WEB2API_ROUTE } from './ids.ts'
 import { Web2ApiAdapter } from './web2api/adapter.ts'
 import { maskDshWebAssembly } from './native-tools.ts'
@@ -90,6 +92,11 @@ export async function syncAuthenticatedRoute(
 export function apply(ctx: Context, config: Config): void {
   console.log('[my-plugins/dsh-antigravity-oauth] loaded')
   const session = new AntigravitySession(new AntigravityCredentialStore())
+  const resolveImageAccess: ImageAccessResolver = (ref) => {
+    const attachments = ctx.get('attachments')
+    if (attachments === undefined) return undefined
+    return resolveImageAttachmentAccess(attachments, hostPath => ctx.get('fs')?.processPathFromHostPath(hostPath), ref)
+  }
   const registration = ctx.llm.registerAdapter(
     [HARNESS_ROUTE],
     createAntigravityAdapter(session, {
@@ -97,11 +104,13 @@ export function apply(ctx: Context, config: Config): void {
       nativeSearch: config.nativeSearch !== false,
       streamIdleTimeoutMs: config.streamIdleTimeoutMs,
       resolveAttachments: () => ctx.get('attachments'),
+      resolveImageAccess,
     }),
   )
   const web2apiAdapter = new Web2ApiAdapter(
     () => session.web2api.read(),
     () => ctx.get('attachments'),
+    resolveImageAccess,
   )
   const web2apiRegistration = ctx.llm.registerAdapter([WEB2API_ROUTE], web2apiAdapter)
   const refreshRoutes = (): Promise<void> => syncAuthenticatedRoute(session, registration, web2apiRegistration)

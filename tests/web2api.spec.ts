@@ -166,9 +166,12 @@ describe('Web2API image input', () => {
       userMessage([{ type: 'image', attachment, offloaded: true }]),
       undefined,
       store(async ref => { reads += 1; return { ref, data: png } }),
+      undefined,
+      () => ({ readonlyPath: '/readonly/photo.png' }),
     )
     expect(reads).toBe(0)
-    expect(result).toEqual([{ role: 'user', content: '[Image: photo.png (offloaded)]' }])
+    expect(result[0]?.content).toContain('image omitted to fit request image limits')
+    expect(result[0]?.content).toContain('/readonly/photo.png')
   })
 
   it('rethrows a read failure after the user cancels', async () => {

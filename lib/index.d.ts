@@ -1,4 +1,4 @@
-import { AdapterRegistrationHandle, GenerateOptions, LlmAdapter, LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo, RetryPolicyConfig, StreamChunk } from "@deepseek-ai/dsh-llm";
+import { AdapterRegistrationHandle, ContentBlock, GenerateOptions, LlmAdapter, LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo, RetryPolicyConfig, StreamChunk, offloadedImageText } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
 import { Context } from "@deepseek-ai/cordis";
 import { AttachmentStore } from "@deepseek-ai/dsh-attachment";
@@ -368,12 +368,20 @@ declare class AntigravitySession {
   retrieveAllQuotas(): Promise<Record<string, AccountQuotaSummary>>;
 }
 //#endregion
+//#region src/image-input.d.ts
+type ImageContentBlock = Extract<ContentBlock, {
+  type: 'image';
+}>;
+type ImageRef = ImageContentBlock['attachment'];
+type ImageAccessResolver = (ref: ImageRef) => Parameters<typeof offloadedImageText>[1];
+//#endregion
 //#region src/adapter.d.ts
 interface AntigravityAdapterOptions {
   nativeTools: boolean;
   nativeSearch: boolean;
   streamIdleTimeoutMs?: number;
   resolveAttachments?: () => AttachmentStore | undefined;
+  resolveImageAccess?: ImageAccessResolver;
 }
 declare class AntigravityAdapter extends LlmAdapter {
   private readonly session;
@@ -399,8 +407,9 @@ declare const WEB2API_ROUTE = "agy-web";
 declare class Web2ApiAdapter extends LlmAdapter {
   private readonly getSettings;
   private readonly resolveAttachments?;
+  private readonly resolveImageAccess?;
   private readonly client;
-  constructor(getSettings: () => Promise<Web2ApiSettings>, resolveAttachments?: (() => AttachmentStore | undefined) | undefined);
+  constructor(getSettings: () => Promise<Web2ApiSettings>, resolveAttachments?: (() => AttachmentStore | undefined) | undefined, resolveImageAccess?: ImageAccessResolver | undefined);
   providerInfo(provider: string): LlmProviderInfo;
   listModels(provider: string): Promise<readonly LlmModelInfo[]>;
   resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo>;

@@ -619,6 +619,35 @@ describe('AntigravityAdapter model catalog', () => {
 })
 
 describe('AntigravityAdapter multimodal image input', () => {
+  const imageOf = (bytes: number, offloaded = false) => ({
+    type: 'image',
+    attachment: { attachmentId: `att-${bytes}`, mediaType: 'image/png', name: 'big.png', bytes, width: 1, height: 1 },
+    ...offloaded ? { offloaded: true } : {},
+  })
+  const streamImages = (adapter: ReturnType<typeof createAntigravityAdapter>, content: unknown[]) => adapter.stream({
+    provider: 'agy-google-antigravity',
+    model: 'gemini-3.8-flash',
+    messages: [{ id: 'u1', role: 'user', source: { kind: 'user' }, content }],
+    tools: [],
+  } as any)
+
+  it('asks the harness to offload images over the request budget', async () => {
+    const fake = fakeSession({})
+    const adapter = createAntigravityAdapter(fake.session, { nativeTools: true, nativeSearch: true })
+
+    await expect(collect(streamImages(adapter, [imageOf(8_000_000), imageOf(8_000_001)])))
+      .rejects.toMatchObject({ code: 'IMAGE_OFFLOAD_REQUIRED', failure: { offloadImages: 1 } })
+    expect(fake.chatBodies).toHaveLength(0)
+  })
+
+  it('sends a request when offloaded images bring it under the budget', async () => {
+    const fake = fakeSession({ chat: [{ type: 'text', text: 'ok' }, { type: 'finish', reason: 'STOP' }] })
+    const adapter = createAntigravityAdapter(fake.session, { nativeTools: true, nativeSearch: true })
+
+    await collect(streamImages(adapter, [imageOf(8_000_000, true), imageOf(8_000_001)]))
+    expect(fake.chatBodies).toHaveLength(1)
+  })
+
   it('converts user image block to Gemini inlineData part with base64 payload', async () => {
     const fake = fakeSession({ chat: [{ type: 'text', text: 'I see the image' }, { type: 'finish', reason: 'STOP' }] })
     const imageBytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
@@ -645,6 +674,7 @@ describe('AntigravityAdapter multimodal image input', () => {
           type: 'image',
           attachment: {
             attachmentId: 'att-img-1',
+            bytes: 8,
             mediaType: 'image/png',
             name: 'sample.png',
           },
@@ -693,9 +723,9 @@ describe('AntigravityAdapter multimodal image input', () => {
       source: { kind: 'user' },
       content: [
         { type: 'text', text: 'First diagram:' },
-        { type: 'image', attachment: { attachmentId: 'img1', mediaType: 'image/jpeg' } },
+        { type: 'image', attachment: { attachmentId: 'img1', bytes: 3, mediaType: 'image/jpeg' } },
         { type: 'text', text: 'Second diagram:' },
-        { type: 'image', attachment: { attachmentId: 'img2', mediaType: 'image/jpeg' } },
+        { type: 'image', attachment: { attachmentId: 'img2', bytes: 3, mediaType: 'image/jpeg' } },
       ],
     }] as any
 
@@ -731,7 +761,7 @@ describe('AntigravityAdapter multimodal image input', () => {
       role: 'user',
       source: { kind: 'user' },
       content: [
-        { type: 'image', attachment: { attachmentId: 'bad-img', name: 'missing.png' } },
+        { type: 'image', attachment: { attachmentId: 'bad-img', bytes: 3, name: 'missing.png' } },
       ],
     }] as any
 
@@ -772,7 +802,7 @@ describe('AntigravityAdapter multimodal image input', () => {
 
     const parts = fake.chatBodies[0].contents[0].parts
     expect(parts).toHaveLength(1)
-    expect(parts[0]).toEqual({ text: '[Image: chart.png (offloaded)]' })
+    expect((parts[0] as { text: string }).text).toContain('image omitted to fit request image limits')
   })
 
   it('falls back to placeholder text when stored image data is 0 bytes', async () => {
@@ -795,7 +825,7 @@ describe('AntigravityAdapter multimodal image input', () => {
       role: 'user',
       source: { kind: 'user' },
       content: [
-        { type: 'image', attachment: { attachmentId: 'zero-byte', name: 'empty.png' } },
+        { type: 'image', attachment: { attachmentId: 'zero-byte', bytes: 3, name: 'empty.png' } },
       ],
     }] as any
 
@@ -833,7 +863,7 @@ describe('AntigravityAdapter multimodal image input', () => {
       role: 'user',
       source: { kind: 'user' },
       content: [
-        { type: 'image', attachment: { attachmentId: 'img', name: 'pic.png' } },
+        { type: 'image', attachment: { attachmentId: 'img', bytes: 3, name: 'pic.png' } },
       ],
     }] as any
 
