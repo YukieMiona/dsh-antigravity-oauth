@@ -10,15 +10,19 @@ This board says what is open, who owns it, and how we accept it. Evidence for ea
 
 - [x] Send user photos to Gemini on the `agy-google-antigravity` route. (`bdab7d7`)
 - [ ] **I1 (P1) Send photos on the Web2API route.** Owner: Claude. In review: #4
-- [ ] **I2 (P1) Live test of photos on `dev`.** Offered to @YiLianqaq.
+- [ ] **I2 (P1) Live test of photos on `dev`.** Owner: maintainer.
 - [ ] **I3 (P1) Image request budget.** Owner: unassigned.
 - [ ] **I4 (P2) Use the standard placeholder for offloaded images.** Owner: unassigned.
 - [ ] **I5 (P2) Test with the real attachment store.** Owner: unassigned.
-- [ ] **I6 (P3) Log when an image cannot be read.** Good first issue, offered to @YiLianqaq: https://github.com/YukieMiona/dsh-antigravity-oauth/issues/3
+- [ ] **I6 (P3) Log when an image cannot be read.** Owner: Claude. #3
+
+- [ ] **W1 (P2) Check for the system prompt on the Web2API route.** Owner: unassigned.
+- [ ] **W2 (P2) Send tool calls and tool results on the Web2API route.** Owner: unassigned.
+- [ ] **W3 (P3) Use `timeoutMs` on the Web2API route.** Owner: unassigned.
 
 ## Project process
 
-- [ ] **P1 Turn on GitHub Issues and move this board to an issue.** Owner: maintainer.
+- [x] **P1 Turn on GitHub Issues and move this board to an issue.** (#2)
 - [ ] **P2 Run tests on each pull request.** Owner: unassigned.
 - [ ] **P3 Add `CONTRIBUTING.md`.** Good first issue. Owner: unassigned.
 - [ ] **P4 Test against the DSH version that users run.** Owner: unassigned.
@@ -36,6 +40,7 @@ This board says what is open, who owns it, and how we accept it. Evidence for ea
 - **Problem:** `src/web2api/adapter.ts` declares `inputModalities: ['text', 'image']`, but `convertMessagesToOpenAi` uses `textOf`, which keeps only text. A photo is lost with no error. A photo with no text sends an empty user message. This is the bug that we fixed on the other route.
 - **Finding:** The `gemini-web2api-go` README says it accepts `image_url` with `data:` URLs when cookies are set, up to 12 MB for each image. Without cookies it returns 400.
 - **Action:** Send images as content parts. Share the read and placeholder logic with the main route.
+- **Limit:** Only the newest user message carries image bytes. An older photo becomes a text placeholder, so a follow-up question on `agy-web` cannot see it.
 - **Acceptance:** A photo on `agy-web` gets a correct answer with cookies set. Tests cover both a photo with text and a photo without text.
 
 ### I2 Live test of photos on `dev`
@@ -93,12 +98,28 @@ This board says what is open, who owns it, and how we accept it. Evidence for ea
 - **Action:** Add the newest supported DSH version to the test run, or update the development version.
 - **Acceptance:** Tests run on the oldest and the newest supported DSH version.
 
+### W1 Check for the system prompt on the Web2API route
+
+- **Problem:** `convertMessagesToOpenAi` drops `system` role messages. The `GenerateOptions` docs say that a loop-built history carries the prompt that way. Not confirmed at runtime.
+- **Acceptance:** A real agent turn on `agy-web` reaches the gateway with its system prompt.
+
+### W2 Send tool calls and tool results on the Web2API route
+
+- **Problem:** Assistant tool calls become empty text, tool results are dropped, and `options.tools` is not sent. The model never sees a tool result.
+- **Acceptance:** A tool call and its result reach the gateway on the next request.
+
+### W3 Use `timeoutMs` on the Web2API route
+
+- **Problem:** `settings.timeoutMs` is stored but not read. A stalled gateway holds the turn until the user cancels.
+- **Acceptance:** A stalled gateway ends the turn with an `LlmError` of code `TIMEOUT`.
+
 ## Order of work
 
 1. P1, so that everyone can see this board.
 2. I2, because it can show new bugs. It needs no code.
-3. I1, then I3 with I4.
-4. I5, I6, P2, P3, P4.
+3. I1, then I6, then I3 with I4.
+4. W1, W2, W3.
+5. I5, P2, P3, P4.
 
 ## Rules
 

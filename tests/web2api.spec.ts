@@ -126,7 +126,24 @@ describe('Web2API image input', () => {
       store(async ref => ({ ref, data: png })),
     )
     expect(result[0]?.content).toEqual([
+      { type: 'text', text: 'See the attached image.' },
       { type: 'image_url', image_url: { url: `data:image/png;base64,${base64}` } },
+    ])
+  })
+
+  it('sends image bytes only for the newest user message', async () => {
+    const reads: string[] = []
+    const result = await convertMessagesToOpenAi([
+      { id: 'u1' as MessageId, role: 'user' as const, content: [{ type: 'image', attachment }] },
+      { id: 'a1' as MessageId, role: 'assistant' as const, content: [{ type: 'text', text: 'A cat.' }] },
+      { id: 'u2' as MessageId, role: 'user' as const, content: [{ type: 'text', text: 'Thanks' }] },
+    ] as any, undefined, store(async ref => { reads.push(ref.attachmentId); return { ref, data: png } }))
+
+    expect(reads).toEqual([])
+    expect(result).toEqual([
+      { role: 'user', content: '[Image: photo.png]' },
+      { role: 'assistant', content: 'A cat.' },
+      { role: 'user', content: 'Thanks' },
     ])
   })
 
@@ -197,7 +214,7 @@ describe('Web2API image input', () => {
     } finally {
       await new Promise<void>(resolve => server.close(() => resolve()))
     }
-    expect(body.messages[0].content[0]).toEqual({
+    expect(body.messages[0].content[1]).toEqual({
       type: 'image_url',
       image_url: { url: `data:image/png;base64,${base64}` },
     })

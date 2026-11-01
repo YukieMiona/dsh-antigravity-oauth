@@ -20,6 +20,7 @@ import {
 } from './types.ts'
 
 export const WEB2API_ROUTE = 'agy-web'
+const IMAGE_ONLY_PROMPT = 'See the attached image.'
 
 function textOf(blocks: readonly ContentBlock[]): string {
   return blocks
@@ -34,7 +35,6 @@ async function userContentOf(
   signal?: AbortSignal,
 ): Promise<string | OpenAiContentPart[]> {
   const parts: OpenAiContentPart[] = []
-  let hasImage = false
   for (const block of blocks) {
     if (block.type === 'text') {
       if (block.text.length > 0) parts.push({ type: 'text', text: block.text })
@@ -42,16 +42,17 @@ async function userContentOf(
     }
     if (block.type === 'image') {
       const image = await resolveImageBlock(block, attachments, signal)
-      if (image.type === 'inline') {
-        hasImage = true
-        parts.push({ type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.data}` } })
-      } else {
-        parts.push({ type: 'text', text: image.text })
-      }
+      parts.push(image.type === 'inline'
+        ? { type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.data}` } }
+        : { type: 'text', text: image.text })
     }
   }
-  if (hasImage) return parts
-  return parts.map(part => part.type === 'text' ? part.text : '').join('')
+  const textParts = parts.filter(part => part.type === 'text')
+  if (textParts.length === parts.length) return textParts.map(part => part.text).join('')
+  // The gateway takes the latest question from text alone, so an image-only message would
+  // otherwise be paired with the previous question.
+  if (textParts.length === 0) parts.unshift({ type: 'text', text: IMAGE_ONLY_PROMPT })
+  return parts
 }
 
 export async function convertMessagesToOpenAi(
@@ -65,9 +66,13 @@ export async function convertMessagesToOpenAi(
     result.push({ role: 'system', content: systemPrompt.trim() })
   }
 
-  for (const message of messages) {
+  // The gateway uploads every image it receives on each request, and one it rejects would fail
+  // every later turn. Only the newest user message carries image bytes.
+  const newestUser = messages.map(message => message.role).lastIndexOf('user')
+  for (const [index, message] of messages.entries()) {
     if (message.role === 'user') {
-      result.push({ role: 'user', content: await userContentOf(message.content, attachments, signal) })
+      const store = index === newestUser ? attachments : undefined
+      result.push({ role: 'user', content: await userContentOf(message.content, store, signal) })
     } else if (message.role === 'assistant') {
       const text = textOf(message.content)
       result.push({ role: 'assistant', content: text })
