@@ -18,6 +18,7 @@ import type {
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import { resolveImageBlock, type ImageAccessResolver } from './image-input.ts'
 import { HARNESS_ROUTE, STREAM_IDLE_TIMEOUT_MS } from './ids.ts'
+import { IdleWatchdog } from './idle-watchdog.ts'
 import {
   DEFAULT_REASONING_EFFORT,
   isPublicModelId,
@@ -76,6 +77,8 @@ const IMAGE_REQUEST_BUDGET = { representation: 'base64', maxBytes: 16_000_000 } 
 function imageBytesOf(ref: { bytes?: unknown }): number {
   return typeof ref.bytes === 'number' && Number.isFinite(ref.bytes) && ref.bytes > 0 ? ref.bytes : 0
 }
+
+const IDLE_TIMEOUT_MESSAGE = 'Antigravity stream idle timeout'
 
 function effortOf(options: GenerateOptions): ReasoningEffort {
   const raw = options.reasoningEffort as string | undefined
@@ -424,9 +427,21 @@ export class AntigravityAdapter extends LlmAdapter {
       answerPass: false,
     }
     const idleMs = this.options.streamIdleTimeoutMs ?? STREAM_IDLE_TIMEOUT_MS
-    const watchdog = options.signal === undefined
-      ? AbortSignal.timeout(idleMs)
-      : AbortSignal.any([options.signal, AbortSignal.timeout(idleMs)])
+    const watchdog = new IdleWatchdog(idleMs, options.signal)
+    try {
+      yield* this.streamWithFailover(options, input, state, watchdog, lease)
+    } finally {
+      watchdog.dispose()
+    }
+  }
+
+  private async *streamWithFailover(
+    options: GenerateOptions,
+    input: ChatGenerateInput,
+    state: EmitState,
+    watchdog: IdleWatchdog,
+    lease: AntigravityLease,
+  ): AsyncIterable<StreamChunk> {
     let currentLease = lease
     while (true) {
       try {
@@ -453,6 +468,7 @@ export class AntigravityAdapter extends LlmAdapter {
         return
       } catch (error: unknown) {
         if (error instanceof LlmError) throw error
+        if (watchdog.timedOut) throw new LlmError(IDLE_TIMEOUT_MESSAGE, 'TIMEOUT', { cause: error })
         let message = error instanceof Error
           ? (error.cause instanceof Error ? `${error.message}: ${error.cause.message}` : error.message)
           : String(error)
@@ -559,14 +575,14 @@ export class AntigravityAdapter extends LlmAdapter {
     options: GenerateOptions,
     input: ChatGenerateInput,
     state: EmitState,
-    watchdog: AbortSignal,
+    watchdog: IdleWatchdog,
     lease: AntigravityLease,
   ): AsyncIterable<StreamChunk> {
     const pendingSearches: SearchTurnCall[] = []
     const attachments = this.options.resolveAttachments?.()
     let requestUsage: CcaUsage | undefined
-    for await (const event of lease.cca.chat(lease.oauth, input, options.signal)) {
-      if (watchdog.aborted) throw new LlmError('Antigravity stream idle timeout', 'TIMEOUT')
+    for await (const event of lease.cca.chat(lease.oauth, input, watchdog.signal)) {
+      watchdog.touch()
       if (event.type === 'usage') {
         requestUsage = mergeUsageSnapshot(requestUsage, event.usage)
         continue
@@ -672,7 +688,7 @@ export class AntigravityAdapter extends LlmAdapter {
   private async collectSearch(
     options: GenerateOptions,
     query: string,
-    watchdog: AbortSignal,
+    watchdog: IdleWatchdog,
     lease: AntigravityLease,
   ): Promise<{ text: string, usage?: CcaUsage }> {
     if (!isPublicModelId(options.model)) {
@@ -688,8 +704,8 @@ export class AntigravityAdapter extends LlmAdapter {
       ...thinkingLevelFor(options.model, effort) === undefined
         ? {}
         : { thinkingLevel: thinkingLevelFor(options.model, effort) },
-    }, options.signal)) {
-      if (watchdog.aborted) throw new LlmError('Antigravity stream idle timeout', 'TIMEOUT')
+    }, watchdog.signal)) {
+      watchdog.touch()
       if (event.type === 'text') text += event.text
       if (event.type === 'usage') usage = mergeUsageSnapshot(usage, event.usage)
     }

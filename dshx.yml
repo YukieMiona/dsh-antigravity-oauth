@@ -11,6 +11,7 @@ hotReload:
     - src/store.ts
     - src/session.ts
     - src/adapter.ts
+    - src/idle-watchdog.ts
     - src/image-input.ts
     - src/cca-client.ts
     - src/auth-routes.ts
