@@ -89,9 +89,11 @@ type GeminiPart = {
     name: string;
     response: Record<string, unknown>;
     id?: string;
-    parts?: GeminiPart[];
+    parts?: GeminiInlineDataPart[];
   };
-} | {
+} | GeminiInlineDataPart;
+/** The only part shape Gemini accepts inside `functionResponse.parts`. */
+type GeminiInlineDataPart = {
   inlineData: {
     mimeType: string;
     data: string;

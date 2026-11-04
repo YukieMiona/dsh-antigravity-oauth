@@ -47,8 +47,11 @@ export type WireModelId = ChatWireModelId
 export type GeminiPart =
   | { text: string, thought?: boolean, thoughtSignature?: string }
   | { functionCall: { name: string, args: Record<string, unknown>, id?: string }, thoughtSignature?: string }
-  | { functionResponse: { name: string, response: Record<string, unknown>, id?: string, parts?: GeminiPart[] } }
-  | { inlineData: { mimeType: string, data: string } }
+  | { functionResponse: { name: string, response: Record<string, unknown>, id?: string, parts?: GeminiInlineDataPart[] } }
+  | GeminiInlineDataPart
+
+/** The only part shape Gemini accepts inside `functionResponse.parts`. */
+export type GeminiInlineDataPart = { inlineData: { mimeType: string, data: string } }
 
 export type GeminiContent = {
   role: 'user' | 'model'

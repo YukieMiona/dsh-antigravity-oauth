@@ -1219,6 +1219,76 @@ describe('AntigravityAdapter multimodal image input', () => {
     expect((userContent.parts[1] as any).inlineData).toBeDefined()
   })
 
+  const toolTurnAdapter = () => {
+    const fake = fakeSession({ chat: [{ type: 'text', text: 'ok' }, { type: 'finish', reason: 'STOP' }] })
+    const adapter = createAntigravityAdapter(fake.session, { nativeTools: true, nativeSearch: true })
+    const run = (messages: unknown[]) => collect(adapter.stream({
+      provider: 'agy-google-antigravity',
+      model: 'gemini-3.8-flash',
+      messages,
+      tools: [],
+    } as any))
+    return { fake, run }
+  }
+  const call = (id: string, signed = true) => ({
+    type: 'tool-call', id, name: 'probe', arguments: '{}', ...signed ? { thoughtSignature: `sig-${id}` } : {},
+  })
+  const result = (id: string, content: unknown[]) => ({ id: `t-${id}`, role: 'tool', toolCallId: id, content })
+
+  it('keeps an image placeholder where the image was in a tool result', async () => {
+    const { fake, run } = toolTurnAdapter()
+    await run([
+      { id: 'a1', role: 'assistant', content: [call('c1')] },
+      result('c1', [
+        { type: 'text', text: 'before' },
+        { type: 'image', attachment: { attachmentId: 'x', name: 'x.png' } },
+        { type: 'text', text: 'after' },
+      ]),
+    ])
+    const fr = (fake.chatBodies[0].contents[1].parts[0] as any).functionResponse
+    expect(fr.response.result).toBe('before\n[Image: x.png]\nafter')
+  })
+
+  it('sends a result without a live call after the function responses of the same turn', async () => {
+    const { fake, run } = toolTurnAdapter()
+    await run([
+      { id: 'a1', role: 'assistant', content: [call('c1'), call('c2', false)] },
+      result('c2', [{ type: 'text', text: 'unsigned result' }]),
+      result('c1', [{ type: 'text', text: 'signed result' }]),
+    ])
+    const contents = fake.chatBodies[0].contents
+    expect(contents.map(content => content.role)).toEqual(['model', 'user', 'user'])
+    expect(contents[1].parts).toEqual([
+      { functionResponse: { name: 'probe', id: 'c1', response: { result: 'signed result' } } },
+    ])
+    expect(contents[2].parts).toEqual([{ text: 'unsigned result' }])
+  })
+
+  it('keeps responses to one model turn together across an empty assistant message', async () => {
+    const { fake, run } = toolTurnAdapter()
+    await run([
+      { id: 'a1', role: 'assistant', content: [call('c1'), call('c2')] },
+      result('c1', [{ type: 'text', text: 'one' }]),
+      { id: 'a2', role: 'assistant', content: [{ type: 'text', text: '' }] },
+      result('c2', [{ type: 'text', text: 'two' }]),
+    ])
+    const contents = fake.chatBodies[0].contents
+    expect(contents.map(content => content.role)).toEqual(['model', 'user'])
+    expect(contents[1].parts).toHaveLength(2)
+  })
+
+  it('starts a new response turn after the next model turn', async () => {
+    const { fake, run } = toolTurnAdapter()
+    await run([
+      { id: 'a1', role: 'assistant', content: [call('c1')] },
+      result('c1', [{ type: 'text', text: 'one' }]),
+      { id: 'a2', role: 'assistant', content: [call('c2')] },
+      result('c2', [{ type: 'text', text: 'two' }]),
+    ])
+    const contents = fake.chatBodies[0].contents
+    expect(contents.map(content => content.role)).toEqual(['model', 'user', 'model', 'user'])
+  })
+
   it('converts tool result with multiple image blocks to multiple inlineData parts', async () => {
     const fake = fakeSession({ chat: [{ type: 'text', text: 'Inspected multiple images' }, { type: 'finish', reason: 'STOP' }] })
     const img1 = Uint8Array.from([0x01, 0x02])

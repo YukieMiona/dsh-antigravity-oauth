@@ -55,6 +55,7 @@ import type {
   ChatGenerateInput,
   FunctionToolDeclaration,
   GeminiContent,
+  GeminiInlineDataPart,
   GeminiPart,
   ReasoningEffort,
 } from './types.ts'
@@ -91,6 +92,20 @@ function textOf(blocks: readonly ContentBlock[]): string {
     .join('')
 }
 
+type ImagePart = GeminiInlineDataPart | { text: string }
+
+async function imagePartOf(
+  block: Extract<ContentBlock, { type: 'image' }>,
+  attachments?: AttachmentStore,
+  signal?: AbortSignal,
+  resolveAccess?: ImageAccessResolver,
+): Promise<ImagePart> {
+  const image = await resolveImageBlock(block, attachments, signal, resolveAccess)
+  return image.type === 'inline'
+    ? { inlineData: { mimeType: image.mimeType, data: image.data } }
+    : { text: image.text }
+}
+
 async function userPartsOf(
   blocks: readonly ContentBlock[],
   attachments?: AttachmentStore,
@@ -103,14 +118,42 @@ async function userPartsOf(
       if (block.text.length > 0) parts.push({ text: block.text })
       continue
     }
-    if (block.type === 'image') {
-      const image = await resolveImageBlock(block, attachments, signal, resolveAccess)
-      parts.push(image.type === 'inline'
-        ? { inlineData: { mimeType: image.mimeType, data: image.data } }
-        : { text: image.text })
-    }
+    if (block.type === 'image') parts.push(await imagePartOf(block, attachments, signal, resolveAccess))
   }
   return parts
+}
+
+/**
+ * Split a tool result into the text Gemini reads as `response.result` and the images it reads from
+ * `functionResponse.parts`. Placeholders for images that cannot be inlined stay where the image was,
+ * on their own line.
+ */
+async function toolResultOf(
+  blocks: readonly ContentBlock[],
+  attachments?: AttachmentStore,
+  signal?: AbortSignal,
+  resolveAccess?: ImageAccessResolver,
+): Promise<{ text: string, images: GeminiInlineDataPart[] }> {
+  let text = ''
+  let afterPlaceholder = false
+  const images: GeminiInlineDataPart[] = []
+  for (const block of blocks) {
+    if (block.type === 'text') {
+      if (block.text.length === 0) continue
+      text += afterPlaceholder ? `\n${block.text}` : block.text
+      afterPlaceholder = false
+      continue
+    }
+    if (block.type !== 'image') continue
+    const part = await imagePartOf(block, attachments, signal, resolveAccess)
+    if ('inlineData' in part) {
+      images.push(part)
+      continue
+    }
+    text += text.length > 0 ? `\n${part.text}` : part.text
+    afterPlaceholder = true
+  }
+  return { text, images }
 }
 
 async function convertMessages(
@@ -135,56 +178,43 @@ async function convertMessages(
   const emittedCount = new Map<string, number>()
   const emittedNames = new Map<string, string>()
   const pendingCallIds = new Map<string, string[]>()
+  // The user turn that collects function responses for the latest model turn. The next model or
+  // user turn closes it; an assistant message with no content does not, because it has no calls.
+  let responseTurn: GeminiContent | undefined
+  let orphanParts: GeminiPart[] = []
+  const flushOrphans = (): void => {
+    responseTurn = undefined
+    if (orphanParts.length > 0) contents.push({ role: 'user', parts: orphanParts })
+    orphanParts = []
+  }
   for (const message of messages) {
     if (message.role === 'tool') {
-      let responseText = textOf(message.content)
-      const inlineImageParts: GeminiPart[] = []
-
-      for (const block of message.content) {
-        if (block.type === 'image') {
-          const image = await resolveImageBlock(block, attachments, signal, resolveAccess)
-          if (image.type === 'inline') {
-            inlineImageParts.push({
-              inlineData: { mimeType: image.mimeType, data: image.data },
-            })
-          } else {
-            responseText = responseText.length > 0 ? `${responseText}\n${image.text}` : image.text
-          }
-        }
-      }
-
+      const result = await toolResultOf(message.content, attachments, signal, resolveAccess)
       const queue = pendingCallIds.get(message.toolCallId)
       const id = queue !== undefined && queue.length > 0 ? queue.shift() : undefined
       if (id === undefined) {
         // A tool result whose function call is no longer in the history cannot be sent as a bare
-        // functionResponse, so keep the payload legal by degrading it to plain text.
-        const parts: GeminiPart[] = []
-        if (responseText.length > 0) parts.push({ text: responseText })
-        parts.push(...inlineImageParts)
-        if (parts.length > 0) contents.push({ role: 'user', parts })
+        // functionResponse, so keep the payload legal by degrading it to plain text. It waits until
+        // the current turn's function responses are out, because Gemini needs them to follow the
+        // function calls directly.
+        if (result.text.length > 0) orphanParts.push({ text: result.text })
+        orphanParts.push(...result.images)
         continue
       }
-
-      const functionResponsePart: GeminiPart = {
+      const functionResponse: GeminiPart = {
         functionResponse: {
           name: emittedNames.get(id) ?? toolNames.get(message.toolCallId) ?? 'tool',
           id,
-          response: { result: responseText },
-          ...(inlineImageParts.length > 0 ? { parts: inlineImageParts } : {}),
+          response: { result: result.text },
+          ...result.images.length > 0 ? { parts: result.images } : {},
         },
       }
-
-      const lastContent = contents.length > 0 ? contents[contents.length - 1] : undefined
-      const isBatchable = lastContent?.role === 'user'
-        && lastContent.parts.every(part => 'functionResponse' in part)
-      if (isBatchable) {
-        lastContent.parts.push(functionResponsePart)
-      } else {
-        contents.push({
-          role: 'user',
-          parts: [functionResponsePart],
-        })
+      // Gemini wants all responses to one model turn in a single user turn.
+      if (responseTurn === undefined) {
+        responseTurn = { role: 'user', parts: [] }
+        contents.push(responseTurn)
       }
+      responseTurn.parts.push(functionResponse)
       continue
     }
     if (message.role === 'assistant') {
@@ -226,14 +256,21 @@ async function convertMessages(
           }
         }
       }
-      if (parts.length > 0) contents.push({ role: 'model', parts })
+      if (parts.length > 0) {
+        flushOrphans()
+        contents.push({ role: 'model', parts })
+      }
       continue
     }
     if (message.role === 'user') {
       const parts = await userPartsOf(message.content, attachments, signal, resolveAccess)
-      if (parts.length > 0) contents.push({ role: 'user', parts })
+      if (parts.length > 0) {
+        flushOrphans()
+        contents.push({ role: 'user', parts })
+      }
     }
   }
+  flushOrphans()
   if (contents.length === 0) contents.push({ role: 'user', parts: [{ text: '' }] })
   return contents
 }
