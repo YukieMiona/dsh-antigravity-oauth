@@ -1,8 +1,9 @@
 import { fetch as undiciFetch } from 'undici'
-import type {
-  OpenAiChatChunk,
-  OpenAiChatPayload,
-  Web2ApiSettings,
+import {
+  DEFAULT_WEB2API_SETTINGS,
+  type OpenAiChatChunk,
+  type OpenAiChatPayload,
+  type Web2ApiSettings,
 } from './types.ts'
 
 export type Web2ApiEvent =
@@ -11,6 +12,14 @@ export type Web2ApiEvent =
   | { type: 'tool_call', index: number, id?: string, name?: string, arguments?: string }
   | { type: 'usage', promptTokens: number, completionTokens: number, totalTokens: number }
   | { type: 'finish', reason: string }
+
+/** The gateway sent nothing for the configured idle time. */
+export class Web2ApiTimeoutError extends Error {
+  constructor(readonly idleMs: number) {
+    super(`Web2API sent no data for ${idleMs} ms`)
+    this.name = 'Web2ApiTimeoutError'
+  }
+}
 
 export class Web2ApiClient {
   constructor(private readonly getSettings: () => Promise<Web2ApiSettings>) {}
@@ -32,12 +41,41 @@ export class Web2ApiClient {
       headers.Authorization = `Bearer ${settings.apiKey}`
     }
 
+    // An idle timer, not a total one: it restarts on each chunk, so a long answer that keeps
+    // streaming is not cut off.
+    const idleMs = settings.timeoutMs ?? DEFAULT_WEB2API_SETTINGS.timeoutMs ?? 120_000
+    const idle = new AbortController()
+    let timer: ReturnType<typeof setTimeout> | undefined
+    const restartIdleTimer = (): void => {
+      clearTimeout(timer)
+      timer = setTimeout(() => idle.abort(new Web2ApiTimeoutError(idleMs)), idleMs)
+    }
+    const requestSignal = signal === undefined ? idle.signal : AbortSignal.any([signal, idle.signal])
+    restartIdleTimer()
+    try {
+      yield* this.readStream(endpoint, headers, payload, requestSignal, restartIdleTimer)
+    } catch (error) {
+      if (idle.signal.aborted && signal?.aborted !== true) throw idle.signal.reason
+      throw error
+    } finally {
+      clearTimeout(timer)
+    }
+  }
+
+  private async *readStream(
+    endpoint: string,
+    headers: Record<string, string>,
+    payload: OpenAiChatPayload,
+    signal: AbortSignal,
+    restartIdleTimer: () => void,
+  ): AsyncIterable<Web2ApiEvent> {
     const response = await undiciFetch(endpoint, {
       method: 'POST',
       headers,
       body: JSON.stringify({ ...payload, stream: true }),
       signal,
     })
+    restartIdleTimer()
 
     if (!response.ok) {
       const errText = await response.text().catch(() => '')
@@ -58,6 +96,7 @@ export class Web2ApiClient {
       while (true) {
         const { done, value } = await reader.read()
         if (done) break
+        restartIdleTimer()
         buffer += decoder.decode(value, { stream: true })
         const lines = buffer.split('\n')
         buffer = lines.pop() ?? ''

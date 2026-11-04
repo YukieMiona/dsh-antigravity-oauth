@@ -348,3 +348,87 @@ describe('Web2API Streaming Client and Adapter', () => {
     expect(resolved.context?.contextWindow).toBe(1_048_576)
   })
 })
+
+describe('Web2API idle timeout', () => {
+  async function serve(
+    handler: (res: ServerResponse) => void,
+    run: (baseUrl: string) => Promise<void>,
+  ): Promise<void> {
+    const open = new Set<ServerResponse>()
+    const server = createServer((_req, res) => {
+      open.add(res)
+      handler(res)
+    })
+    await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve))
+    const address = server.address()
+    if (!address || typeof address === 'string') throw new Error('Bad server address')
+    try {
+      await run(`http://127.0.0.1:${address.port}/v1`)
+    } finally {
+      for (const res of open) res.destroy()
+      await new Promise<void>(resolve => server.close(() => resolve()))
+    }
+  }
+  const adapterFor = (baseUrl: string) => new Web2ApiAdapter(async () => ({
+    ...DEFAULT_WEB2API_SETTINGS,
+    enabled: true,
+    baseUrl,
+    timeoutMs: 150,
+  }))
+  const streamOf = (adapter: Web2ApiAdapter, signal?: AbortSignal) => adapter.stream({
+    provider: WEB2API_ROUTE,
+    model: 'gemini-2.5-flash',
+    messages: [{ id: '1' as MessageId, role: 'user', source: { kind: 'user' }, content: [{ type: 'text', text: 'hi' }] }],
+    ...signal === undefined ? {} : { signal },
+  } as GenerateOptions)
+
+  it('fails with TIMEOUT when the gateway stops sending', async () => {
+    await serve((res) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' })
+      res.write('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n')
+    }, async (baseUrl) => {
+      const chunks: StreamChunk[] = []
+      await expect((async () => {
+        for await (const chunk of streamOf(adapterFor(baseUrl))) chunks.push(chunk)
+      })()).rejects.toMatchObject({ code: 'TIMEOUT' })
+      expect(chunks.some(chunk => chunk.type === 'text-delta')).toBe(true)
+    })
+  })
+
+  it('keeps a slow stream that sends data within the idle time', async () => {
+    await serve((res) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' })
+      let sent = 0
+      const timer = setInterval(() => {
+        sent += 1
+        res.write(`data: {"choices":[{"delta":{"content":"${sent}"}}]}\n\n`)
+        if (sent === 5) {
+          clearInterval(timer)
+          res.write('data: [DONE]\n\n')
+          res.end()
+        }
+      }, 80)
+    }, async (baseUrl) => {
+      const text: string[] = []
+      for await (const chunk of streamOf(adapterFor(baseUrl))) {
+        if (chunk.type === 'text-delta') text.push(chunk.text)
+      }
+      expect(text.join('')).toBe('12345')
+    })
+  })
+
+  it('reports a user cancel as a cancel, not a timeout', async () => {
+    await serve((res) => {
+      res.writeHead(200, { 'Content-Type': 'text/event-stream' })
+      res.write('data: {"choices":[{"delta":{"content":"partial"}}]}\n\n')
+    }, async (baseUrl) => {
+      const controller = new AbortController()
+      setTimeout(() => controller.abort(), 30)
+      const error = await (async () => {
+        for await (const _ of streamOf(adapterFor(baseUrl), controller.signal)) { /* drain */ }
+      })().catch((caught: unknown) => caught)
+      expect(error).toBeDefined()
+      expect((error as { code?: string }).code).not.toBe('TIMEOUT')
+    })
+  })
+})

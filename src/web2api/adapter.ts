@@ -10,7 +10,7 @@ import type {
 } from '@deepseek-ai/dsh-llm'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import { resolveImageBlock, type ImageAccessResolver } from '../image-input.ts'
-import { Web2ApiClient } from './client.ts'
+import { Web2ApiClient, Web2ApiTimeoutError } from './client.ts'
 import {
   DEFAULT_WEB2API_MODELS,
   type OpenAiChatPayload,
@@ -220,6 +220,7 @@ export class Web2ApiAdapter extends LlmAdapter {
       }
     } catch (err: unknown) {
       yield* closeCurrentBlock()
+      if (err instanceof Web2ApiTimeoutError) throw new LlmError(err.message, 'TIMEOUT', { cause: err })
       const message = err instanceof Error ? err.message : String(err)
       throw new LlmError(`Web2API streaming error: ${message}`, 'UNKNOWN', { cause: err })
     }
