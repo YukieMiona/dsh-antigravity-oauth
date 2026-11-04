@@ -640,6 +640,23 @@ describe('AntigravityAdapter multimodal image input', () => {
     expect(fake.chatBodies).toHaveLength(0)
   })
 
+  it('counts tool result images toward the request budget', async () => {
+    const fake = fakeSession({})
+    const adapter = createAntigravityAdapter(fake.session, { nativeTools: true, nativeSearch: true })
+
+    await expect(collect(adapter.stream({
+      provider: 'agy-google-antigravity',
+      model: 'gemini-3.8-flash',
+      messages: [
+        { id: 'u1', role: 'user', source: { kind: 'user' }, content: [imageOf(8_000_000)] },
+        { id: 'a1', role: 'assistant', content: [{ type: 'tool-call', id: 'call_1', name: 'read_image', arguments: '{}' }] },
+        { id: 't1', role: 'tool', toolCallId: 'call_1', content: [imageOf(8_000_001)] },
+      ],
+      tools: [],
+    } as any))).rejects.toMatchObject({ code: 'IMAGE_OFFLOAD_REQUIRED', failure: { offloadImages: 1 } })
+    expect(fake.chatBodies).toHaveLength(0)
+  })
+
   it('sends a request when offloaded images bring it under the budget', async () => {
     const fake = fakeSession({ chat: [{ type: 'text', text: 'ok' }, { type: 'finish', reason: 'STOP' }] })
     const adapter = createAntigravityAdapter(fake.session, { nativeTools: true, nativeSearch: true })
@@ -1016,7 +1033,7 @@ describe('AntigravityAdapter multimodal image input', () => {
     expect(toolContent.parts).toHaveLength(1)
     const fr = (toolContent.parts[0] as any).functionResponse
     expect(fr.parts).toBeUndefined()
-    expect(fr.response.result).toBe('Read error log\n[Image: empty.png]\n[Image: cloud.png (offloaded)]')
+    expect(fr.response.result).toMatch(/^Read error log\n\[Image: empty\.png\]\n\[image omitted to fit request image limits/)
   })
 
   it('handles pure image tool result without text description', async () => {

@@ -70,6 +70,12 @@ export interface AntigravityAdapterOptions {
 // Google documents a 20 MB limit for one inline request. The rest stays free for text and history.
 const IMAGE_REQUEST_BUDGET = { representation: 'base64', maxBytes: 16_000_000 } as const
 
+// `bytes` is required on a durable ref. A malformed one counts as zero, because NaN would make
+// every image look over the budget and the harness would offload them all.
+function imageBytesOf(ref: { bytes?: unknown }): number {
+  return typeof ref.bytes === 'number' && Number.isFinite(ref.bytes) && ref.bytes > 0 ? ref.bytes : 0
+}
+
 function effortOf(options: GenerateOptions): ReasoningEffort {
   const raw = options.reasoningEffort as string | undefined
   if (raw === 'low') return 'low'
@@ -136,7 +142,7 @@ async function convertMessages(
 
       for (const block of message.content) {
         if (block.type === 'image') {
-          const image = await resolveImageBlock(block, attachments, signal)
+          const image = await resolveImageBlock(block, attachments, signal, resolveAccess)
           if (image.type === 'inline') {
             inlineImageParts.push({
               inlineData: { mimeType: image.mimeType, data: image.data },
@@ -342,7 +348,7 @@ export class AntigravityAdapter extends LlmAdapter {
     const offloadImages = requiredImageOffload(
       options.messages,
       IMAGE_REQUEST_BUDGET,
-      block => block.attachment.bytes,
+      block => imageBytesOf(block.attachment),
     )
     if (offloadImages > 0) {
       throw new LlmError(
