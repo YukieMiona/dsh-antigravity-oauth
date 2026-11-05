@@ -74,7 +74,7 @@ const THINKING_LEVEL: Record<ReasoningEffort, 'LOW' | 'MEDIUM' | 'HIGH'> = {
 }
 
 export function isPublicModelId(id: string): id is PublicModelId {
-  return id === 'gemini-4-argon' || id === 'gemini-3.8-flash' || id === 'gemini-3.7-flash' || id === 'gemini-3.5-flash'
+  return PUBLIC_MODELS.some(model => model.id === id)
 }
 
 export function isReasoningEffort(value: string): value is ReasoningEffort {
