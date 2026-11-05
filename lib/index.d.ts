@@ -72,7 +72,7 @@ type CcaSession = {
   sessionId: string;
   lastGoodEndpoint: string;
 };
-type ChatWireModelId = 'gemini-3.8-flash-low' | 'gemini-3.8-flash-medium' | 'gemini-3.8-flash-high' | 'gemini-3.7-flash-low' | 'gemini-3.7-flash-medium' | 'gemini-3.7-flash-high' | 'gemini-3.5-flash-extra-low' | 'gemini-3.5-flash-low' | 'gemini-3-flash-agent';
+type ChatWireModelId = 'gemini-4-argon-low' | 'gemini-4-argon-medium' | 'gemini-4-argon-high' | 'gemini-3.8-flash-low' | 'gemini-3.8-flash-medium' | 'gemini-3.8-flash-high' | 'gemini-3.7-flash-low' | 'gemini-3.7-flash-medium' | 'gemini-3.7-flash-high' | 'gemini-3.5-flash-extra-low' | 'gemini-3.5-flash-low' | 'gemini-3-flash-agent';
 type GeminiPart = {
   text: string;
   thought?: boolean;

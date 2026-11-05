@@ -74,7 +74,7 @@ dsh plugin --profile web remove dsh-antigravity-oauth
 |---|---|
 | 设置入口 | **Antigravity** |
 | Harness 路由 | `agy-google-antigravity` |
-| 公开模型 | `gemini-3.8-flash`、`gemini-3.7-flash`、`gemini-3.5-flash` |
+| 公开模型 | `gemini-4-argon`、`gemini-3.8-flash`、`gemini-3.7-flash`、`gemini-3.5-flash` |
 | 凭据文件 | `$DSH_HOME/.dsh-antigravity-oauth.json`（仅当前用户可读） |
 | 保存的账号 | 多个；在设置里手动切换 |
 | 搜索 | `search_web` → **单独一轮** Cloud Code Assist `googleSearch` |

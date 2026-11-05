@@ -2,6 +2,12 @@ import type { ChatWireModelId, PublicModelId, ReasoningEffort } from './types.ts
 
 export const PUBLIC_MODELS = [
   {
+    id: 'gemini-4-argon',
+    name: 'Gemini 4 Argon',
+    contextWindow: 1_048_576,
+    maxTokens: 65_536,
+  },
+  {
     id: 'gemini-3.8-flash',
     name: 'Gemini 3.8 Flash',
     contextWindow: 1_048_576,
@@ -30,6 +36,12 @@ export const REASONING_EFFORTS = ['low', 'medium', 'high'] as const satisfies re
 
 export const DEFAULT_REASONING_EFFORT: ReasoningEffort = 'medium'
 
+const ARGON_4: Record<ReasoningEffort, ChatWireModelId> = {
+  low: 'gemini-4-argon-low',
+  medium: 'gemini-4-argon-medium',
+  high: 'gemini-4-argon-high',
+}
+
 const FLASH_38: Record<ReasoningEffort, ChatWireModelId> = {
   low: 'gemini-3.8-flash-low',
   medium: 'gemini-3.8-flash-medium',
@@ -49,6 +61,7 @@ const FLASH_35: Record<ReasoningEffort, ChatWireModelId> = {
 }
 
 const WIRE: Record<PublicModelId, Record<ReasoningEffort, ChatWireModelId>> = {
+  'gemini-4-argon': ARGON_4,
   'gemini-3.8-flash': FLASH_38,
   'gemini-3.7-flash': FLASH_37,
   'gemini-3.5-flash': FLASH_35,
@@ -61,7 +74,7 @@ const THINKING_LEVEL: Record<ReasoningEffort, 'LOW' | 'MEDIUM' | 'HIGH'> = {
 }
 
 export function isPublicModelId(id: string): id is PublicModelId {
-  return id === 'gemini-3.8-flash' || id === 'gemini-3.7-flash' || id === 'gemini-3.5-flash'
+  return id === 'gemini-4-argon' || id === 'gemini-3.8-flash' || id === 'gemini-3.7-flash' || id === 'gemini-3.5-flash'
 }
 
 export function isReasoningEffort(value: string): value is ReasoningEffort {

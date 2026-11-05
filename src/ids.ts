@@ -37,7 +37,7 @@ export const FREE_TIER_ID = 'free-tier'
 export const ONBOARD_TIMEOUT_MS = 30_000
 export const ONBOARD_POLL_INTERVAL_MS = 1_000
 
-export const DEFAULT_ANTIGRAVITY_VERSION = '2.11.0'
+export const DEFAULT_ANTIGRAVITY_VERSION = '2.29.0'
 export const DEFAULT_ANTIGRAVITY_CL = '963137146'
 
 export const ANTIGRAVITY_VERSION_MANIFEST_URL =
