@@ -615,6 +615,14 @@ describe('AntigravityAdapter model catalog', () => {
     const resolved = await adapter.resolveModel('agy-google-antigravity', 'gemini-3.7-flash')
     expect(resolved.toolUpdate).toBeUndefined()
     expect(resolved.id).toBe('gemini-3.7-flash')
+
+    const argonResolved = await adapter.resolveModel('agy-google-antigravity', 'gemini-4-argon')
+    expect(argonResolved.id).toBe('gemini-4-argon')
+    expect(argonResolved.name).toBe('Gemini 4 Argon')
+    expect(argonResolved.context?.contextWindow).toBe(1_048_576)
+    expect(argonResolved.defaultMaxTokens).toBe(65_536)
+    expect(argonResolved.reasoning?.efforts).toHaveLength(3)
+    expect(argonResolved.reasoning?.defaultEffort).toBe('medium')
   })
 })
 

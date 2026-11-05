@@ -74,7 +74,7 @@ If you want a supported Gemini integration, use Google's official API / AI Studi
 |---|---|
 | Settings nav | **Antigravity** |
 | Harness route | `agy-google-antigravity` |
-| Public models | `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.5-flash` |
+| Public models | `gemini-4-argon`, `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.5-flash` |
 | Auth file | `$DSH_HOME/.dsh-antigravity-oauth.json` (owner-only) |
 | Saved accounts | Multiple; switched manually in Settings |
 | Search | `search_web` → a **separate** Cloud Code Assist `googleSearch` turn |
