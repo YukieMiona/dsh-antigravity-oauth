@@ -236,7 +236,7 @@ declare class AntigravityCredentialStore {
   active(): Promise<StoredAccount | undefined>;
   get(id: string): Promise<StoredAccount | undefined>;
   add(grant: AntigravityGrant): Promise<StoredAccount>;
-  update(id: string, patch: Partial<AntigravityGrant>): Promise<StoredAccount>;
+  update(id: string, patch: Partial<Omit<StoredAccount, 'id'>>): Promise<StoredAccount>;
   setActive(id: string): Promise<void>;
   remove(id: string): Promise<StoredAccount>;
   getAdvanced(): Promise<AdvancedSettings>;
@@ -376,9 +376,13 @@ declare class AntigravitySession {
   private listenForCallback;
   private stopCallbackServer;
   private cachedAdvanced?;
+  private cachedQuotas?;
+  private roundRobinCursor;
   getAdvancedSettings(): Promise<AdvancedSettings>;
   saveAdvancedSettings(settings: Partial<AdvancedSettings>): Promise<AdvancedSettings>;
-  retrieveAllQuotas(): Promise<Record<string, AccountQuotaSummary>>;
+  retrieveAllQuotas(options?: {
+    force?: boolean;
+  }): Promise<Record<string, AccountQuotaSummary>>;
 }
 //#endregion
 //#region src/image-input.d.ts

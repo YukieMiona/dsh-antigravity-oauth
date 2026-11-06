@@ -1610,18 +1610,16 @@ describe('AntigravitySession switching strategies (R2b)', () => {
       type: 'oauth', access: `token_${String(id)}`, refresh: `ref_${String(id)}`, expires: Date.now() + 600000, projectId: `proj_${String(id)}`,
     }))
 
-    // First call: starts from acc_1 (active), rotates to acc_2
+    // First call: starts from acc_1 (active), rotates in memory to acc_2
     const lease1 = await session.acquire()
     expect(lease1?.accountId).toBe('acc_2')
-    expect(store.setActive).toHaveBeenCalledWith('acc_2')
+    expect(store.setActive).not.toHaveBeenCalled()
 
-    // Second call: active is now acc_2, rotates to acc_3
-    store.active = async () => ({ id: 'acc_2', type: 'oauth', access: 'a2', refresh: 'r2', expires: Date.now() + 600000, projectId: 'p2' })
+    // Second call: rotates in memory to acc_3
     const lease2 = await session.acquire()
     expect(lease2?.accountId).toBe('acc_3')
 
-    // Third call: active is acc_3, rotates back to acc_1
-    store.active = async () => ({ id: 'acc_3', type: 'oauth', access: 'a3', refresh: 'r3', expires: Date.now() + 600000, projectId: 'p3' })
+    // Third call: rotates back in memory to acc_1
     const lease3 = await session.acquire()
     expect(lease3?.accountId).toBe('acc_1')
   })
@@ -1676,11 +1674,38 @@ describe('AntigravitySession switching strategies (R2b)', () => {
 
     const lease1 = await session.acquire({ model: 'gemini-4-argon' })
     expect(lease1?.accountId).toBe('acc_argon_2')
-    expect(store.setActive).toHaveBeenCalledWith('acc_argon_2')
 
-    store.active = async () => ({ id: 'acc_argon_2', type: 'oauth', access: 'a2', refresh: 'r2', expires: Date.now() + 600000, projectId: 'p2', hasArgon: true })
     const lease2 = await session.acquire({ model: 'gemini-4-argon' })
     expect(lease2?.accountId).toBe('acc_argon_1')
-    expect(store.setActive).toHaveBeenCalledWith('acc_argon_1')
+  })
+
+  it('switches to highest quota account when switchingStrategy is proactive_threshold and active is low', async () => {
+    const store = {
+      list: async () => [
+        { id: 'acc_low', type: 'oauth', access: 'a1', refresh: 'r1', expires: Date.now() + 600000, projectId: 'p1' },
+        { id: 'acc_high', type: 'oauth', access: 'a2', refresh: 'r2', expires: Date.now() + 600000, projectId: 'p2' },
+      ],
+      active: async () => ({ id: 'acc_low', type: 'oauth', access: 'a1', refresh: 'r1', expires: Date.now() + 600000, projectId: 'p1' }),
+      setActive: vi.fn(async () => {}),
+    } as any
+
+    const session = new AntigravitySession(store)
+    vi.spyOn(session, 'getAdvancedSettings').mockResolvedValue({
+      defaultReasoningEffort: 'medium',
+      modelContextWindow: 1048576,
+      switchingStrategy: 'proactive_threshold',
+      proactiveThreshold: 20,
+    })
+    vi.spyOn(session, 'retrieveAllQuotas').mockResolvedValue({
+      acc_low: { accountId: 'acc_low', ok: true, groups: [{ displayName: 'G', buckets: [{ bucketId: '5h', window: '5h', remainingFraction: 0.1 }] }] },
+      acc_high: { accountId: 'acc_high', ok: true, groups: [{ displayName: 'G', buckets: [{ bucketId: '5h', window: '5h', remainingFraction: 0.9 }] }] },
+    })
+    vi.spyOn(session as any, 'refreshGrantForAccount').mockImplementation(async (id: any) => ({
+      type: 'oauth', access: `token_${String(id)}`, refresh: `ref_${String(id)}`, expires: Date.now() + 600000, projectId: `proj_${String(id)}`,
+    }))
+
+    const lease = await session.acquire()
+    expect(lease?.accountId).toBe('acc_high')
+    expect(store.setActive).toHaveBeenCalledWith('acc_high')
   })
 })
