@@ -1651,4 +1651,36 @@ describe('AntigravitySession switching strategies (R2b)', () => {
     expect(lease?.accountId).toBe('acc_1')
     expect(store.setActive).not.toHaveBeenCalled()
   })
+
+  it('rotates across multiple Argon accounts when switchingStrategy is round_robin', async () => {
+    const store = {
+      list: async () => [
+        { id: 'acc_flash', type: 'oauth', access: 'af', refresh: 'rf', expires: Date.now() + 600000, projectId: 'pf', hasArgon: false },
+        { id: 'acc_argon_1', type: 'oauth', access: 'a1', refresh: 'r1', expires: Date.now() + 600000, projectId: 'p1', hasArgon: true },
+        { id: 'acc_argon_2', type: 'oauth', access: 'a2', refresh: 'r2', expires: Date.now() + 600000, projectId: 'p2', hasArgon: true },
+      ],
+      active: async () => ({ id: 'acc_argon_1', type: 'oauth', access: 'a1', refresh: 'r1', expires: Date.now() + 600000, projectId: 'p1', hasArgon: true }),
+      setActive: vi.fn(async () => {}),
+    } as any
+
+    const session = new AntigravitySession(store)
+    vi.spyOn(session, 'getAdvancedSettings').mockResolvedValue({
+      defaultReasoningEffort: 'medium',
+      modelContextWindow: 1048576,
+      switchingStrategy: 'round_robin',
+      proactiveThreshold: 20,
+    })
+    vi.spyOn(session as any, 'refreshGrantForAccount').mockImplementation(async (id: any) => ({
+      type: 'oauth', access: `token_${String(id)}`, refresh: `ref_${String(id)}`, expires: Date.now() + 600000, projectId: `proj_${String(id)}`,
+    }))
+
+    const lease1 = await session.acquire({ model: 'gemini-4-argon' })
+    expect(lease1?.accountId).toBe('acc_argon_2')
+    expect(store.setActive).toHaveBeenCalledWith('acc_argon_2')
+
+    store.active = async () => ({ id: 'acc_argon_2', type: 'oauth', access: 'a2', refresh: 'r2', expires: Date.now() + 600000, projectId: 'p2', hasArgon: true })
+    const lease2 = await session.acquire({ model: 'gemini-4-argon' })
+    expect(lease2?.accountId).toBe('acc_argon_1')
+    expect(store.setActive).toHaveBeenCalledWith('acc_argon_1')
+  })
 })
