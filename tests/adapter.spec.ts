@@ -1596,7 +1596,7 @@ describe('AntigravitySession switching strategies (R2b)', () => {
         { id: 'acc_3', type: 'oauth', access: 'a3', refresh: 'r3', expires: Date.now() + 600000, projectId: 'p3' },
       ],
       active: async () => ({ id: 'acc_1', type: 'oauth', access: 'a1', refresh: 'r1', expires: Date.now() + 600000, projectId: 'p1' }),
-      setActive: vi.fn(),
+      setActive: vi.fn(async () => {}),
     } as any
 
     const session = new AntigravitySession(store)
@@ -1633,7 +1633,7 @@ describe('AntigravitySession switching strategies (R2b)', () => {
         { id: 'acc_2', type: 'oauth', access: 'a2', refresh: 'r2', expires: Date.now() + 600000, projectId: 'p2' },
       ],
       active: async () => ({ id: 'acc_1', type: 'oauth', access: 'a1', refresh: 'r1', expires: Date.now() + 600000, projectId: 'p1' }),
-      setActive: vi.fn(),
+      setActive: vi.fn(async () => {}),
     } as any
 
     const session = new AntigravitySession(store)

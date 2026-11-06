@@ -251,7 +251,7 @@ export class AntigravitySession {
       const currentIndex = active !== undefined ? readyAccounts.findIndex(a => a.id === active.id) : -1
       const nextAccount = readyAccounts[(currentIndex + 1) % readyAccounts.length]!
       if (nextAccount.id !== active?.id) {
-        void this.store.setActive(nextAccount.id).catch(() => {})
+        void Promise.resolve(this.store.setActive(nextAccount.id)).catch(() => {})
       }
       return nextAccount
     }
@@ -265,7 +265,7 @@ export class AntigravitySession {
         if (currentScore < threshold) {
           const best = await this.findBestAccount({ excludeId: active.id })
           if (best !== undefined) {
-            void this.store.setActive(best.id).catch(() => {})
+            void Promise.resolve(this.store.setActive(best.id)).catch(() => {})
             return best
           }
         }
