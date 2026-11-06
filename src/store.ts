@@ -293,7 +293,7 @@ export class AntigravityCredentialStore {
     })
   }
 
-  async update(id: string, patch: Partial<AntigravityGrant>): Promise<StoredAccount> {
+  async update(id: string, patch: Partial<Omit<StoredAccount, 'id'>>): Promise<StoredAccount> {
     return withFileLock(this.filename, async () => {
       const parsed = await this.readParsed()
       if (parsed === undefined) throw new Error('dsh-antigravity-oauth: no accounts are stored')

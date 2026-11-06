@@ -232,7 +232,7 @@ export function registerAntigravityAuthRoutes(
             const acc = await session.store.get(id)
             if (!acc) throw new Error('account not found')
             const nextVal = acc.hasArgon !== true
-            await session.store.update(id, { hasArgon: nextVal } as any)
+            await session.store.update(id, { hasArgon: nextVal })
             await notify()
             json(res, 200, { ok: true, hasArgon: nextVal, account: await session.snapshot() })
           } catch (error) { json(res, 400, { error: safeMessage(error) }) }

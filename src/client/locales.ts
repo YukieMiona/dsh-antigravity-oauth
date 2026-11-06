@@ -168,6 +168,10 @@ export const en = {
   managerExportCmd: 'jq \'.accounts | map({email, refresh_token: .refresh})\' ~/.dsh/.dsh-antigravity-oauth.json > /tmp/accounts_for_manager.json',
   managerExportNote: 'Import the generated file in Manager Web UI: Accounts → Import JSON',
   managerOpenWeb: 'Open Manager Web UI',
+  managerCustomConfig: 'Custom Connection Settings',
+  managerResetDefault: 'Reset Defaults',
+  managerEdit: 'Customize Connection',
+  managerDoneEditing: 'Done',
 } as const
 
 export type AntigravityKey = keyof typeof en
@@ -342,4 +346,8 @@ export const zh: { [Key in AntigravityKey]: string } = {
   managerExportCmd: 'jq \'.accounts | map({email, refresh_token: .refresh})\' ~/.dsh/.dsh-antigravity-oauth.json > /tmp/accounts_for_manager.json',
   managerExportNote: '在 Manager 网页后台导入生成的 /tmp/accounts_for_manager.json 文件即可一键同步。',
   managerOpenWeb: '打开 Manager 网页管理后台',
+  managerCustomConfig: '自定义连接配置',
+  managerResetDefault: '恢复默认设置',
+  managerEdit: '自定义端点与凭据',
+  managerDoneEditing: '完成',
 }

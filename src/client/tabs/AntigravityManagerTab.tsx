@@ -13,15 +13,40 @@ const DEFAULT_WEB_URL = 'http://127.0.0.1:8045'
 const DEFAULT_API_KEY = 'sk-547e3bdf50f24bae8a58348151df4e5f'
 const DOCKER_CMD = 'docker run -d --name antigravity-manager -p 8045:8045 -e API_KEY=sk-547e3bdf50f24bae8a58348151df4e5f -e ABV_MAX_BODY_SIZE=104857600 -v ~/.antigravity_tools:/root/.antigravity_tools lbjlaq/antigravity-manager:latest'
 
+const MANAGER_BASE_URL_KEY = 'dsh-antigravity-oauth.manager-base-url'
+const MANAGER_API_KEY_KEY = 'dsh-antigravity-oauth.manager-api-key'
+
 export function AntigravityManagerTab(props: AntigravityManagerTabProps) {
   const { t, initialBaseUrl, initialApiKey } = props
 
   const exportCmd = t('managerExportCmd') || "jq '.accounts | map({email, refresh_token: .refresh})' ~/.dsh/.dsh-antigravity-oauth.json > /tmp/accounts_for_manager.json"
-  const [baseUrl] = useState(initialBaseUrl || DEFAULT_BASE_URL)
-  const [apiKey] = useState(initialApiKey || DEFAULT_API_KEY)
+
+  const [baseUrl, setBaseUrlState] = useState(() => {
+    try { return localStorage.getItem(MANAGER_BASE_URL_KEY) || initialBaseUrl || DEFAULT_BASE_URL }
+    catch { return initialBaseUrl || DEFAULT_BASE_URL }
+  })
+  const [apiKey, setApiKeyState] = useState(() => {
+    try { return localStorage.getItem(MANAGER_API_KEY_KEY) || initialApiKey || DEFAULT_API_KEY }
+    catch { return initialApiKey || DEFAULT_API_KEY }
+  })
+  const [isEditing, setIsEditing] = useState(false)
   const [detecting, setDetecting] = useState(false)
   const [feedback, setFeedback] = useState<{ ok: boolean, msg: string } | null>(null)
   const [copiedKey, setCopiedKey] = useState<string | null>(null)
+
+  const setBaseUrl = (val: string) => {
+    setBaseUrlState(val)
+    try { localStorage.setItem(MANAGER_BASE_URL_KEY, val) } catch {}
+  }
+  const setApiKey = (val: string) => {
+    setApiKeyState(val)
+    try { localStorage.setItem(MANAGER_API_KEY_KEY, val) } catch {}
+  }
+  const resetDefaults = () => {
+    setBaseUrl(DEFAULT_BASE_URL)
+    setApiKey(DEFAULT_API_KEY)
+    setIsEditing(false)
+  }
 
   const copyText = (text: string, key: string) => {
     void navigator.clipboard.writeText(text).then(() => {
@@ -134,51 +159,96 @@ export function AntigravityManagerTab(props: AntigravityManagerTabProps) {
 
       {/* Endpoints & Credentials Card */}
       <div className="dsh-agy-card">
-        <span className="dsh-agy-card-title">{t('managerEndpoints')}</span>
-
-        <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
-          <div>
-            <span style={{ fontSize: '11px', color: 'var(--dsh-text-muted, #888)' }}>{t('managerOpenAiBase')}</span>
-            <div className="dsh-agy-code-terminal">
-              <code>{baseUrl}</code>
+        <div className="dsh-agy-row">
+          <span className="dsh-agy-card-title">{t('managerEndpoints')}</span>
+          <div style={{ display: 'flex', gap: '6px' }}>
+            <button
+              type="button"
+              className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
+              onClick={() => setIsEditing(!isEditing)}
+            >
+              {isEditing ? t('managerDoneEditing') : t('managerEdit')}
+            </button>
+            {isEditing ? (
               <button
                 type="button"
                 className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
-                onClick={() => copyText(baseUrl, 'openai')}
+                onClick={resetDefaults}
               >
-                {copiedKey === 'openai' ? t('copied') : t('copyCommand')}
+                {t('managerResetDefault')}
               </button>
-            </div>
-          </div>
-
-          <div>
-            <span style={{ fontSize: '11px', color: 'var(--dsh-text-muted, #888)' }}>{t('managerAnthropicBase')}</span>
-            <div className="dsh-agy-code-terminal">
-              <code>{DEFAULT_ANTHROPIC_URL}</code>
-              <button
-                type="button"
-                className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
-                onClick={() => copyText(DEFAULT_ANTHROPIC_URL, 'anthropic')}
-              >
-                {copiedKey === 'anthropic' ? t('copied') : t('copyCommand')}
-              </button>
-            </div>
-          </div>
-
-          <div>
-            <span style={{ fontSize: '11px', color: 'var(--dsh-text-muted, #888)' }}>{t('managerApiKeyLabel')}</span>
-            <div className="dsh-agy-code-terminal">
-              <code>{apiKey}</code>
-              <button
-                type="button"
-                className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
-                onClick={() => copyText(apiKey, 'apikey')}
-              >
-                {copiedKey === 'apikey' ? t('copied') : t('copyCommand')}
-              </button>
-            </div>
+            ) : null}
           </div>
         </div>
+
+        {isEditing ? (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+            <label className="dsh-agy-field" style={{ margin: 0 }}>
+              <span className="dsh-agy-control-label">{t('managerOpenAiBase')}</span>
+              <input
+                type="text"
+                className="dsh-agy-input"
+                value={baseUrl}
+                onChange={e => setBaseUrl(e.target.value)}
+                placeholder={DEFAULT_BASE_URL}
+              />
+            </label>
+            <label className="dsh-agy-field" style={{ margin: 0 }}>
+              <span className="dsh-agy-control-label">{t('managerApiKeyLabel')}</span>
+              <input
+                type="text"
+                className="dsh-agy-input"
+                value={apiKey}
+                onChange={e => setApiKey(e.target.value)}
+                placeholder={DEFAULT_API_KEY}
+              />
+            </label>
+          </div>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
+            <div>
+              <span style={{ fontSize: '11px', color: 'var(--dsh-text-muted, #888)' }}>{t('managerOpenAiBase')}</span>
+              <div className="dsh-agy-code-terminal">
+                <code>{baseUrl}</code>
+                <button
+                  type="button"
+                  className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
+                  onClick={() => copyText(baseUrl, 'openai')}
+                >
+                  {copiedKey === 'openai' ? t('copied') : t('copyCommand')}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <span style={{ fontSize: '11px', color: 'var(--dsh-text-muted, #888)' }}>{t('managerAnthropicBase')}</span>
+              <div className="dsh-agy-code-terminal">
+                <code>{DEFAULT_ANTHROPIC_URL}</code>
+                <button
+                  type="button"
+                  className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
+                  onClick={() => copyText(DEFAULT_ANTHROPIC_URL, 'anthropic')}
+                >
+                  {copiedKey === 'anthropic' ? t('copied') : t('copyCommand')}
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <span style={{ fontSize: '11px', color: 'var(--dsh-text-muted, #888)' }}>{t('managerApiKeyLabel')}</span>
+              <div className="dsh-agy-code-terminal">
+                <code>{apiKey}</code>
+                <button
+                  type="button"
+                  className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
+                  onClick={() => copyText(apiKey, 'apikey')}
+                >
+                  {copiedKey === 'apikey' ? t('copied') : t('copyCommand')}
+                </button>
+              </div>
+            </div>
+          </div>
+        )}
       </div>
 
       {/* One-Click Account Export Card */}

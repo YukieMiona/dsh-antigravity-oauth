@@ -241,14 +241,12 @@ export class AntigravitySession {
       return activeMatch ?? candidates[0]
     }
 
-    // 2. Round-Robin strategy: rotate to the next candidate in circular order and persist activeId
+    // 2. Round-Robin strategy: rotate in memory across candidates without disk write storms
     if (strategy === 'round_robin') {
-      const currentIndex = active !== undefined ? candidates.findIndex(a => a.id === active.id) : -1
-      const nextAccount = candidates[(currentIndex + 1) % candidates.length]!
-      if (nextAccount.id !== active?.id) {
-        await Promise.resolve(this.store.setActive(nextAccount.id)).catch(() => {})
-      }
-      return nextAccount
+      const activeIndex = active !== undefined ? candidates.findIndex(a => a.id === active.id) : -1
+      const offset = (this.roundRobinCursor++) % candidates.length
+      const index = (activeIndex + 1 + offset) % candidates.length
+      return candidates[index]!
     }
 
     // 3. Proactive Threshold strategy: check active account's quota score; if below threshold, pick best
@@ -319,17 +317,25 @@ export class AntigravitySession {
       return true
     })
     const adv = await this.getAdvancedSettings().catch(() => ({ switchingStrategy: 'failover_429', proactiveThreshold: 20 } as AdvancedSettings))
-    const selectedAccount = await this.selectAccountForStrategy(readyAccounts, active, adv.switchingStrategy, adv.proactiveThreshold)
-    if (selectedAccount === undefined || selectedAccount.projectId === undefined) return undefined
-    const grant = await this.refreshGrantForAccount(selectedAccount.id)
-    if (grant === undefined || grant.projectId === undefined) return undefined
-    const runtime = this.runtimeFor(selectedAccount.id)
-    return {
-      oauth: { ...grant, projectId: grant.projectId },
-      accountId: selectedAccount.id,
-      ...grant.email === undefined ? {} : { email: grant.email },
-      cca: runtime.cca,
+    const excluded = new Set<string>()
+    while (true) {
+      const candidates = readyAccounts.filter(a => !excluded.has(a.id))
+      if (candidates.length === 0) break
+      const selectedAccount = await this.selectAccountForStrategy(candidates, active, adv.switchingStrategy, adv.proactiveThreshold)
+      if (selectedAccount === undefined) break
+      const grant = await this.refreshGrantForAccount(selectedAccount.id)
+      if (grant !== undefined && grant.projectId !== undefined) {
+        const runtime = this.runtimeFor(selectedAccount.id)
+        return {
+          oauth: { ...grant, projectId: grant.projectId },
+          accountId: selectedAccount.id,
+          ...grant.email === undefined ? {} : { email: grant.email },
+          cca: runtime.cca,
+        }
+      }
+      excluded.add(selectedAccount.id)
     }
+    return undefined
   }
 
   async acquireForAccount(accountId: string): Promise<AntigravityLease | undefined> {
@@ -810,6 +816,8 @@ export class AntigravitySession {
   }
 
   private cachedAdvanced?: AdvancedSettings
+  private cachedQuotas?: { timestamp: number, data: Record<string, AccountQuotaSummary> }
+  private roundRobinCursor = 0
 
   async getAdvancedSettings(): Promise<AdvancedSettings> {
     if (this.cachedAdvanced) return this.cachedAdvanced
@@ -823,7 +831,10 @@ export class AntigravitySession {
     return saved
   }
 
-  async retrieveAllQuotas(): Promise<Record<string, AccountQuotaSummary>> {
+  async retrieveAllQuotas(options?: { force?: boolean }): Promise<Record<string, AccountQuotaSummary>> {
+    if (options?.force !== true && this.cachedQuotas && Date.now() - this.cachedQuotas.timestamp < 60_000) {
+      return this.cachedQuotas.data
+    }
     const accounts = await this.store.list()
     const result: Record<string, AccountQuotaSummary> = {}
     await Promise.all(accounts.map(async account => {
@@ -850,6 +861,7 @@ export class AntigravitySession {
                 'User-Agent': antigravityUserAgent(),
               },
               body,
+              signal: AbortSignal.timeout(5000),
             })
             if (resp.ok) {
               data = await resp.json()
@@ -881,6 +893,7 @@ export class AntigravitySession {
         result[account.id] = { accountId: account.id, email: account.email, ok: false, error: safeMessage(err) }
       }
     }))
+    this.cachedQuotas = { timestamp: Date.now(), data: result }
     return result
   }
 }
