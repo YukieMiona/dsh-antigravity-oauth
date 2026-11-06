@@ -8,6 +8,7 @@ interface Config {
   retryPolicy?: RetryPolicyConfig;
   nativeTools?: boolean;
   nativeSearch?: boolean;
+  disableImageUpload?: boolean;
 }
 declare const Config: z<Config>;
 //#endregion
@@ -384,6 +385,7 @@ interface AntigravityAdapterOptions {
   streamIdleTimeoutMs?: number;
   resolveAttachments?: () => AttachmentStore | undefined;
   resolveImageAccess?: ImageAccessResolver;
+  disableImageUpload?: boolean;
 }
 declare class AntigravityAdapter extends LlmAdapter {
   private readonly session;
