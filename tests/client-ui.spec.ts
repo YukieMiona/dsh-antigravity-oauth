@@ -552,6 +552,30 @@ describe('Mounted Settings with isolated fetch', () => {
 })
 
 describe('Compact summary contracts, not native geometry proof', () => {
+  it.each([false, true])('keeps quota value levels and fills in sync with compact=%s', async compactView => {
+    const cases = [
+      [0, 'is-low'], [9, 'is-low'], [15, 'is-low'], [16, 'is-med'], [40, 'is-med'],
+      [41, 'is-high'], [100, 'is-high'], [NaN, 'is-unknown'], [Infinity, 'is-unknown'],
+    ] as const
+    expect.assertions(cases.length * 2 * 5)
+    for (const [value, level] of cases) {
+      const summary = quota('2099-01-01T00:00:00Z')
+      for (const bucket of summary.groups![0].buckets) bucket.remainingFraction = value / 100
+      await render(React.createElement(AccountsTab, defaults({ compactView, quotas: { one: summary } })))
+      const cells = container.querySelector('.dsh-agy-account')!.querySelectorAll('.dsh-agy-quota-col')
+      for (const [index, cell] of Array.from(cells).entries()) {
+        const known = Number.isFinite(value)
+        const pct = cell.querySelector('.dsh-agy-quota-pct')!
+        const meter = cell.querySelector('[role="progressbar"]')!
+        const period = t(index === 0 ? 'quota5h' : 'quotaWeekly')
+        expect(pct.classList.contains(level)).toBe(true)
+        expect(pct.textContent).toBe(known ? value + '%' : '—')
+        expect(cell.querySelector('.dsh-agy-capsule-fill')!.className).toBe('dsh-agy-capsule-fill ' + (known ? level : ''))
+        expect(meter.getAttribute('aria-valuenow')).toBe(known ? String(value) : null)
+        expect(meter.getAttribute('aria-label')).toBe(known ? t('meterAria', { period, pct: value }) : t('meterUnknownAria', { period }))
+      }
+    }
+  })
   it.each(['en', 'zh'] as const)('keeps both values and accessible quota meanings in %s compact rows', async language => {
     const tr = translate(language)
     const partial = quota('not-a-date')
@@ -738,6 +762,25 @@ describe('Theme source contracts, not browser layout proof', () => {
     expect(rule('.dsh-agy-account.is-compact .dsh-agy-account-header').display).toBe('contents')
     expect(rule('.dsh-agy-account.is-compact .dsh-agy-account-action').gridColumn).toBe('3')
     expect(rule('.dsh-agy-account.is-compact .dsh-agy-account-action').gridRow).toBe('1')
+    expect(SETTINGS_CSS).toContain('@supports (grid-template-columns: subgrid)')
+    expect(rule('.dsh-agy-account-list.is-compact-mode').display).toBe('grid')
+    expect(rule('.dsh-agy-account-list.is-compact-mode').gridTemplateColumns).toBe('minmax(0, 1fr) max-content max-content max-content')
+    expect(rule('.dsh-agy-account-list.is-compact-mode').columnGap).toBe('12px')
+    expect(rule('.dsh-agy-account-list.is-compact-mode > .dsh-agy-account.is-compact').gridTemplateColumns).toBe('subgrid')
+    expect(rule('.dsh-agy-account-list.is-compact-mode > .dsh-agy-account.is-compact').columnGap).toBe('12px')
+    expect(rule('.dsh-agy-account-list.is-compact-mode .dsh-agy-account-metrics').display).toBe('contents')
+    expect(rule('.dsh-agy-account-list.is-compact-mode .dsh-agy-quota-col:nth-child(1)').gridColumn).toBe('2')
+    expect(rule('.dsh-agy-account-list.is-compact-mode .dsh-agy-quota-col:nth-child(2)').gridColumn).toBe('3')
+    expect(rule('.dsh-agy-account-list.is-compact-mode .dsh-agy-account-action').gridColumn).toBe('4')
+    expect(rule('.dsh-agy-account.is-compact .dsh-agy-quota-pct').minWidth).toBe('calc(3ch + 1em)')
+    expect(rule('.dsh-agy-account.is-compact .dsh-agy-quota-pct').textAlign).toBe('right')
+    expect(rule('.dsh-agy-quota-pct').minWidth).toBe('')
+    expect(rule('.dsh-agy-quota-pct').fontVariantNumeric).toBe('tabular-nums')
+    expect(SETTINGS_CSS.indexOf('.dsh-agy-account.is-compact .dsh-agy-quota-pct {')).toBeLessThan(SETTINGS_CSS.indexOf('@supports (grid-template-columns: subgrid)'))
+    expect(SETTINGS_CSS.match(/^\.dsh-agy-account\.is-compact \.dsh-agy-quota-pct \{/gm)).toHaveLength(1)
+    for (const [level, token] of [['high', 'state-success-primary'], ['med', 'state-warn-primary'], ['low', 'state-error-primary'], ['unknown', 'label-secondary']]) {
+      expect(rule('.dsh-agy-account.is-compact .dsh-agy-quota-pct.is-' + level).color).toContain('--dsw-alias-' + token)
+    }
     expect(rule('.dsh-agy-account.is-compact .dsh-agy-account-email-text').textOverflow).toBe('ellipsis')
     expect(rule('.dsh-agy-account.is-compact .dsh-agy-account-email-text').whiteSpace).toBe('nowrap')
     expect(rule('.dsh-agy-account-email-text').whiteSpace).toBe('normal')

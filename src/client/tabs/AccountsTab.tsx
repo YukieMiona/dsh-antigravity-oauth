@@ -260,6 +260,7 @@ export function AccountsTab(props: AccountsTabProps) {
                     <div className="dsh-agy-account-metrics">
                       {cells.map(({ period, value: rawValue, deadline, countdown }, index) => {
                         const value = Number.isFinite(rawValue) ? rawValue : undefined
+                        const level = value === undefined ? 'is-unknown' : value > 40 ? 'is-high' : value > 15 ? 'is-med' : 'is-low'
                         const meter = {
                           role: 'progressbar',
                           'aria-label': value === undefined
@@ -273,14 +274,14 @@ export function AccountsTab(props: AccountsTabProps) {
                           <div className="dsh-agy-quota-col" key={index}>
                             <div className="dsh-agy-quota-row-label" {...compactView ? meter : {}} title={compactView ? meter['aria-label'] : undefined}>
                               <span className="dsh-agy-quota-period">{compactView ? t(index === 0 ? 'quota5hCompact' : 'quotaWeeklyCompact') : period}</span>
-                              <span className="dsh-agy-quota-pct">{value !== undefined ? `${value}%` : '—'}</span>
+                              <span className={'dsh-agy-quota-pct ' + level}>{value !== undefined ? `${value}%` : '—'}</span>
                             </div>
                             <div
                               className="dsh-agy-quota-track"
                               {...!compactView ? meter : {}}
                             >
                               <div
-                                className={'dsh-agy-capsule-fill ' + (value !== undefined ? (value > 40 ? 'is-high' : value > 15 ? 'is-med' : 'is-low') : '')}
+                                className={'dsh-agy-capsule-fill ' + (value !== undefined ? level : '')}
                                 style={{ width: value !== undefined ? `${value}%` : '0%' }}
                               />
                             </div>

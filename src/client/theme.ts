@@ -637,6 +637,33 @@ export const SETTINGS_CSS = `
 .dsh-agy-account.is-compact .dsh-agy-quota-reset,
 .dsh-agy-account.is-compact .dsh-agy-account-quota-state { display: none; }
 
+/* Reserve three tabular digits plus one em for '%' in both compact layouts. */
+.dsh-agy-account.is-compact .dsh-agy-quota-pct { min-width: calc(3ch + 1em); text-align: right; }
+.dsh-agy-account.is-compact .dsh-agy-quota-pct.is-high { color: var(--dsw-alias-state-success-primary, CanvasText); }
+.dsh-agy-account.is-compact .dsh-agy-quota-pct.is-med { color: var(--dsw-alias-state-warn-primary, CanvasText); }
+.dsh-agy-account.is-compact .dsh-agy-quota-pct.is-low { color: var(--dsw-alias-state-error-primary, CanvasText); }
+.dsh-agy-account.is-compact .dsh-agy-quota-pct.is-unknown { color: var(--dsw-alias-label-secondary, GrayText); }
+
+/* Compact rows share the list's columns, so 5h and 7d line up whatever their values. */
+@supports (grid-template-columns: subgrid) {
+  .dsh-agy-account-list.is-compact-mode {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) max-content max-content max-content;
+    column-gap: 12px;
+    align-content: start;
+  }
+  .dsh-agy-account-list.is-compact-mode > * { grid-column: 1 / -1; }
+  .dsh-agy-account-list.is-compact-mode > .dsh-agy-account.is-compact {
+    grid-template-columns: subgrid;
+    column-gap: 12px;
+  }
+  .dsh-agy-account-list.is-compact-mode .dsh-agy-account-metrics { display: contents; }
+  .dsh-agy-account-list.is-compact-mode .dsh-agy-quota-col:nth-child(1) { grid-column: 2; grid-row: 1; }
+  .dsh-agy-account-list.is-compact-mode .dsh-agy-quota-col:nth-child(2) { grid-column: 3; grid-row: 1; }
+  .dsh-agy-account-list.is-compact-mode .dsh-agy-quota-row-label { justify-content: space-between; }
+  .dsh-agy-account-list.is-compact-mode .dsh-agy-account-action { grid-column: 4; }
+}
+
 /* Radio Cards (Advanced) */
 .dsh-agy-radio-card {
   display: flex;
