@@ -217,12 +217,63 @@ export class AntigravitySession {
       return true
     })
     if (available.length === 0) return undefined
+    const adv = await this.getAdvancedSettings().catch(() => ({ switchingStrategy: 'failover_429', proactiveThreshold: 20 } as AdvancedSettings))
+    if (adv.switchingStrategy === 'round_robin' && available.length > 1) {
+      const active = await this.store.active()
+      const currentIndex = active ? available.findIndex(a => a.id === active.id) : -1
+      return available[(currentIndex + 1) % available.length]
+    }
     const active = await this.store.active()
     const activeReady = active !== undefined ? available.find(a => a.id === active.id) : undefined
     if (activeReady !== undefined && this.isArgonCapable(activeReady)) {
       return activeReady
     }
     return available.find(a => this.isArgonCapable(a)) ?? activeReady ?? available[0]
+  }
+
+  private async selectAccountForStrategy(
+    all: StoredAccount[],
+    active: StoredAccount | undefined,
+    strategy: AdvancedSettings['switchingStrategy'],
+    threshold: number,
+    now: number,
+  ): Promise<StoredAccount | undefined> {
+    const readyAccounts = all.filter(account => {
+      if (account.projectId === undefined) return false
+      const runtime = this.runtimes.get(account.id)
+      if (runtime?.dead) return false
+      if (runtime?.limitedUntil !== undefined && runtime.limitedUntil > now) return false
+      return true
+    })
+    if (readyAccounts.length === 0) return active
+
+    if (strategy === 'round_robin' && readyAccounts.length > 1) {
+      const currentIndex = active !== undefined ? readyAccounts.findIndex(a => a.id === active.id) : -1
+      const nextAccount = readyAccounts[(currentIndex + 1) % readyAccounts.length]!
+      if (nextAccount.id !== active?.id) {
+        void this.store.setActive(nextAccount.id).catch(() => {})
+      }
+      return nextAccount
+    }
+
+    if (strategy === 'proactive_threshold' && active !== undefined) {
+      try {
+        const quotas = await this.retrieveAllQuotas()
+        const activeSummary = quotas[active.id]
+        const metrics = activeSummary?.ok && activeSummary.groups ? evaluateQuotaMetrics(activeSummary) : undefined
+        const currentScore = metrics?.score ?? 100
+        if (currentScore < threshold) {
+          const best = await this.findBestAccount({ excludeId: active.id })
+          if (best !== undefined) {
+            void this.store.setActive(best.id).catch(() => {})
+            return best
+          }
+        }
+      } catch {}
+    }
+
+    const activeHealthy = active !== undefined && readyAccounts.some(a => a.id === active.id)
+    return activeHealthy ? active : readyAccounts[0]
   }
 
   async acquire(options?: { model?: string }): Promise<AntigravityLease | undefined> {
@@ -246,14 +297,18 @@ export class AntigravitySession {
       }
       if (explicitArgon.length > 0) return undefined
     }
-    const grant = await this.refreshGrant()
-    if (grant === undefined || grant.projectId === undefined) return undefined
+    const all = await this.store.list()
     const active = await this.store.active()
-    if (active === undefined) return undefined
-    const runtime = this.runtimeFor(active.id)
+    const now = Date.now()
+    const adv = await this.getAdvancedSettings().catch(() => ({ switchingStrategy: 'failover_429', proactiveThreshold: 20 } as AdvancedSettings))
+    const selectedAccount = await this.selectAccountForStrategy(all, active, adv.switchingStrategy, adv.proactiveThreshold, now)
+    if (selectedAccount === undefined || selectedAccount.projectId === undefined) return undefined
+    const grant = await this.refreshGrantForAccount(selectedAccount.id)
+    if (grant === undefined || grant.projectId === undefined) return undefined
+    const runtime = this.runtimeFor(selectedAccount.id)
     return {
       oauth: { ...grant, projectId: grant.projectId },
-      accountId: active.id,
+      accountId: selectedAccount.id,
       ...grant.email === undefined ? {} : { email: grant.email },
       cca: runtime.cca,
     }

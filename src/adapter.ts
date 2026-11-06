@@ -531,7 +531,15 @@ export class AntigravityAdapter extends LlmAdapter {
     if (!isPublicModelId(options.model)) {
       throw new LlmError(`unknown Antigravity model "${options.model}"`, 'UNKNOWN_MODEL')
     }
-    const lease = await this.session.acquire({ model: options.model })
+    // AM1 Quota Guard:
+    // If request purpose is background compaction or session title, and requested model is gemini-4-argon,
+    // automatically downgrade to gemini-3.8-flash to save scarce Argon quota.
+    const isBackgroundCompactionOrTitle = options.purpose === 'compaction' || options.purpose === 'session-title'
+    const targetModel = isBackgroundCompactionOrTitle && options.model === 'gemini-4-argon'
+      ? 'gemini-3.8-flash'
+      : options.model
+
+    const lease = await this.session.acquire({ model: targetModel })
     if (lease === undefined) {
       throw new LlmError(
         'Antigravity is not connected. Open Settings and sign in.',
@@ -539,7 +547,7 @@ export class AntigravityAdapter extends LlmAdapter {
       )
     }
     const effort = effortOf(options)
-    const wire = routeChatModel(options.model, effort)
+    const wire = routeChatModel(targetModel, effort)
     const functions = functionsFor(options, this.options.nativeSearch)
     if (this.options.disableImageUpload !== true) {
       const offloadImages = requiredImageOffload(
@@ -571,15 +579,15 @@ export class AntigravityAdapter extends LlmAdapter {
       contents,
       ...options.system === undefined || options.system.length === 0 ? {} : { system: options.system },
       functions,
-      ...thinkingLevelFor(options.model, effort) === undefined
+      ...thinkingLevelFor(targetModel, effort) === undefined
         ? {}
-        : { thinkingLevel: thinkingLevelFor(options.model, effort) },
+        : { thinkingLevel: thinkingLevelFor(targetModel, effort) },
     }
     const state = createEmitState()
     const idleMs = this.options.streamIdleTimeoutMs ?? STREAM_IDLE_TIMEOUT_MS
     const watchdog = new IdleWatchdog(idleMs, options.signal)
     try {
-      yield* this.streamWithFailover(options, input, state, watchdog, lease)
+      yield* this.streamWithFailover(options, targetModel, input, state, watchdog, lease)
     } finally {
       watchdog.dispose()
     }
@@ -621,6 +629,7 @@ export class AntigravityAdapter extends LlmAdapter {
 
   private async *streamWithFailover(
     options: GenerateOptions,
+    targetModel: string,
     input: ChatGenerateInput,
     state: EmitState,
     watchdog: IdleWatchdog,
@@ -667,7 +676,7 @@ export class AntigravityAdapter extends LlmAdapter {
         let message = error instanceof Error
           ? (error.cause instanceof Error ? `${error.message}: ${error.cause.message}` : error.message)
           : String(error)
-        const isArgonModelError = options.model === 'gemini-4-argon'
+        const isArgonModelError = targetModel === 'gemini-4-argon'
           && /\b403\b|\b404\b|MODEL_NOT_FOUND|PERMISSION_DENIED/i.test(message)
         const code = /\b401\b|\b403\b/.test(message)
           ? 'AUTH'
@@ -688,7 +697,7 @@ export class AntigravityAdapter extends LlmAdapter {
         const canFailover = !emittedAnyChunk && state.index === 0 && state.text.length === 0 && state.thought.length === 0
         if (canFailover) {
           const nextLease = await this.tryFailoverLease(
-            options.model,
+            targetModel,
             currentLease.accountId,
             triedAccountIds,
             code,
