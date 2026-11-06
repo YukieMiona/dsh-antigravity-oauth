@@ -2,6 +2,13 @@
 
 This file records completed features, fixes, and process milestones in `YukieMiona/dsh-antigravity-oauth`. Open tasks and acceptance rules live on [Issue 2](https://github.com/YukieMiona/dsh-antigravity-oauth/issues/2). Pull requests hold full test and review logs.
 
+## Unreleased
+
+- UI1: Unify Accounts with sub-tabs for Native OAuth, Web2API, and Antigravity-Manager, and collapse top navigation to three tabs (#18).
+- U2: Clamp out-of-range quota percentage values to `0%` through `100%` in text and `aria-valuenow` (#14, #18).
+- R2: Add an interactive Argon toggle and status badge on account cards, and register the toggle route (#18).
+- AM0: Add the Antigravity-Manager tab with direct status probe, copyable endpoints, and account export guidance (#18).
+
 ## v0.2.4.1 (2026-11-06)
 
 Release `v0.2.4.1` (`06f8812`) adds Gemini 4 Argon routing, multimodal safety controls, dynamic context limits, and stream reliability fixes. Every item below passed GitHub Actions gates on `dev`. Each item names its board ID and pull request:
