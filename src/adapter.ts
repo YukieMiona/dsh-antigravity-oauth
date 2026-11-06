@@ -76,7 +76,7 @@ export interface AntigravityAdapterOptions {
 const IMAGE_REQUEST_BUDGET = { representation: 'base64', maxBytes: 16_000_000 } as const
 
 // Validate that Base64 payload begins with authentic image magic bytes (PNG, JPEG, GIF, WebP).
-function isValidImageMagicBytes(mimeType: string, base64Data: string): boolean {
+function isValidImageMagicBytes(base64Data: string): boolean {
   if (base64Data.length < 16) return false
   try {
     const buf = Buffer.from(base64Data.slice(0, 32), 'base64')
@@ -138,7 +138,7 @@ async function imagePartOf(
   }
   const image = await resolveImageBlock(block, attachments, signal, resolveAccess)
   if (image.type === 'inline') {
-    if (isValidImageMagicBytes(image.mimeType, image.data)) {
+    if (isValidImageMagicBytes(image.data)) {
       return { inlineData: { mimeType: image.mimeType, data: image.data } }
     }
     return { text: `[Image: ${name} (invalid or corrupted image header)]` }

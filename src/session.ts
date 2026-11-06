@@ -192,7 +192,7 @@ export class AntigravitySession {
   }
 
   isArgonCapable(account: StoredAccount): boolean {
-    if (account.hasArgon === true) return true
+    if (account.hasArgon !== undefined) return account.hasArgon
     if (account.email?.toLowerCase().includes('namidanoda')) return true
     return false
   }
