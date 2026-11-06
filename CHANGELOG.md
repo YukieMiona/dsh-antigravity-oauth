@@ -4,6 +4,7 @@ This file records completed features, fixes, and process milestones in `YukieMio
 
 ## Unreleased
 
+- Q1: Cache account quotas for 60 seconds, rotate in memory without disk writes, retry across candidates, and persist custom Manager endpoints (#20).
 - AM1: Automatically downgrade background compaction and session-title tasks to `gemini-3.8-flash` to save Argon quota (#19).
 - R2b: Wire `switchingStrategy` (`manual`, `failover_429`, `round_robin`, `proactive_threshold`) across Flash and Argon account pools (#19).
 - P5: Remove redundant `DSHX_HARNESS` git clone steps from GitHub Actions workflows (#19).
