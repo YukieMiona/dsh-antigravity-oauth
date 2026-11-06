@@ -12,11 +12,11 @@ const DEFAULT_ANTHROPIC_URL = 'http://127.0.0.1:8045'
 const DEFAULT_WEB_URL = 'http://127.0.0.1:8045'
 const DEFAULT_API_KEY = 'sk-547e3bdf50f24bae8a58348151df4e5f'
 const DOCKER_CMD = 'docker run -d --name antigravity-manager -p 8045:8045 -e API_KEY=sk-547e3bdf50f24bae8a58348151df4e5f -e ABV_MAX_BODY_SIZE=104857600 -v ~/.antigravity_tools:/root/.antigravity_tools lbjlaq/antigravity-manager:latest'
-const EXPORT_CMD = "jq '.accounts | map({email, refresh_token: .refresh})' /root/.dsh/.dsh-antigravity-oauth.json > /tmp/accounts_for_manager.json"
 
 export function AntigravityManagerTab(props: AntigravityManagerTabProps) {
   const { t, initialBaseUrl, initialApiKey } = props
 
+  const exportCmd = t('managerExportCmd') || "jq '.accounts | map({email, refresh_token: .refresh})' ~/.dsh/.dsh-antigravity-oauth.json > /tmp/accounts_for_manager.json"
   const [baseUrl] = useState(initialBaseUrl || DEFAULT_BASE_URL)
   const [apiKey] = useState(initialApiKey || DEFAULT_API_KEY)
   const [detecting, setDetecting] = useState(false)
@@ -188,12 +188,12 @@ export function AntigravityManagerTab(props: AntigravityManagerTabProps) {
 
         <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '8px' }}>
           <div className="dsh-agy-code-terminal">
-            <code style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{EXPORT_CMD}</code>
+            <code style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{exportCmd}</code>
             <button
               type="button"
               className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact"
               style={{ flexShrink: 0 }}
-              onClick={() => copyText(EXPORT_CMD, 'export')}
+              onClick={() => copyText(exportCmd, 'export')}
             >
               {copiedKey === 'export' ? t('copied') : t('copyCommand')}
             </button>

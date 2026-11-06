@@ -165,7 +165,7 @@ export const en = {
   managerDockerCmd: 'Docker One-Liner:',
   managerExportTitle: 'One-Click Account Export to Manager',
   managerExportDesc: 'Convert DSH OAuth accounts to Antigravity-Manager import format:',
-  managerExportCmd: 'jq \'.accounts | map({email, refresh_token: .refresh})\' /root/.dsh/.dsh-antigravity-oauth.json > /tmp/accounts_for_manager.json',
+  managerExportCmd: 'jq \'.accounts | map({email, refresh_token: .refresh})\' ~/.dsh/.dsh-antigravity-oauth.json > /tmp/accounts_for_manager.json',
   managerExportNote: 'Import the generated file in Manager Web UI: Accounts → Import JSON',
   managerOpenWeb: 'Open Manager Web UI',
 } as const
@@ -339,7 +339,7 @@ export const zh: { [Key in AntigravityKey]: string } = {
   managerDockerCmd: 'Docker 一键启动命令：',
   managerExportTitle: '一键导出当前账号至 Manager',
   managerExportDesc: '将当前 DSH 的已登录账号导出为 Manager 可识别的导入格式：',
-  managerExportCmd: 'jq \'.accounts | map({email, refresh_token: .refresh})\' /root/.dsh/.dsh-antigravity-oauth.json > /tmp/accounts_for_manager.json',
+  managerExportCmd: 'jq \'.accounts | map({email, refresh_token: .refresh})\' ~/.dsh/.dsh-antigravity-oauth.json > /tmp/accounts_for_manager.json',
   managerExportNote: '在 Manager 网页后台导入生成的 /tmp/accounts_for_manager.json 文件即可一键同步。',
   managerOpenWeb: '打开 Manager 网页管理后台',
 }
