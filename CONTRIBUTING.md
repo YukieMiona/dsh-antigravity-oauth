@@ -44,4 +44,11 @@ Use Conventional Commits for commit messages:
 - `refactor(scope): description`
 - `chore(scope): description`
 
+## Code Review and Optimization Gate
+
+Complete a three-step review before each commit:
+1. Run `/simplify` to remove dead code, unused branches, and speculative abstractions.
+2. Run `dsh.code.review` to diagnose edge cases, cancellation contracts, and concurrency risks.
+3. Run `/brook-lint` to prevent architectural decay, coupling, and cognitive overload.
+
 [![](https://img.shields.io/badge/powered_by-dsh-4D6BFE?style=flat-square&logo=deepseek&logoColor=white)](https://github.com/deepseek-ai/deepseek-harness)
