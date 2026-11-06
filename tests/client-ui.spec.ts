@@ -721,7 +721,7 @@ describe('Compact preference at the real Settings owner', () => {
     expect(container.textContent).not.toContain(en.tos)
     await click(button(en.restoreNotice))
     expect(container.textContent).toContain(en.tos)
-    await click(button(en.tabWeb2api))
+    await click(button(en.subtabWeb2api))
     await click(button(en.hideGuide))
     await click(button(en.showGuide))
     expect(button(en.hideGuide)).toBeDefined()
@@ -921,5 +921,38 @@ describe('Account Redesign 07 Specifications', () => {
     // Must NOT contain English 'h' or 'm' as units in Chinese mode
     expect(resets[0]).not.toMatch(/\d+h/)
     expect(resets[0]).not.toMatch(/\d+m/)
+  })
+
+  it('clamps out-of-range quota percentages to [0, 100] and renders Argon badge', async () => {
+    const props = defaults({
+      accounts: [
+        { id: 'one', email: 'one@example.test', ready: true, limited: false, dead: false, hasArgon: true },
+        { id: 'two', email: 'two@example.test', ready: true, limited: false, dead: false, hasArgon: false },
+      ],
+      quotas: {
+        one: {
+          accountId: 'one', ok: true,
+          groups: [{ displayName: 'Gemini', buckets: [
+            { bucketId: '5h', window: '5h', remainingFraction: -0.5, resetTime: new Date(Date.now() + 7200000).toISOString() },
+            { bucketId: 'weekly', window: 'weekly', remainingFraction: 8.5, resetTime: new Date(Date.now() + 86400000).toISOString() },
+          ] }]
+        }
+      }
+    })
+    await render(React.createElement(AccountsTab, props))
+
+    const activeRow = container.querySelectorAll('.dsh-agy-account')[0]
+    const quotaCols = activeRow.querySelectorAll('.dsh-agy-quota-col')
+
+    // Column 1: -50% should be clamped to 0%
+    expect(quotaCols[0].querySelector('.dsh-agy-quota-pct')?.textContent).toBe('0%')
+    expect(quotaCols[0].querySelector('.dsh-agy-quota-track')?.getAttribute('aria-valuenow')).toBe('0')
+
+    // Column 2: 850% should be clamped to 100%
+    expect(quotaCols[1].querySelector('.dsh-agy-quota-pct')?.textContent).toBe('100%')
+    expect(quotaCols[1].querySelector('.dsh-agy-quota-track')?.getAttribute('aria-valuenow')).toBe('100')
+
+    // Argon badge should be visible on account 'one'
+    expect(activeRow.querySelector('.dsh-agy-status-badge')?.textContent).toBe('Argon')
   })
 })

@@ -22,6 +22,7 @@ export interface AccountsTabProps {
   switchAccount: (account: AccountSummary) => void
   removeAccount: (id: string) => void
   recover: (action: 'retry' | 'cancel') => void | Promise<void>
+  toggleArgon?: (id: string) => void | Promise<void>
 }
 
 function RemoveAccountAction({ label, title, disabled, onRemove }: {
@@ -95,6 +96,7 @@ export function AccountsTab(props: AccountsTabProps) {
     switchAccount,
     removeAccount,
     recover,
+    toggleArgon,
   } = props
 
   return (
@@ -236,6 +238,50 @@ export function AccountsTab(props: AccountsTabProps) {
                         {account.dead ? (
                           <span className="dsh-agy-status-badge is-error" title={t('accountNeedsRelogin')} role={compactView ? 'img' : undefined} aria-label={compactView ? t('accountNeedsRelogin') : undefined}>{compactView ? '×' : t('accountNeedsRelogin')}</span>
                         ) : null}
+                        {account.hasArgon ? (
+                          <button
+                            type="button"
+                            className="dsh-agy-status-badge"
+                            style={{
+                              backgroundColor: 'var(--dsh-color-primary, #4D6BFE)',
+                              color: '#ffffff',
+                              cursor: toggleArgon ? 'pointer' : 'default',
+                              border: 'none',
+                              borderRadius: '4px',
+                              fontSize: '10px',
+                              fontWeight: 600,
+                              padding: '1px 5px',
+                              lineHeight: '14px',
+                            }}
+                            title={t('argonEnabledTitle')}
+                            aria-label={t('argonToggleAria', { email: identity })}
+                            disabled={busy || Boolean(switchingId)}
+                            onClick={() => { void toggleArgon?.(account.id) }}
+                          >
+                            {t('argonCapableBadge')}
+                          </button>
+                        ) : toggleArgon ? (
+                          <button
+                            type="button"
+                            className="dsh-agy-status-badge"
+                            style={{
+                              opacity: 0.5,
+                              cursor: 'pointer',
+                              border: '1px dashed var(--dsh-border-color, #ccc)',
+                              background: 'transparent',
+                              borderRadius: '4px',
+                              fontSize: '10px',
+                              padding: '0 4px',
+                              lineHeight: '13px',
+                            }}
+                            title={t('argonDisabledTitle')}
+                            aria-label={t('argonToggleAria', { email: identity })}
+                            disabled={busy || Boolean(switchingId)}
+                            onClick={() => { void toggleArgon?.(account.id) }}
+                          >
+                            +Argon
+                          </button>
+                        ) : null}
                       </div>
 
                       <div className="dsh-agy-account-action">
@@ -259,7 +305,9 @@ export function AccountsTab(props: AccountsTabProps) {
                     ) : null}
                     <div className="dsh-agy-account-metrics">
                       {cells.map(({ period, value: rawValue, deadline, countdown }, index) => {
-                        const value = Number.isFinite(rawValue) ? rawValue : undefined
+                        const value = typeof rawValue === 'number' && Number.isFinite(rawValue)
+                          ? Math.max(0, Math.min(100, Math.round(rawValue)))
+                          : undefined
                         const level = value === undefined ? 'is-unknown' : value > 40 ? 'is-high' : value > 15 ? 'is-med' : 'is-low'
                         const meter = {
                           role: 'progressbar',

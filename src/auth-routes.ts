@@ -6,10 +6,12 @@ import {
   ADVANCED_SETTINGS_PATH,
   ACCOUNT_REMOVE_PATH,
   ACCOUNT_SWITCH_PATH,
+  ACCOUNT_TOGGLE_ARGON_PATH,
   AUTH_COMPLETE_PATH,
   AUTH_LOGIN_PATH,
   AUTH_LOGOUT_PATH,
   AUTH_STATUS_PATH,
+  MANAGER_TEST_PATH,
   WEB2API_SETTINGS_PATH,
   WEB2API_TEST_PATH,
 } from './ids.ts'
@@ -213,6 +215,62 @@ export function registerAntigravityAuthRoutes(
             await notify()
             json(res, 200, { ok: true, account: await session.snapshot() })
           } catch (error) { json(res, 400, { error: safeMessage(error) }) }
+        },
+      }),
+      ctx.webServer.register({
+        kind: 'exact',
+        path: ACCOUNT_TOGGLE_ARGON_PATH,
+        handler: async (req, res) => {
+          if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+          if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
+          try {
+            const body = await readJson(req)
+            const id = typeof (body as Record<string, unknown>).id === 'string'
+              ? (body as Record<string, unknown>).id as string
+              : ''
+            if (id.length === 0) throw new Error('expected { "id": "..." }')
+            const acc = await session.store.get(id)
+            if (!acc) throw new Error('account not found')
+            const nextVal = acc.hasArgon !== true
+            await session.store.update(id, { hasArgon: nextVal } as any)
+            await notify()
+            json(res, 200, { ok: true, hasArgon: nextVal, account: await session.snapshot() })
+          } catch (error) { json(res, 400, { error: safeMessage(error) }) }
+        },
+      }),
+      ctx.webServer.register({
+        kind: 'exact',
+        path: MANAGER_TEST_PATH,
+        handler: async (req, res) => {
+          if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+          if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
+          try {
+            const start = Date.now()
+            const body = await readJson(req).catch(() => ({}))
+            const rawUrl = typeof (body as Record<string, unknown>).baseUrl === 'string'
+              ? (body as Record<string, unknown>).baseUrl as string
+              : 'http://127.0.0.1:8045/v1'
+            const apiKey = typeof (body as Record<string, unknown>).apiKey === 'string'
+              ? (body as Record<string, unknown>).apiKey as string
+              : ''
+            const testUrl = rawUrl.replace(/\/+$/, '') + '/models'
+            const headers: Record<string, string> = { accept: 'application/json' }
+            if (apiKey) headers.authorization = `Bearer ${apiKey}`
+            const response = await fetch(testUrl, {
+              headers,
+              signal: AbortSignal.timeout(4000),
+            })
+            const latency = Date.now() - start
+            if (!response.ok) {
+              json(res, 200, { ok: false, error: `HTTP ${response.status} ${response.statusText}` })
+              return
+            }
+            const data: any = await response.json().catch(() => ({}))
+            const modelsCount = Array.isArray(data?.data) ? data.data.length : 0
+            json(res, 200, { ok: true, latency, modelsCount })
+          } catch (err: unknown) {
+            json(res, 200, { ok: false, error: safeMessage(err) })
+          }
         },
       }),
       ctx.webServer.register({
