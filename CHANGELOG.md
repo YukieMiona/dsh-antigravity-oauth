@@ -4,6 +4,10 @@ This file records completed features, fixes, and process milestones in `YukieMio
 
 ## Unreleased
 
+- AM2: Heal HTTP 400 bad-image rejections in place by blacklisting image IDs and retrying with text (#21).
+- AM3: Rotate ready accounts on HTTP 503 capacity errors and distinguish account bans from model denials (#21).
+- AM4: Extend first-byte idle timeout by 180 seconds for inline images and high reasoning effort (#21).
+- P3: Add CONTRIBUTING.md documenting PR workflow, low-memory test constraints, and bundle builds (#21).
 - Q1: Cache account quotas for 60 seconds, rotate in memory without disk writes, retry across candidates, and persist custom Manager endpoints (#20).
 - AM1: Automatically downgrade background compaction and session-title tasks to `gemini-3.8-flash` to save Argon quota (#19).
 - R2b: Wire `switchingStrategy` (`manual`, `failover_429`, `round_robin`, `proactive_threshold`) across Flash and Argon account pools (#19).
