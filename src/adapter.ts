@@ -67,6 +67,7 @@ export interface AntigravityAdapterOptions {
   streamIdleTimeoutMs?: number
   resolveAttachments?: () => AttachmentStore | undefined
   resolveImageAccess?: ImageAccessResolver
+  disableImageUpload?: boolean
 }
 
 // Google documents a 20 MB limit for one inline request. The rest stays free for text and history.
@@ -102,7 +103,13 @@ async function imagePartOf(
   attachments?: AttachmentStore,
   signal?: AbortSignal,
   resolveAccess?: ImageAccessResolver,
+  disableImageUpload = false,
 ): Promise<ImagePart> {
+  if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error('aborted')
+  if (disableImageUpload) {
+    const name = block.attachment?.name || block.attachment?.attachmentId || 'image'
+    return { text: `[Image: ${name} (Image upload disabled on Antigravity CCA route for account safety)]` }
+  }
   const image = await resolveImageBlock(block, attachments, signal, resolveAccess)
   return image.type === 'inline'
     ? { inlineData: { mimeType: image.mimeType, data: image.data } }
@@ -114,6 +121,7 @@ async function userPartsOf(
   attachments?: AttachmentStore,
   signal?: AbortSignal,
   resolveAccess?: ImageAccessResolver,
+  disableImageUpload = false,
 ): Promise<GeminiPart[]> {
   const parts: GeminiPart[] = []
   for (const block of blocks) {
@@ -121,7 +129,7 @@ async function userPartsOf(
       if (block.text.length > 0) parts.push({ text: block.text })
       continue
     }
-    if (block.type === 'image') parts.push(await imagePartOf(block, attachments, signal, resolveAccess))
+    if (block.type === 'image') parts.push(await imagePartOf(block, attachments, signal, resolveAccess, disableImageUpload))
   }
   return parts
 }
@@ -136,6 +144,7 @@ async function toolResultOf(
   attachments?: AttachmentStore,
   signal?: AbortSignal,
   resolveAccess?: ImageAccessResolver,
+  disableImageUpload = false,
 ): Promise<{ text: string, images: GeminiInlineDataPart[] }> {
   let text = ''
   let afterPlaceholder = false
@@ -148,7 +157,7 @@ async function toolResultOf(
       continue
     }
     if (block.type !== 'image') continue
-    const part = await imagePartOf(block, attachments, signal, resolveAccess)
+    const part = await imagePartOf(block, attachments, signal, resolveAccess, disableImageUpload)
     if ('inlineData' in part) {
       images.push(part)
       continue
@@ -165,6 +174,7 @@ async function convertMessages(
   attachments?: AttachmentStore,
   signal?: AbortSignal,
   resolveAccess?: ImageAccessResolver,
+  disableImageUpload = false,
 ): Promise<GeminiContent[]> {
   const toolNames = new Map<string, string>()
   for (const message of messages) {
@@ -192,7 +202,7 @@ async function convertMessages(
   }
   for (const message of messages) {
     if (message.role === 'tool') {
-      const result = await toolResultOf(message.content, attachments, signal, resolveAccess)
+      const result = await toolResultOf(message.content, attachments, signal, resolveAccess, disableImageUpload)
       const queue = pendingCallIds.get(message.toolCallId)
       const id = queue !== undefined && queue.length > 0 ? queue.shift() : undefined
       if (id === undefined) {
@@ -266,7 +276,7 @@ async function convertMessages(
       continue
     }
     if (message.role === 'user') {
-      const parts = await userPartsOf(message.content, attachments, signal, resolveAccess)
+      const parts = await userPartsOf(message.content, attachments, signal, resolveAccess, disableImageUpload)
       if (parts.length > 0) {
         flushOrphans()
         contents.push({ role: 'user', parts })
@@ -336,24 +346,30 @@ export class AntigravityAdapter extends LlmAdapter {
   }
 
   override listModels(provider: string): Promise<readonly LlmModelInfo[]> {
+    const inputModalities = this.options.disableImageUpload === true
+      ? (['text'] as const)
+      : (['text', 'image'] as const)
     return Promise.resolve(PUBLIC_MODELS.map(model => ({
       provider,
       id: model.id,
       name: model.name,
-      inputModalities: ['text', 'image'] as const,
+      inputModalities,
     })))
   }
 
   override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
     const spec = publicModel(model)
     const name = spec?.name ?? model
+    const inputModalities = this.options.disableImageUpload === true
+      ? (['text'] as const)
+      : (['text', 'image'] as const)
     // Omit toolUpdate. On 0.2.0-rc.2, as on 0.1.7-rc.2, that means every request
     // still carries the complete current tool list, which this adapter forwards as declarations.
     return Promise.resolve({
       provider,
       id: model,
       name,
-      inputModalities: ['text', 'image'],
+      inputModalities: [...inputModalities],
       ...spec === undefined ? {} : {
         context: { contextWindow: spec.contextWindow },
         defaultMaxTokens: spec.maxTokens,
@@ -385,17 +401,19 @@ export class AntigravityAdapter extends LlmAdapter {
     const effort = effortOf(options)
     const wire = routeChatModel(options.model, effort)
     const functions = functionsFor(options, this.options.nativeSearch)
-    const offloadImages = requiredImageOffload(
-      options.messages,
-      IMAGE_REQUEST_BUDGET,
-      block => imageBytesOf(block.attachment),
-    )
-    if (offloadImages > 0) {
-      throw new LlmError(
-        `Request images exceed the route budget; ${offloadImages} more oldest occurrence(s) must be offloaded.`,
-        IMAGE_OFFLOAD_REQUIRED_CODE,
-        { offloadImages },
+    if (this.options.disableImageUpload !== true) {
+      const offloadImages = requiredImageOffload(
+        options.messages,
+        IMAGE_REQUEST_BUDGET,
+        block => imageBytesOf(block.attachment),
       )
+      if (offloadImages > 0) {
+        throw new LlmError(
+          `Request images exceed the route budget; ${offloadImages} more oldest occurrence(s) must be offloaded.`,
+          IMAGE_OFFLOAD_REQUIRED_CODE,
+          { offloadImages },
+        )
+      }
     }
     const contents = await convertMessages(
       options.messages,
@@ -403,6 +421,7 @@ export class AntigravityAdapter extends LlmAdapter {
       this.options.resolveAttachments?.(),
       options.signal,
       this.options.resolveImageAccess,
+      this.options.disableImageUpload === true,
     )
     const input: ChatGenerateInput = {
       kind: 'chat',
