@@ -924,11 +924,13 @@ describe('Account Redesign 07 Specifications', () => {
   })
 
   it('clamps out-of-range quota percentages to [0, 100] and renders Argon badge', async () => {
+    const accs = [
+      { id: 'one', email: 'one@example.test', ready: true, limited: false, dead: false, hasArgon: true },
+      { id: 'two', email: 'two@example.test', ready: true, limited: false, dead: false, hasArgon: false },
+    ]
     const props = defaults({
-      accounts: [
-        { id: 'one', email: 'one@example.test', ready: true, limited: false, dead: false, hasArgon: true },
-        { id: 'two', email: 'two@example.test', ready: true, limited: false, dead: false, hasArgon: false },
-      ],
+      accounts: accs,
+      filteredAccounts: accs,
       quotas: {
         one: {
           accountId: 'one', ok: true,
