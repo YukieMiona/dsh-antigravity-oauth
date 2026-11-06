@@ -392,6 +392,7 @@ export class AntigravitySession {
         ready: account.projectId !== undefined,
         limited: runtime?.limitedUntil !== undefined && runtime.limitedUntil > now,
         dead: runtime?.dead === true,
+        ...account.hasArgon === undefined ? {} : { hasArgon: account.hasArgon },
       }
     })
   }

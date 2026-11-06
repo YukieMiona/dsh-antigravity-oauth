@@ -109,6 +109,7 @@ export type AccountSummary = {
   ready: boolean
   limited: boolean
   dead: boolean
+  hasArgon?: boolean
 }
 
 export type QuotaBucket = {

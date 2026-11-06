@@ -18,8 +18,10 @@ const DOCKER_CMD = 'docker run -d --name gemini-web2api -p 18088:18088 zexadev/g
 export const COMPACT_VIEW_KEY = 'dsh-antigravity-oauth.compact-view'
 const DISMISSED_BANNER_KEY = 'dsh-antigravity-oauth.dismissed-banner'
 const DISMISSED_WEB2API_GUIDE_KEY = 'dsh-antigravity-oauth.dismissed-web2api-guide'
+import { ACCOUNT_TOGGLE_ARGON_PATH } from '../ids.ts'
 
-type ActiveTab = 'accounts' | 'advanced' | 'web2api' | 'network'
+type ActiveTab = 'accounts' | 'advanced' | 'network'
+type AccountsSubTab = 'native' | 'web2api' | 'manager'
 
 export interface AntigravitySettingsInjected {
   t: (key: AntigravityKey, params?: Record<string, unknown>) => string
@@ -30,6 +32,7 @@ export type AntigravitySettingsProps = Partial<AntigravitySettingsInjected>
 import { AccountsTab } from './tabs/AccountsTab.tsx'
 import { AdvancedTab } from './tabs/AdvancedTab.tsx'
 import { Web2ApiTab } from './tabs/Web2ApiTab.tsx'
+import { AntigravityManagerTab } from './tabs/AntigravityManagerTab.tsx'
 import { NetworkTab, type Network } from './tabs/NetworkTab.tsx'
 import { ensureThemeStyles } from './theme.ts'
 import { evaluateQuotaMetrics as getAccountQuotaMetrics } from '../quota-core.ts'
@@ -57,6 +60,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
   if (t === undefined) throw new Error('Antigravity settings requires its translation function')
 
   const [activeTab, setActiveTab] = useState<ActiveTab>('accounts')
+  const [accountsSubTab, setAccountsSubTab] = useState<AccountsSubTab>('native')
 
   // Accounts state
   const [status, setStatus] = useState<AntigravityStatus | undefined>(undefined)
@@ -407,6 +411,21 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     }
   }
 
+  const toggleArgon = async (id: string) => {
+    if (busy || switchingId || accountAction.current) return
+    accountAction.current = true
+    setBusy(true)
+    try {
+      await jsonRequest(ACCOUNT_TOGGLE_ARGON_PATH, 'POST', { id })
+      void refresh()
+    } catch (caught: unknown) {
+      setError(caught instanceof Error ? caught.message : t('requestFailed'))
+    } finally {
+      accountAction.current = false
+      setBusy(false)
+    }
+  }
+
   const recover = async (action: 'cancel' | 'retry') => {
     if (busy || switchingId || accountAction.current) return
     accountAction.current = true
@@ -492,16 +511,6 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
           >
             <span>{t('tabAdvanced')}</span>
           </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'web2api'}
-            className={'dsh-agy-tab-btn ' + (activeTab === 'web2api' ? 'is-active' : '')}
-            onClick={() => setActiveTab('web2api')}
-          >
-            <span className={'dsh-agy-dot ' + (web2apiEnabled ? 'is-signed-in' : '')} style={{ width: '6px', height: '6px' }} />
-            <span>{t('tabWeb2api')}</span>
-          </button>
 
           <button
             type="button"
@@ -537,78 +546,145 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
 
       {error ? <p className="dsh-agy-error" role="alert">{error}</p> : null}
 
-      {/* TAB 1: ACCOUNTS & QUOTA */}
+      {/* TAB 1: ACCOUNTS (SUB-TABS: NATIVE / WEB2API / ANTIGRAVITY-MANAGER) */}
       {activeTab === 'accounts' ? (
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
-          {/* Streamlined Summary Bar */}
-          <div className="dsh-agy-card" style={{ padding: '8px 12px' }}>
-            <div className="dsh-agy-row">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span className={'dsh-agy-dot ' + (signing ? 'is-signing-in' : activeAccount?.ready ? 'is-signed-in' : 'is-error')} />
-                <span style={{ fontSize: '12px', fontWeight: 500 }}>
-                  {signing ? t('signingIn') : activeAccount ? (activeAccount.ready ? t('signedIn') : t('authorized')) : t('signedOut')}
-                </span>
-              </div>
-              <div style={{ display: 'flex', gap: '8px' }}>
-                {signing ? (
-                  <button type="button" className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact" disabled={busy || Boolean(switchingId)} onClick={() => { void recover('cancel') }}>
-                    {t('cancel')}
-                  </button>
-                ) : (
-                  <button type="button" className="dsh-agy-btn dsh-agy-btn-primary" disabled={busy || Boolean(switchingId)} onClick={() => { void signIn() }}>
-                    {busy ? t('working') : accounts.length === 0 ? t('login') : t('addAccount')}
-                  </button>
-                )}
-                {accounts.length > 0 ? (
-                  <button type="button" className="dsh-agy-btn dsh-agy-btn-secondary" disabled={busy || Boolean(switchingId) || loadingQuotas} onClick={() => { void refreshQuotas() }}>
-                    {loadingQuotas ? '...' : t('refreshQuotas')}
-                  </button>
-                ) : null}
-              </div>
-            </div>
+          {/* Sub-tabs Segmented Control */}
+          <div className="dsh-agy-segmented" style={{ alignSelf: 'flex-start', marginBottom: '2px' }}>
+            <button
+              type="button"
+              className={'dsh-agy-segmented-btn ' + (accountsSubTab === 'native' ? 'is-active' : '')}
+              onClick={() => setAccountsSubTab('native')}
+            >
+              <span>{t('subtabNative')}</span>
+            </button>
+            <button
+              type="button"
+              className={'dsh-agy-segmented-btn ' + (accountsSubTab === 'web2api' ? 'is-active' : '')}
+              onClick={() => setAccountsSubTab('web2api')}
+            >
+              <span className={'dsh-agy-dot ' + (web2apiEnabled ? 'is-signed-in' : '')} style={{ width: '6px', height: '6px' }} />
+              <span>{t('subtabWeb2api')}</span>
+            </button>
+            <button
+              type="button"
+              className={'dsh-agy-segmented-btn ' + (accountsSubTab === 'manager' ? 'is-active' : '')}
+              onClick={() => setAccountsSubTab('manager')}
+            >
+              <span>{t('subtabManager')}</span>
+            </button>
           </div>
 
-          <AccountsTab
-            t={t}
-            language={t('quotaLanguage') === 'zh' ? 'zh' : 'en'}
-            accounts={accounts}
-            activeAccountId={activeAccountId}
-            activeAccount={activeAccount}
-            switchingId={switchingId}
-            busy={busy}
-            searchQuery={searchQuery}
-            setSearchQuery={setSearchQuery}
-            sortBy={sortBy}
-            setSortBy={setSortBy}
-            compactView={compactView}
-            setCompactView={setCompactView}
-            quotas={quotas}
-            filteredAccounts={filteredAccounts}
-            switchAccount={switchAccount}
-            removeAccount={removeAccount}
-            recover={recover}
-          />
+          {/* SUB-TAB 1: NATIVE OAUTH */}
+          {accountsSubTab === 'native' ? (
+            <>
+              {/* Streamlined Summary Bar */}
+              <div className="dsh-agy-card" style={{ padding: '8px 12px' }}>
+                <div className="dsh-agy-row">
+                  <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
+                    <span className={'dsh-agy-dot ' + (signing ? 'is-signing-in' : activeAccount?.ready ? 'is-signed-in' : 'is-error')} />
+                    <span style={{ fontSize: '12px', fontWeight: 500 }}>
+                      {signing ? t('signingIn') : activeAccount ? (activeAccount.ready ? t('signedIn') : t('authorized')) : t('signedOut')}
+                    </span>
+                  </div>
+                  <div style={{ display: 'flex', gap: '8px' }}>
+                    {signing ? (
+                      <button type="button" className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact" disabled={busy || Boolean(switchingId)} onClick={() => { void recover('cancel') }}>
+                        {t('cancel')}
+                      </button>
+                    ) : (
+                      <button type="button" className="dsh-agy-btn dsh-agy-btn-primary" disabled={busy || Boolean(switchingId)} onClick={() => { void signIn() }}>
+                        {busy ? t('working') : accounts.length === 0 ? t('login') : t('addAccount')}
+                      </button>
+                    )}
+                    {accounts.length > 0 ? (
+                      <button type="button" className="dsh-agy-btn dsh-agy-btn-secondary" disabled={busy || Boolean(switchingId) || loadingQuotas} onClick={() => { void refreshQuotas() }}>
+                        {loadingQuotas ? '...' : t('refreshQuotas')}
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
 
-          {signing && status?.url ? (
-            <div className="dsh-agy-card">
-              <p className="dsh-agy-body">
-                {t('openUrl')} <a href={status.url} target="_blank" rel="noreferrer" className="dsh-agy-link">{t('reopen')}</a>
-              </p>
-              <form onSubmit={e => { e.preventDefault(); void complete() }} style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
-                <input
-                  type="text"
-                  className="dsh-agy-input"
-                  aria-label={t('completePlaceholder')}
-                  placeholder={t('completePlaceholder')}
-                  value={draft}
-                  disabled={busy || Boolean(switchingId)}
-                  onChange={e => setDraft(e.target.value)}
-                />
-                <button type="submit" className="dsh-agy-btn dsh-agy-btn-primary" disabled={busy || Boolean(switchingId) || draft.trim().length === 0}>
-                  {busy ? t('working') : t('complete')}
-                </button>
-              </form>
-            </div>
+              <AccountsTab
+                t={t}
+                language={t('quotaLanguage') === 'zh' ? 'zh' : 'en'}
+                accounts={accounts}
+                activeAccountId={activeAccountId}
+                activeAccount={activeAccount}
+                switchingId={switchingId}
+                busy={busy}
+                searchQuery={searchQuery}
+                setSearchQuery={setSearchQuery}
+                sortBy={sortBy}
+                setSortBy={setSortBy}
+                compactView={compactView}
+                setCompactView={setCompactView}
+                quotas={quotas}
+                filteredAccounts={filteredAccounts}
+                switchAccount={switchAccount}
+                removeAccount={removeAccount}
+                recover={recover}
+                toggleArgon={toggleArgon}
+              />
+
+              {signing && status?.url ? (
+                <div className="dsh-agy-card">
+                  <p className="dsh-agy-body">
+                    {t('openUrl')} <a href={status.url} target="_blank" rel="noreferrer" className="dsh-agy-link">{t('reopen')}</a>
+                  </p>
+                  <form onSubmit={e => { e.preventDefault(); void complete() }} style={{ display: 'flex', gap: '8px', marginTop: '6px' }}>
+                    <input
+                      type="text"
+                      className="dsh-agy-input"
+                      aria-label={t('completePlaceholder')}
+                      placeholder={t('completePlaceholder')}
+                      value={draft}
+                      disabled={busy || Boolean(switchingId)}
+                      onChange={e => setDraft(e.target.value)}
+                    />
+                    <button type="submit" className="dsh-agy-btn dsh-agy-btn-primary" disabled={busy || Boolean(switchingId) || draft.trim().length === 0}>
+                      {busy ? t('working') : t('complete')}
+                    </button>
+                  </form>
+                </div>
+              ) : null}
+            </>
+          ) : null}
+
+          {/* SUB-TAB 2: WEB2API */}
+          {accountsSubTab === 'web2api' ? (
+            <Web2ApiTab
+              t={t}
+              guideDismissed={guideDismissed}
+              dismissGuide={dismissGuide}
+              restoreGuide={restoreGuide}
+              dockerCmd={DOCKER_CMD}
+              copiedDocker={copiedDocker}
+              copyDockerCommand={copyDockerCommand}
+              web2apiDetecting={web2apiDetecting}
+              detectLocalGateway={() => { void detectLocalGateway() }}
+              web2apiEnabled={web2apiEnabled}
+              setWeb2apiEnabled={setWeb2apiEnabled}
+              web2apiSaving={web2apiSaving}
+              web2apiBaseUrl={web2apiBaseUrl}
+              setWeb2apiBaseUrl={setWeb2apiBaseUrl}
+              web2apiApiKey={web2apiApiKey}
+              setWeb2apiApiKey={setWeb2apiApiKey}
+              web2apiImageTool={web2apiImageTool}
+              setWeb2apiImageTool={setWeb2apiImageTool}
+              saveWeb2Api={() => { void saveWeb2Api() }}
+              web2apiTesting={web2apiTesting}
+              testWeb2Api={() => { void testWeb2Api() }}
+              web2apiFeedback={web2apiFeedback}
+            />
+          ) : null}
+
+          {/* SUB-TAB 3: ANTIGRAVITY-MANAGER */}
+          {accountsSubTab === 'manager' ? (
+            <AntigravityManagerTab
+              t={t}
+            />
           ) : null}
         </div>
       ) : null}
@@ -630,35 +706,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
         />
       ) : null}
 
-      {/* TAB 3: WEB2API GATEWAY (PLAN C) */}
-      {activeTab === 'web2api' ? (
-        <Web2ApiTab
-          t={t}
-          guideDismissed={guideDismissed}
-          dismissGuide={dismissGuide}
-          restoreGuide={restoreGuide}
-          dockerCmd={DOCKER_CMD}
-          copiedDocker={copiedDocker}
-          copyDockerCommand={copyDockerCommand}
-          web2apiDetecting={web2apiDetecting}
-          detectLocalGateway={() => { void detectLocalGateway() }}
-          web2apiEnabled={web2apiEnabled}
-          setWeb2apiEnabled={setWeb2apiEnabled}
-          web2apiSaving={web2apiSaving}
-          web2apiBaseUrl={web2apiBaseUrl}
-          setWeb2apiBaseUrl={setWeb2apiBaseUrl}
-          web2apiApiKey={web2apiApiKey}
-          setWeb2apiApiKey={setWeb2apiApiKey}
-          web2apiImageTool={web2apiImageTool}
-          setWeb2apiImageTool={setWeb2apiImageTool}
-          saveWeb2Api={() => { void saveWeb2Api() }}
-          web2apiTesting={web2apiTesting}
-          testWeb2Api={() => { void testWeb2Api() }}
-          web2apiFeedback={web2apiFeedback}
-        />
-      ) : null}
-
-      {/* TAB 4: NETWORK & PROXY */}
+      {/* TAB 3: NETWORK & PROXY */}
       {activeTab === 'network' ? (
         <NetworkTab
           t={t}

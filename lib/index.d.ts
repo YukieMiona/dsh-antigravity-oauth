@@ -168,6 +168,7 @@ type AccountSummary = {
   ready: boolean;
   limited: boolean;
   dead: boolean;
+  hasArgon?: boolean;
 };
 type QuotaBucket = {
   bucketId: string;
