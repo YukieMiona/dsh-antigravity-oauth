@@ -68,10 +68,32 @@ export interface AntigravityAdapterOptions {
   resolveAttachments?: () => AttachmentStore | undefined
   resolveImageAccess?: ImageAccessResolver
   disableImageUpload?: boolean
+  imageSlidingWindow?: boolean
+  maxFreshImages?: number
 }
 
 // Google documents a 20 MB limit for one inline request. The rest stays free for text and history.
 const IMAGE_REQUEST_BUDGET = { representation: 'base64', maxBytes: 16_000_000 } as const
+
+// Validate that Base64 payload begins with authentic image magic bytes (PNG, JPEG, GIF, WebP).
+function isValidImageMagicBytes(mimeType: string, base64Data: string): boolean {
+  if (base64Data.length < 16) return false
+  try {
+    const buf = Buffer.from(base64Data.slice(0, 32), 'base64')
+    if (buf.length < 4) return false
+    // PNG: 89 50 4E 47
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return true
+    // JPEG: FF D8 FF
+    if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return true
+    // GIF: 47 49 46 38
+    if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) return true
+    // WebP: RIFF (52 49 46 46) ... WEBP (57 45 42 50)
+    if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46) return true
+    return false
+  } catch {
+    return false
+  }
+}
 
 // `bytes` is required on a durable ref. A malformed one counts as zero, because NaN would make
 // every image look over the budget and the harness would offload them all.
@@ -104,16 +126,24 @@ async function imagePartOf(
   signal?: AbortSignal,
   resolveAccess?: ImageAccessResolver,
   disableImageUpload = false,
+  isFresh = true,
 ): Promise<ImagePart> {
   if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error('aborted')
+  const name = block.attachment?.name || block.attachment?.attachmentId || 'image'
   if (disableImageUpload) {
-    const name = block.attachment?.name || block.attachment?.attachmentId || 'image'
     return { text: `[Image: ${name} (Image upload disabled on Antigravity CCA route for account safety)]` }
   }
+  if (!isFresh) {
+    return { text: `[Historical Image: ${name} (omitted to preserve context)]` }
+  }
   const image = await resolveImageBlock(block, attachments, signal, resolveAccess)
-  return image.type === 'inline'
-    ? { inlineData: { mimeType: image.mimeType, data: image.data } }
-    : { text: image.text }
+  if (image.type === 'inline') {
+    if (isValidImageMagicBytes(image.mimeType, image.data)) {
+      return { inlineData: { mimeType: image.mimeType, data: image.data } }
+    }
+    return { text: `[Image: ${name} (invalid or corrupted image header)]` }
+  }
+  return { text: image.text }
 }
 
 async function userPartsOf(
@@ -122,6 +152,7 @@ async function userPartsOf(
   signal?: AbortSignal,
   resolveAccess?: ImageAccessResolver,
   disableImageUpload = false,
+  freshSet?: ReadonlySet<Extract<ContentBlock, { type: 'image' }>>,
 ): Promise<GeminiPart[]> {
   const parts: GeminiPart[] = []
   for (const block of blocks) {
@@ -129,7 +160,10 @@ async function userPartsOf(
       if (block.text.length > 0) parts.push({ text: block.text })
       continue
     }
-    if (block.type === 'image') parts.push(await imagePartOf(block, attachments, signal, resolveAccess, disableImageUpload))
+    if (block.type === 'image') {
+      const isFresh = freshSet ? freshSet.has(block) : true
+      parts.push(await imagePartOf(block, attachments, signal, resolveAccess, disableImageUpload, isFresh))
+    }
   }
   return parts
 }
@@ -145,6 +179,7 @@ async function toolResultOf(
   signal?: AbortSignal,
   resolveAccess?: ImageAccessResolver,
   disableImageUpload = false,
+  freshSet?: ReadonlySet<Extract<ContentBlock, { type: 'image' }>>,
 ): Promise<{ text: string, images: GeminiInlineDataPart[] }> {
   let text = ''
   let afterPlaceholder = false
@@ -157,7 +192,8 @@ async function toolResultOf(
       continue
     }
     if (block.type !== 'image') continue
-    const part = await imagePartOf(block, attachments, signal, resolveAccess, disableImageUpload)
+    const isFresh = freshSet ? freshSet.has(block) : true
+    const part = await imagePartOf(block, attachments, signal, resolveAccess, disableImageUpload, isFresh)
     if ('inlineData' in part) {
       images.push(part)
       continue
@@ -175,7 +211,23 @@ async function convertMessages(
   signal?: AbortSignal,
   resolveAccess?: ImageAccessResolver,
   disableImageUpload = false,
+  imageSlidingWindow = true,
+  maxFreshImages = 1,
 ): Promise<GeminiContent[]> {
+  // Collect all image blocks in chronological order to implement recency-first sliding window
+  const allImageBlocks: Extract<ContentBlock, { type: 'image' }>[] = []
+  for (const message of messages) {
+    if (message.role === 'user' || message.role === 'tool') {
+      for (const block of message.content) {
+        if (block.type === 'image') allImageBlocks.push(block)
+      }
+    }
+  }
+  const freshSet = new Set(
+    imageSlidingWindow
+      ? allImageBlocks.slice(-Math.max(1, maxFreshImages))
+      : allImageBlocks,
+  )
   const toolNames = new Map<string, string>()
   for (const message of messages) {
     if (message.role !== 'assistant') continue
@@ -202,7 +254,7 @@ async function convertMessages(
   }
   for (const message of messages) {
     if (message.role === 'tool') {
-      const result = await toolResultOf(message.content, attachments, signal, resolveAccess, disableImageUpload)
+      const result = await toolResultOf(message.content, attachments, signal, resolveAccess, disableImageUpload, freshSet)
       const queue = pendingCallIds.get(message.toolCallId)
       const id = queue !== undefined && queue.length > 0 ? queue.shift() : undefined
       if (id === undefined) {
@@ -276,7 +328,7 @@ async function convertMessages(
       continue
     }
     if (message.role === 'user') {
-      const parts = await userPartsOf(message.content, attachments, signal, resolveAccess, disableImageUpload)
+      const parts = await userPartsOf(message.content, attachments, signal, resolveAccess, disableImageUpload, freshSet)
       if (parts.length > 0) {
         flushOrphans()
         contents.push({ role: 'user', parts })
@@ -357,21 +409,34 @@ export class AntigravityAdapter extends LlmAdapter {
     })))
   }
 
-  override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+  override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
     const spec = publicModel(model)
     const name = spec?.name ?? model
     const inputModalities = this.options.disableImageUpload === true
       ? (['text'] as const)
       : (['text', 'image'] as const)
+    let contextWindow: number | undefined = spec?.contextWindow
+    let defaultEffort: ReasoningEffort = DEFAULT_REASONING_EFFORT
+    if (typeof this.session.getAdvancedSettings === 'function') {
+      try {
+        const adv = await this.session.getAdvancedSettings()
+        if (typeof adv.modelContextWindow === 'number' && adv.modelContextWindow > 0) {
+          contextWindow = adv.modelContextWindow
+        }
+        if (adv.defaultReasoningEffort && REASONING_EFFORTS.includes(adv.defaultReasoningEffort)) {
+          defaultEffort = adv.defaultReasoningEffort
+        }
+      } catch {}
+    }
     // Omit toolUpdate. On 0.2.0-rc.2, as on 0.1.7-rc.2, that means every request
     // still carries the complete current tool list, which this adapter forwards as declarations.
-    return Promise.resolve({
+    return {
       provider,
       id: model,
       name,
       inputModalities: [...inputModalities],
       ...spec === undefined ? {} : {
-        context: { contextWindow: spec.contextWindow },
+        context: { contextWindow: contextWindow ?? spec.contextWindow },
         defaultMaxTokens: spec.maxTokens,
       },
       reasoning: {
@@ -379,9 +444,9 @@ export class AntigravityAdapter extends LlmAdapter {
           id: ReasoningEffortId(id),
           name: `${id.charAt(0).toUpperCase()}${id.slice(1)}`,
         })),
-        defaultEffort: ReasoningEffortId(DEFAULT_REASONING_EFFORT),
+        defaultEffort: ReasoningEffortId(defaultEffort),
       },
-    })
+    }
   }
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
@@ -391,7 +456,7 @@ export class AntigravityAdapter extends LlmAdapter {
     if (!isPublicModelId(options.model)) {
       throw new LlmError(`unknown Antigravity model "${options.model}"`, 'UNKNOWN_MODEL')
     }
-    const lease = await this.session.acquire()
+    const lease = await this.session.acquire({ model: options.model })
     if (lease === undefined) {
       throw new LlmError(
         'Antigravity is not connected. Open Settings and sign in.',
@@ -422,6 +487,8 @@ export class AntigravityAdapter extends LlmAdapter {
       options.signal,
       this.options.resolveImageAccess,
       this.options.disableImageUpload === true,
+      this.options.imageSlidingWindow !== false,
+      this.options.maxFreshImages ?? 1,
     )
     const input: ChatGenerateInput = {
       kind: 'chat',
@@ -498,6 +565,18 @@ export class AntigravityAdapter extends LlmAdapter {
             : /\b5\d\d\b/.test(message)
               ? 'SERVER'
               : 'TRANSPORT'
+        if (options.model === 'gemini-4-argon' && state.index === 0 && (code === 'AUTH' || code === 'RATE_LIMIT' || /\b404\b|MODEL_NOT_FOUND/i.test(message))) {
+          const fallback = typeof this.session.findArgonAccount === 'function'
+            ? await this.session.findArgonAccount(currentLease.accountId)
+            : undefined
+          if (fallback !== undefined && fallback.id !== currentLease.accountId && typeof this.session.acquireForAccount === 'function') {
+            const nextLease = await this.session.acquireForAccount(fallback.id)
+            if (nextLease !== undefined) {
+              currentLease = nextLease
+              continue
+            }
+          }
+        }
         if (code === 'RATE_LIMIT') {
           this.session.noteRateLimited(currentLease.accountId)
           // If no chunks have been emitted yet and a ready fallback account exists, fail over automatically

@@ -9,6 +9,8 @@ interface Config {
   nativeTools?: boolean;
   nativeSearch?: boolean;
   disableImageUpload?: boolean;
+  imageSlidingWindow?: boolean;
+  maxFreshImages?: number;
 }
 declare const Config: z<Config>;
 //#endregion
@@ -221,6 +223,7 @@ interface AdvancedSettings {
 type StoredAccount = AntigravityGrant & {
   id: string;
   addedAt?: string;
+  hasArgon?: boolean;
 };
 declare function antigravityAuthPath(dshHome?: string): string;
 declare class AntigravityCredentialStore {
@@ -327,7 +330,11 @@ declare class AntigravitySession {
   private eligibility;
   constructor(store: AntigravityCredentialStore, fetchImpl?: FetchImpl);
   private runtimeFor;
-  acquire(): Promise<AntigravityLease | undefined>;
+  isArgonCapable(account: StoredAccount): boolean;
+  findArgonAccount(excludeId?: string): Promise<StoredAccount | undefined>;
+  acquire(options?: {
+    model?: string;
+  }): Promise<AntigravityLease | undefined>;
   acquireForAccount(accountId: string): Promise<AntigravityLease | undefined>;
   /**
    * Find the account with the best remaining quota (optionally excluding one account or filtering by min threshold).
@@ -386,6 +393,8 @@ interface AntigravityAdapterOptions {
   resolveAttachments?: () => AttachmentStore | undefined;
   resolveImageAccess?: ImageAccessResolver;
   disableImageUpload?: boolean;
+  imageSlidingWindow?: boolean;
+  maxFreshImages?: number;
 }
 declare class AntigravityAdapter extends LlmAdapter {
   private readonly session;

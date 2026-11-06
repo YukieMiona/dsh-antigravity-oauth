@@ -106,6 +106,8 @@ export function apply(ctx: Context, config: Config): void {
       resolveAttachments: () => ctx.get('attachments'),
       resolveImageAccess,
       disableImageUpload: config.disableImageUpload !== false,
+      imageSlidingWindow: config.imageSlidingWindow !== false,
+      maxFreshImages: config.maxFreshImages ?? 1,
     }),
   )
   const web2apiAdapter = new Web2ApiAdapter(

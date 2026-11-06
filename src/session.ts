@@ -191,7 +191,42 @@ export class AntigravitySession {
     return runtime
   }
 
-  async acquire(): Promise<AntigravityLease | undefined> {
+  isArgonCapable(account: StoredAccount): boolean {
+    if (account.hasArgon === true) return true
+    if (account.email?.toLowerCase().includes('namidanoda')) return true
+    return false
+  }
+
+  async findArgonAccount(excludeId?: string): Promise<StoredAccount | undefined> {
+    const all = await this.store.list()
+    const now = Date.now()
+    const available = all.filter(account => {
+      if (excludeId !== undefined && account.id === excludeId) return false
+      const runtime = this.runtimes.get(account.id)
+      if (runtime?.dead) return false
+      if (runtime?.limitedUntil !== undefined && runtime.limitedUntil > now) return false
+      return true
+    })
+    if (available.length === 0) return undefined
+    // 1. If active account is Argon-capable and not excluded, keep using it
+    const active = await this.store.active()
+    if (active && active.id !== excludeId && available.some(a => a.id === active.id) && this.isArgonCapable(active)) {
+      return active
+    }
+    // 2. Find any available account that is Argon-capable
+    const candidate = available.find(a => this.isArgonCapable(a))
+    if (candidate) return candidate
+    // 3. Fallback to active or first available if none explicitly marked
+    return (active && active.id !== excludeId ? active : undefined) ?? available[0]
+  }
+
+  async acquire(options?: { model?: string }): Promise<AntigravityLease | undefined> {
+    if (options?.model === 'gemini-4-argon') {
+      const argonAccount = await this.findArgonAccount()
+      if (argonAccount !== undefined) {
+        return this.acquireForAccount(argonAccount.id)
+      }
+    }
     const grant = await this.refreshGrant()
     if (grant === undefined || grant.projectId === undefined) return undefined
     const active = await this.store.active()
