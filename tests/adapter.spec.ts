@@ -1805,4 +1805,50 @@ describe('AntigravityAdapter reliability patterns (AM2, AM3, AM4)', () => {
     expect(callCount).toBe(2)
     expect(visibleText(chunks)).toBe('recovered from 503 capacity error')
   })
+
+  it('marks account dead only on permanent account ban, not on generic or model 403 (AM3)', async () => {
+    const authRejected: string[] = []
+    const fake = fakeSession({})
+    ;(fake.session as any).acquire = async () => ({
+      oauth,
+      accountId: 'acc_banned',
+      email: 'banned@example.test',
+      cca: {
+        async *chat(): AsyncIterable<CcaEvent> {
+          throw new CcaHttpError(403, 'PERMISSION_DENIED: USER_SUSPENDED account_forbidden')
+        },
+      },
+    })
+    ;(fake.session as any).noteAuthRejected = (id: string) => { authRejected.push(id) }
+
+    const adapter = createAntigravityAdapter(fake.session, { nativeTools: true, nativeSearch: true })
+    await expect(collect(adapter.stream(options('test ban')))).rejects.toThrow()
+    expect(authRejected).toEqual(['acc_banned'])
+
+    // Generic 403 without account ban does NOT mark dead
+    authRejected.length = 0
+    ;(fake.session as any).acquire = async () => ({
+      oauth,
+      accountId: 'acc_healthy',
+      email: 'healthy@example.test',
+      cca: {
+        async *chat(): AsyncIterable<CcaEvent> {
+          throw new CcaHttpError(403, 'Forbidden: Request not allowed')
+        },
+      },
+    })
+    await expect(collect(adapter.stream(options('test generic 403')))).rejects.toThrow()
+    expect(authRejected).toHaveLength(0)
+  })
+
+  it('applies extended first-byte idle timeout for high reasoning effort or inline images (AM4)', async () => {
+    const fake = fakeSession({ chat: [{ type: 'text', text: 'deep response' }, { type: 'finish', reason: 'STOP' }] })
+    const adapter = createAntigravityAdapter(fake.session, { nativeTools: true, nativeSearch: true })
+
+    const chunks = await collect(adapter.stream({
+      ...options('reasoning high prompt'),
+      reasoningEffort: 'high' as any,
+    }))
+    expect(visibleText(chunks)).toBe('deep response')
+  })
 })

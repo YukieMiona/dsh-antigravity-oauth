@@ -597,7 +597,9 @@ export class AntigravityAdapter extends LlmAdapter {
     const state = createEmitState()
     const hasInlineImages = contents.some(c => c.parts.some(p => 'inlineData' in p))
     // AM4: Extend first-byte idle timeout for inline images or high reasoning effort to prevent premature abort
-    const defaultIdleMs = (effort === 'high' || hasInlineImages) ? 180_000 : STREAM_IDLE_TIMEOUT_MS
+    const defaultIdleMs = (effort === 'high' || hasInlineImages)
+      ? STREAM_IDLE_TIMEOUT_MS + 180_000
+      : STREAM_IDLE_TIMEOUT_MS
     const idleMs = this.options.streamIdleTimeoutMs ?? defaultIdleMs
     const watchdog = new IdleWatchdog(idleMs, options.signal)
     try {
