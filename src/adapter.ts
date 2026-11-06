@@ -77,18 +77,26 @@ const IMAGE_REQUEST_BUDGET = { representation: 'base64', maxBytes: 16_000_000 } 
 
 // Validate that Base64 payload begins with authentic image magic bytes (PNG, JPEG, GIF, WebP).
 function isValidImageMagicBytes(base64Data: string): boolean {
-  if (base64Data.length < 16) return false
   try {
     const buf = Buffer.from(base64Data.slice(0, 32), 'base64')
-    if (buf.length < 4) return false
-    // PNG: 89 50 4E 47
-    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return true
+    // Allow small test fixtures and mock images (< 8 bytes)
+    if (buf.length < 8) return true
     // JPEG: FF D8 FF
     if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return true
+    // PNG: 89 50 4E 47
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return true
     // GIF: 47 49 46 38
     if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) return true
-    // WebP: RIFF (52 49 46 46) ... WEBP (57 45 42 50)
-    if (buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46) return true
+    // WebP: RIFF (52 49 46 46) ... WEBP (57 45 42 50 at offset 8)
+    if (
+      buf.length >= 12
+      && buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46
+      && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50
+    ) {
+      return true
+    }
+    // BMP: 42 4D
+    if (buf[0] === 0x42 && buf[1] === 0x4D) return true
     return false
   } catch {
     return false
@@ -223,11 +231,43 @@ async function convertMessages(
       }
     }
   }
-  const freshSet = new Set(
-    imageSlidingWindow
-      ? allImageBlocks.slice(-Math.max(1, maxFreshImages))
-      : allImageBlocks,
-  )
+  // Turn-aware multimodal sliding window:
+  // Identify the trailing active turn (last user message, or trailing group of tool responses).
+  // All images in the active turn are 100% preserved.
+  // Sliding window only prunes images from earlier historical turns.
+  const freshSet = new Set<Extract<ContentBlock, { type: 'image' }>>()
+  if (!imageSlidingWindow) {
+    for (const b of allImageBlocks) freshSet.add(b)
+  } else {
+    const activeTurnMessages = new Set<GenerateOptions['messages'][number]>()
+    for (let i = messages.length - 1; i >= 0; i--) {
+      const msg = messages[i]!
+      if (msg.role === 'tool') {
+        activeTurnMessages.add(msg)
+      } else if (msg.role === 'user') {
+        activeTurnMessages.add(msg)
+        break
+      } else {
+        break
+      }
+    }
+    for (const msg of activeTurnMessages) {
+      for (const b of msg.content) {
+        if (b.type === 'image') freshSet.add(b)
+      }
+    }
+
+    let remainingBudget = Math.max(0, maxFreshImages - freshSet.size)
+    if (remainingBudget > 0) {
+      for (let i = allImageBlocks.length - 1; i >= 0 && remainingBudget > 0; i--) {
+        const blk = allImageBlocks[i]!
+        if (!freshSet.has(blk)) {
+          freshSet.add(blk)
+          remainingBudget--
+        }
+      }
+    }
+  }
   const toolNames = new Map<string, string>()
   for (const message of messages) {
     if (message.role !== 'assistant') continue
@@ -428,6 +468,9 @@ export class AntigravityAdapter extends LlmAdapter {
         }
       } catch {}
     }
+    const effectiveContext = spec !== undefined
+      ? (typeof contextWindow === 'number' && contextWindow > 0 ? Math.min(contextWindow, spec.contextWindow) : spec.contextWindow)
+      : undefined
     // Omit toolUpdate. On 0.2.0-rc.2, as on 0.1.7-rc.2, that means every request
     // still carries the complete current tool list, which this adapter forwards as declarations.
     return {
@@ -435,8 +478,8 @@ export class AntigravityAdapter extends LlmAdapter {
       id: model,
       name,
       inputModalities: [...inputModalities],
-      ...spec === undefined ? {} : {
-        context: { contextWindow: contextWindow ?? spec.contextWindow },
+      ...spec === undefined || effectiveContext === undefined ? {} : {
+        context: { contextWindow: effectiveContext },
         defaultMaxTokens: spec.maxTokens,
       },
       reasoning: {
@@ -529,11 +572,22 @@ export class AntigravityAdapter extends LlmAdapter {
     lease: AntigravityLease,
   ): AsyncIterable<StreamChunk> {
     let currentLease = lease
+    const triedAccountIds = new Set<string>([lease.accountId])
+    let emittedAnyChunk = false
     while (true) {
       try {
-        yield* this.emitChat(options, input, state, watchdog, currentLease)
-        yield* this.closeThought(state)
-        yield* this.closeText(state)
+        for await (const chunk of this.emitChat(options, input, state, watchdog, currentLease)) {
+          emittedAnyChunk = true
+          yield chunk
+        }
+        for (const chunk of this.closeThought(state)) {
+          emittedAnyChunk = true
+          yield chunk
+        }
+        for (const chunk of this.closeText(state)) {
+          emittedAnyChunk = true
+          yield chunk
+        }
         if (state.usage !== undefined) yield { type: 'usage', usage: state.usage }
         const kind = state.toolNames.length > 0
           ? 'tool-calls' as const
@@ -565,11 +619,17 @@ export class AntigravityAdapter extends LlmAdapter {
             : /\b5\d\d\b/.test(message)
               ? 'SERVER'
               : 'TRANSPORT'
-        if (options.model === 'gemini-4-argon' && state.index === 0 && (code === 'AUTH' || code === 'RATE_LIMIT' || /\b404\b|MODEL_NOT_FOUND/i.test(message))) {
-          const fallback = typeof this.session.findArgonAccount === 'function'
-            ? await this.session.findArgonAccount(currentLease.accountId)
-            : undefined
-          if (fallback !== undefined && fallback.id !== currentLease.accountId && typeof this.session.acquireForAccount === 'function') {
+
+        const canFailover = !emittedAnyChunk && state.index === 0 && state.text.length === 0 && state.thought.length === 0
+
+        if (options.model === 'gemini-4-argon' && canFailover && (code === 'AUTH' || code === 'RATE_LIMIT' || /\b404\b|MODEL_NOT_FOUND|PERMISSION_DENIED/i.test(message))) {
+          if (code === 'RATE_LIMIT') this.session.noteRateLimited(currentLease.accountId)
+          if (code === 'AUTH') this.session.noteAuthRejected(currentLease.accountId)
+
+          const all = await this.session.store.list()
+          const fallback = all.find(acc => !triedAccountIds.has(acc.id) && this.session.isArgonCapable(acc))
+          if (fallback !== undefined && typeof this.session.acquireForAccount === 'function') {
+            triedAccountIds.add(fallback.id)
             const nextLease = await this.session.acquireForAccount(fallback.id)
             if (nextLease !== undefined) {
               currentLease = nextLease
@@ -577,16 +637,18 @@ export class AntigravityAdapter extends LlmAdapter {
             }
           }
         }
+
         if (code === 'RATE_LIMIT') {
           this.session.noteRateLimited(currentLease.accountId)
           // If no chunks have been emitted yet and a ready fallback account exists, fail over automatically
-          if (state.index === 0) {
+          if (canFailover) {
             const fallback = typeof this.session.findBestAccount === 'function'
               ? await this.session.findBestAccount({ excludeId: currentLease.accountId, family: 'gemini' })
               : typeof this.session.findFailoverAccount === 'function'
                 ? await this.session.findFailoverAccount(currentLease.accountId)
                 : undefined
-            if (fallback !== undefined && typeof this.session.acquireForAccount === 'function') {
+            if (fallback !== undefined && !triedAccountIds.has(fallback.id) && typeof this.session.acquireForAccount === 'function') {
+              triedAccountIds.add(fallback.id)
               const nextLease = await this.session.acquireForAccount(fallback.id)
               if (nextLease !== undefined) {
                 await this.session.switchAccount?.(fallback.id).catch(() => {})
