@@ -62,6 +62,7 @@ type AccountRuntime = {
   limitedUntil?: number
   limitedStrikes?: number
   dead?: boolean
+  argonIneligible?: boolean
 }
 
 
@@ -191,7 +192,60 @@ export class AntigravitySession {
     return runtime
   }
 
-  async acquire(): Promise<AntigravityLease | undefined> {
+  isArgonCapable(account: StoredAccount): boolean {
+    return account.hasArgon === true && this.runtimes.get(account.id)?.argonIneligible !== true
+  }
+
+  noteArgonRejected(accountId: string): void {
+    this.runtimeFor(accountId).argonIneligible = true
+  }
+
+  async findArgonAccount(exclude?: string | ReadonlySet<string>): Promise<StoredAccount | undefined> {
+    const excluded = typeof exclude === 'string' ? new Set([exclude]) : exclude
+    const all = await this.store.list()
+    const requireExplicit = all.some(account => account.hasArgon === true)
+    const now = Date.now()
+    const available = all.filter(account => {
+      if (account.projectId === undefined) return false
+      if (account.hasArgon === false) return false
+      if (requireExplicit && account.hasArgon !== true) return false
+      if (excluded?.has(account.id)) return false
+      const runtime = this.runtimes.get(account.id)
+      if (runtime?.dead) return false
+      if (runtime?.argonIneligible) return false
+      if (runtime?.limitedUntil !== undefined && runtime.limitedUntil > now) return false
+      return true
+    })
+    if (available.length === 0) return undefined
+    const active = await this.store.active()
+    const activeReady = active !== undefined ? available.find(a => a.id === active.id) : undefined
+    if (activeReady !== undefined && this.isArgonCapable(activeReady)) {
+      return activeReady
+    }
+    return available.find(a => this.isArgonCapable(a)) ?? activeReady ?? available[0]
+  }
+
+  async acquire(options?: { model?: string }): Promise<AntigravityLease | undefined> {
+    if (options?.model === 'gemini-4-argon') {
+      const excluded = new Set<string>()
+      while (true) {
+        const argonAccount = await this.findArgonAccount(excluded)
+        if (argonAccount === undefined) break
+        const lease = await this.acquireForAccount(argonAccount.id)
+        if (lease !== undefined) return lease
+        excluded.add(argonAccount.id)
+      }
+      // If all Argon-capable accounts are in cooldown or previously rejected, still try the first
+      // ready Argon-marked account before giving up so stream() surfaces the real HTTP error rather than MISSING_CREDENTIAL.
+      const all = await this.store.list()
+      const explicitArgon = all.filter(a => a.projectId !== undefined && a.hasArgon === true)
+      for (const candidate of explicitArgon) {
+        if (excluded.has(candidate.id)) continue
+        const lease = await this.acquireForAccount(candidate.id)
+        if (lease !== undefined) return lease
+      }
+      if (explicitArgon.length > 0) return undefined
+    }
     const grant = await this.refreshGrant()
     if (grant === undefined || grant.projectId === undefined) return undefined
     const active = await this.store.active()

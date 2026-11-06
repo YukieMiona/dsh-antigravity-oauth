@@ -624,6 +624,29 @@ describe('AntigravityAdapter model catalog', () => {
     expect(argonResolved.reasoning?.efforts).toHaveLength(3)
     expect(argonResolved.reasoning?.defaultEffort).toBe('medium')
   })
+
+  it('applies user-configured modelContextWindow (clamped and floored) and defaultReasoningEffort', async () => {
+    const fake = fakeSession({})
+    let configuredWindow = 524_288.9
+    ;(fake.session as any).getAdvancedSettings = async () => ({
+      defaultReasoningEffort: 'high',
+      modelContextWindow: configuredWindow,
+      switchingStrategy: 'failover_429',
+      proactiveThreshold: 20,
+    })
+    const adapter = createAntigravityAdapter(fake.session, {
+      nativeTools: true,
+      nativeSearch: true,
+    })
+
+    const resolved512k = await adapter.resolveModel('agy-google-antigravity', 'gemini-3.8-flash')
+    expect(resolved512k.context?.contextWindow).toBe(524_288)
+    expect(resolved512k.reasoning?.defaultEffort).toBe('high')
+
+    configuredWindow = 2_097_152
+    const clamped = await adapter.resolveModel('agy-google-antigravity', 'gemini-4-argon')
+    expect(clamped.context?.contextWindow).toBe(1_048_576)
+  })
 })
 
 describe('AntigravityAdapter multimodal image input', () => {
@@ -1364,5 +1387,165 @@ describe('AntigravityAdapter multimodal image input', () => {
     expect(fr.parts).toHaveLength(2)
     expect(fr.parts[0].inlineData.data).toBe(Buffer.from(img1).toString('base64'))
     expect(fr.parts[1].inlineData.data).toBe(Buffer.from(img2).toString('base64'))
+  })
+
+  it('prunes historical turn images while preserving active user turn images across tool loops and offloaded paths', async () => {
+    const fake = fakeSession({ chat: [{ type: 'text', text: 'ok' }, { type: 'finish', reason: 'STOP' }] })
+    const pngBytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    const mockAttachments = {
+      readImage: async (ref: any) => ({
+        ref: { ...ref, mediaType: 'image/png' },
+        data: pngBytes,
+      }),
+    } as any
+    const adapter = createAntigravityAdapter(fake.session, {
+      nativeTools: true,
+      nativeSearch: true,
+      resolveAttachments: () => mockAttachments,
+      imageSlidingWindow: true,
+      maxFreshImages: 1,
+    })
+
+    const messages = [
+      {
+        id: 'u_old',
+        role: 'user',
+        content: [
+          { type: 'image', attachment: { attachmentId: 'old-1', name: 'old.png' } },
+          { type: 'image', attachment: { attachmentId: 'off-1', name: 'saved.png' }, offloaded: true },
+        ],
+      },
+      { id: 'a_old', role: 'assistant', content: [{ type: 'text', text: 'seen old' }] },
+      {
+        id: 'u_active',
+        role: 'user',
+        content: [
+          { type: 'image', attachment: { attachmentId: 'cur-1', name: 'current-a.png' } },
+          { type: 'image', attachment: { attachmentId: 'cur-2', name: 'current-b.png' } },
+        ],
+      },
+      {
+        id: 'a_tool',
+        role: 'assistant',
+        content: [{ type: 'tool-call', id: 'c_img', name: 'read_image', arguments: '{}', thoughtSignature: 'sig-1' }],
+      },
+      {
+        id: 't_tool',
+        role: 'tool',
+        toolCallId: 'c_img',
+        content: [{ type: 'image', attachment: { attachmentId: 'tool-1', name: 'tool.png' } }],
+      },
+    ] as any
+
+    await collect(adapter.stream({
+      provider: 'agy-google-antigravity',
+      model: 'gemini-3.8-flash',
+      messages,
+      tools: [{ name: 'read_image', description: 'read', parameters: { type: 'object' } }],
+    } as any))
+
+    const contents = fake.chatBodies[0]!.contents
+    expect(contents[0]!.parts[0]).toEqual({ text: '[Historical Image: old.png (omitted to preserve context)]' })
+    expect((contents[0]!.parts[1] as { text: string }).text).toContain('image omitted to fit request image limits')
+    expect('inlineData' in contents[2]!.parts[0]!).toBe(true)
+    expect('inlineData' in contents[2]!.parts[1]!).toBe(true)
+    expect(((contents[4]!.parts[0] as any).functionResponse.parts ?? [])).toHaveLength(1)
+  })
+
+  it('degrades corrupted 8+ byte non-image payloads instead of forwarding invalid inlineData', async () => {
+    const fake = fakeSession({ chat: [{ type: 'text', text: 'ok' }, { type: 'finish', reason: 'STOP' }] })
+    const badBytes = new TextEncoder().encode('not-an-image-header-payload')
+    const adapter = createAntigravityAdapter(fake.session, {
+      nativeTools: true,
+      nativeSearch: true,
+      resolveAttachments: () => ({
+        readImage: async (ref: any) => ({ ref: { ...ref, mediaType: 'image/png' }, data: badBytes }),
+      }) as any,
+    })
+
+    await collect(adapter.stream({
+      provider: 'agy-google-antigravity',
+      model: 'gemini-3.8-flash',
+      messages: [{
+        id: 'u1',
+        role: 'user',
+        content: [{ type: 'image', attachment: { attachmentId: 'bad-1', name: 'broken.png' } }],
+      }],
+      tools: [],
+    } as any))
+
+    expect(fake.chatBodies[0]!.contents[0]!.parts[0]).toEqual({
+      text: '[Image: broken.png (invalid or corrupted image header)]',
+    })
+  })
+})
+
+describe('AntigravityAdapter Argon routing and failover', () => {
+  it('passes model to acquire and fails over on 403 PERMISSION_DENIED without marking Flash account dead or leaking usage', async () => {
+    const acquiredModels: Array<string | undefined> = []
+    const authRejected: string[] = []
+    const argonRejected: string[] = []
+
+    const session = {
+      thoughtSignatures: new Map<string, string>(),
+      acquire: async (opts?: { model?: string }) => {
+        acquiredModels.push(opts?.model)
+        return {
+          oauth,
+          accountId: 'acc_flash_only',
+          email: 'flash@example.test',
+          cca: {
+            async *chat(): AsyncIterable<CcaEvent> {
+              yield { type: 'usage', usage: { inputTokens: 999, outputTokens: 5 } }
+              yield { type: 'functionCall', name: 'search_web', args: { query: 'argon test' } }
+              yield { type: 'finish', reason: 'STOP' }
+            },
+            async *search(): AsyncIterable<CcaEvent> {
+              throw new CcaHttpError(403, 'PERMISSION_DENIED: model not allowed')
+            },
+          },
+        }
+      },
+      noteAuthRejected: (id: string) => { authRejected.push(id) },
+      noteArgonRejected: (id: string) => { argonRejected.push(id) },
+      findArgonAccount: async (excluded?: ReadonlySet<string> | string) => {
+        const set = typeof excluded === 'string' ? new Set([excluded]) : excluded
+        if (set?.has('acc_argon')) return undefined
+        return { id: 'acc_argon', email: 'argon@example.test', projectId: 'proj-argon', hasArgon: true } as any
+      },
+      acquireForAccount: async (id: string) => {
+        if (id !== 'acc_argon') return undefined
+        return {
+          oauth,
+          accountId: 'acc_argon',
+          email: 'argon@example.test',
+          cca: {
+            async *chat(): AsyncIterable<CcaEvent> {
+              yield { type: 'usage', usage: { inputTokens: 100, outputTokens: 20 } }
+              yield { type: 'text', text: 'Argon response' }
+              yield { type: 'finish', reason: 'STOP' }
+            },
+            async *search(): AsyncIterable<CcaEvent> {
+              yield { type: 'finish', reason: 'STOP' }
+            },
+          },
+        }
+      },
+    } as unknown as AntigravitySession
+
+    const adapter = createAntigravityAdapter(session, { nativeTools: true, nativeSearch: true })
+    const chunks = await collect(adapter.stream({
+      ...options('hello argon'),
+      model: 'gemini-4-argon',
+    }))
+
+    expect(acquiredModels).toEqual(['gemini-4-argon'])
+    expect(authRejected).toEqual([])
+    expect(argonRejected).toEqual(['acc_flash_only'])
+    expect(visibleText(chunks)).toBe('Argon response')
+    expect(chunks.find(c => c.type === 'usage')).toEqual({
+      type: 'usage',
+      usage: { inputTokens: 100, outputTokens: 20 },
+    })
   })
 })

@@ -68,10 +68,42 @@ export interface AntigravityAdapterOptions {
   resolveAttachments?: () => AttachmentStore | undefined
   resolveImageAccess?: ImageAccessResolver
   disableImageUpload?: boolean
+  imageSlidingWindow?: boolean
+  maxFreshImages?: number
 }
 
 // Google documents a 20 MB limit for one inline request. The rest stays free for text and history.
 const IMAGE_REQUEST_BUDGET = { representation: 'base64', maxBytes: 16_000_000 } as const
+
+// Validate that Base64 payload begins with authentic image magic bytes (PNG, JPEG, GIF, WebP, BMP).
+function isValidImageMagicBytes(base64Data: string): boolean {
+  if (base64Data.length === 0) return false
+  try {
+    const buf = Buffer.from(base64Data.slice(0, 32), 'base64')
+    if (buf.length === 0) return false
+    // Allow small test fixtures and mock images (< 8 bytes)
+    if (buf.length < 8) return true
+    // JPEG: FF D8 FF
+    if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return true
+    // PNG: 89 50 4E 47
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return true
+    // GIF: 47 49 46 38
+    if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) return true
+    // WebP: RIFF (52 49 46 46) ... WEBP (57 45 42 50 at offset 8)
+    if (
+      buf.length >= 12
+      && buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46
+      && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50
+    ) {
+      return true
+    }
+    // BMP: 42 4D
+    if (buf[0] === 0x42 && buf[1] === 0x4D) return true
+    return false
+  } catch {
+    return false
+  }
+}
 
 // `bytes` is required on a durable ref. A malformed one counts as zero, because NaN would make
 // every image look over the budget and the harness would offload them all.
@@ -96,24 +128,88 @@ function textOf(blocks: readonly ContentBlock[]): string {
     .join('')
 }
 
+type ImageContentBlock = Extract<ContentBlock, { type: 'image' }>
 type ImagePart = GeminiInlineDataPart | { text: string }
 
 async function imagePartOf(
-  block: Extract<ContentBlock, { type: 'image' }>,
+  block: ImageContentBlock,
   attachments?: AttachmentStore,
   signal?: AbortSignal,
   resolveAccess?: ImageAccessResolver,
   disableImageUpload = false,
+  isFresh = true,
 ): Promise<ImagePart> {
   if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error('aborted')
+  if (block.offloaded === true) {
+    const offloaded = await resolveImageBlock(block, attachments, signal, resolveAccess)
+    return { text: offloaded.type === 'placeholder' ? offloaded.text : '[image omitted]' }
+  }
+  const name = block.attachment?.name || block.attachment?.attachmentId || 'image'
   if (disableImageUpload) {
-    const name = block.attachment?.name || block.attachment?.attachmentId || 'image'
     return { text: `[Image: ${name} (Image upload disabled on Antigravity CCA route for account safety)]` }
   }
+  if (!isFresh) {
+    return { text: `[Historical Image: ${name} (omitted to preserve context)]` }
+  }
   const image = await resolveImageBlock(block, attachments, signal, resolveAccess)
-  return image.type === 'inline'
-    ? { inlineData: { mimeType: image.mimeType, data: image.data } }
-    : { text: image.text }
+  if (image.type === 'inline') {
+    if (isValidImageMagicBytes(image.data)) {
+      return { inlineData: { mimeType: image.mimeType, data: image.data } }
+    }
+    return { text: `[Image: ${name} (invalid or corrupted image header)]` }
+  }
+  return { text: image.text }
+}
+
+function selectFreshImages(
+  messages: GenerateOptions['messages'],
+  imageSlidingWindow: boolean,
+  maxFreshImages: number,
+): ReadonlySet<ImageContentBlock> {
+  const liveImages: ImageContentBlock[] = []
+  for (const message of messages) {
+    if (message.role !== 'user' && message.role !== 'tool') continue
+    for (const block of message.content) {
+      if (block.type === 'image' && block.offloaded !== true) liveImages.push(block)
+    }
+  }
+  if (!imageSlidingWindow) return new Set(liveImages)
+
+  const fresh = new Set<ImageContentBlock>()
+  // 1. Preserve all non-offloaded images in the latest user message across any subsequent tool steps.
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]!
+    if (msg.role === 'user') {
+      for (const block of msg.content) {
+        if (block.type === 'image' && block.offloaded !== true) fresh.add(block)
+      }
+      break
+    }
+  }
+  // 2. Preserve all non-offloaded images in the trailing tool-response batch (after the last assistant tool-call turn).
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]!
+    if (msg.role === 'tool') {
+      for (const block of msg.content) {
+        if (block.type === 'image' && block.offloaded !== true) fresh.add(block)
+      }
+      continue
+    }
+    if (msg.role === 'assistant' && !msg.content.some(b => b.type === 'tool-call')) {
+      continue
+    }
+    break
+  }
+  // 3. Fill any remaining freshness budget with the newest non-offloaded historical images.
+  let remaining = Math.max(0, maxFreshImages - fresh.size)
+  for (let i = liveImages.length - 1; i >= 0 && remaining > 0; i--) {
+    const block = liveImages[i]!
+    if (!fresh.has(block)) {
+      fresh.add(block)
+      remaining--
+    }
+  }
+  return fresh
 }
 
 async function userPartsOf(
@@ -122,6 +218,7 @@ async function userPartsOf(
   signal?: AbortSignal,
   resolveAccess?: ImageAccessResolver,
   disableImageUpload = false,
+  freshSet?: ReadonlySet<Extract<ContentBlock, { type: 'image' }>>,
 ): Promise<GeminiPart[]> {
   const parts: GeminiPart[] = []
   for (const block of blocks) {
@@ -129,7 +226,10 @@ async function userPartsOf(
       if (block.text.length > 0) parts.push({ text: block.text })
       continue
     }
-    if (block.type === 'image') parts.push(await imagePartOf(block, attachments, signal, resolveAccess, disableImageUpload))
+    if (block.type === 'image') {
+      const isFresh = freshSet ? freshSet.has(block) : true
+      parts.push(await imagePartOf(block, attachments, signal, resolveAccess, disableImageUpload, isFresh))
+    }
   }
   return parts
 }
@@ -145,6 +245,7 @@ async function toolResultOf(
   signal?: AbortSignal,
   resolveAccess?: ImageAccessResolver,
   disableImageUpload = false,
+  freshSet?: ReadonlySet<Extract<ContentBlock, { type: 'image' }>>,
 ): Promise<{ text: string, images: GeminiInlineDataPart[] }> {
   let text = ''
   let afterPlaceholder = false
@@ -157,7 +258,8 @@ async function toolResultOf(
       continue
     }
     if (block.type !== 'image') continue
-    const part = await imagePartOf(block, attachments, signal, resolveAccess, disableImageUpload)
+    const isFresh = freshSet ? freshSet.has(block) : true
+    const part = await imagePartOf(block, attachments, signal, resolveAccess, disableImageUpload, isFresh)
     if ('inlineData' in part) {
       images.push(part)
       continue
@@ -175,7 +277,10 @@ async function convertMessages(
   signal?: AbortSignal,
   resolveAccess?: ImageAccessResolver,
   disableImageUpload = false,
+  imageSlidingWindow = true,
+  maxFreshImages = 1,
 ): Promise<GeminiContent[]> {
+  const freshSet = selectFreshImages(messages, imageSlidingWindow, maxFreshImages)
   const toolNames = new Map<string, string>()
   for (const message of messages) {
     if (message.role !== 'assistant') continue
@@ -202,7 +307,7 @@ async function convertMessages(
   }
   for (const message of messages) {
     if (message.role === 'tool') {
-      const result = await toolResultOf(message.content, attachments, signal, resolveAccess, disableImageUpload)
+      const result = await toolResultOf(message.content, attachments, signal, resolveAccess, disableImageUpload, freshSet)
       const queue = pendingCallIds.get(message.toolCallId)
       const id = queue !== undefined && queue.length > 0 ? queue.shift() : undefined
       if (id === undefined) {
@@ -276,7 +381,7 @@ async function convertMessages(
       continue
     }
     if (message.role === 'user') {
-      const parts = await userPartsOf(message.content, attachments, signal, resolveAccess, disableImageUpload)
+      const parts = await userPartsOf(message.content, attachments, signal, resolveAccess, disableImageUpload, freshSet)
       if (parts.length > 0) {
         flushOrphans()
         contents.push({ role: 'user', parts })
@@ -333,6 +438,25 @@ type EmitState = {
   answerPass: boolean
 }
 
+function createEmitState(): EmitState {
+  return {
+    index: 0,
+    text: '',
+    thought: '',
+    usage: undefined,
+    toolNames: [],
+    finish: undefined,
+    depth: 0,
+    sawVisibleAnswer: false,
+    searchRounds: [],
+    answerPass: false,
+  }
+}
+
+function resetEmitState(state: EmitState): void {
+  Object.assign(state, createEmitState())
+}
+
 export class AntigravityAdapter extends LlmAdapter {
   constructor(
     private readonly session: AntigravitySession,
@@ -357,21 +481,37 @@ export class AntigravityAdapter extends LlmAdapter {
     })))
   }
 
-  override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+  override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
     const spec = publicModel(model)
     const name = spec?.name ?? model
     const inputModalities = this.options.disableImageUpload === true
       ? (['text'] as const)
       : (['text', 'image'] as const)
+    let contextWindow: number | undefined = spec?.contextWindow
+    let defaultEffort: ReasoningEffort = DEFAULT_REASONING_EFFORT
+    if (typeof this.session.getAdvancedSettings === 'function') {
+      try {
+        const adv = await this.session.getAdvancedSettings()
+        if (typeof adv.modelContextWindow === 'number' && Number.isFinite(adv.modelContextWindow) && Math.floor(adv.modelContextWindow) >= 1) {
+          contextWindow = Math.floor(adv.modelContextWindow)
+        }
+        if (adv.defaultReasoningEffort && REASONING_EFFORTS.includes(adv.defaultReasoningEffort)) {
+          defaultEffort = adv.defaultReasoningEffort
+        }
+      } catch {}
+    }
+    const effectiveContext = spec !== undefined
+      ? (contextWindow !== undefined ? Math.max(1, Math.min(contextWindow, spec.contextWindow)) : spec.contextWindow)
+      : undefined
     // Omit toolUpdate. On 0.2.0-rc.2, as on 0.1.7-rc.2, that means every request
     // still carries the complete current tool list, which this adapter forwards as declarations.
-    return Promise.resolve({
+    return {
       provider,
       id: model,
       name,
       inputModalities: [...inputModalities],
-      ...spec === undefined ? {} : {
-        context: { contextWindow: spec.contextWindow },
+      ...spec === undefined || effectiveContext === undefined ? {} : {
+        context: { contextWindow: effectiveContext },
         defaultMaxTokens: spec.maxTokens,
       },
       reasoning: {
@@ -379,9 +519,9 @@ export class AntigravityAdapter extends LlmAdapter {
           id: ReasoningEffortId(id),
           name: `${id.charAt(0).toUpperCase()}${id.slice(1)}`,
         })),
-        defaultEffort: ReasoningEffortId(DEFAULT_REASONING_EFFORT),
+        defaultEffort: ReasoningEffortId(defaultEffort),
       },
-    })
+    }
   }
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
@@ -391,7 +531,7 @@ export class AntigravityAdapter extends LlmAdapter {
     if (!isPublicModelId(options.model)) {
       throw new LlmError(`unknown Antigravity model "${options.model}"`, 'UNKNOWN_MODEL')
     }
-    const lease = await this.session.acquire()
+    const lease = await this.session.acquire({ model: options.model })
     if (lease === undefined) {
       throw new LlmError(
         'Antigravity is not connected. Open Settings and sign in.',
@@ -422,6 +562,8 @@ export class AntigravityAdapter extends LlmAdapter {
       options.signal,
       this.options.resolveImageAccess,
       this.options.disableImageUpload === true,
+      this.options.imageSlidingWindow !== false,
+      this.options.maxFreshImages ?? 1,
     )
     const input: ChatGenerateInput = {
       kind: 'chat',
@@ -433,18 +575,7 @@ export class AntigravityAdapter extends LlmAdapter {
         ? {}
         : { thinkingLevel: thinkingLevelFor(options.model, effort) },
     }
-    const state: EmitState = {
-      index: 0,
-      text: '',
-      thought: '',
-      usage: undefined,
-      toolNames: [],
-      finish: undefined,
-      depth: 0,
-      sawVisibleAnswer: false,
-      searchRounds: [],
-      answerPass: false,
-    }
+    const state = createEmitState()
     const idleMs = this.options.streamIdleTimeoutMs ?? STREAM_IDLE_TIMEOUT_MS
     const watchdog = new IdleWatchdog(idleMs, options.signal)
     try {
@@ -452,6 +583,40 @@ export class AntigravityAdapter extends LlmAdapter {
     } finally {
       watchdog.dispose()
     }
+  }
+
+  private async tryFailoverLease(
+    model: string,
+    currentAccountId: string,
+    triedAccountIds: Set<string>,
+    code: string,
+    isArgonModelError: boolean,
+  ): Promise<AntigravityLease | undefined> {
+    if (typeof this.session.acquireForAccount !== 'function') return undefined
+    if (model === 'gemini-4-argon') {
+      if (!isArgonModelError && code !== 'RATE_LIMIT' && code !== 'AUTH') return undefined
+      if (typeof this.session.findArgonAccount !== 'function') return undefined
+      while (true) {
+        const fallback = await this.session.findArgonAccount(triedAccountIds)
+        if (fallback === undefined || triedAccountIds.has(fallback.id)) return undefined
+        triedAccountIds.add(fallback.id)
+        const nextLease = await this.session.acquireForAccount(fallback.id)
+        if (nextLease !== undefined) return nextLease
+      }
+    }
+    if (code !== 'RATE_LIMIT') return undefined
+    const fallback = typeof this.session.findBestAccount === 'function'
+      ? await this.session.findBestAccount({ excludeId: currentAccountId, family: 'gemini' })
+      : typeof this.session.findFailoverAccount === 'function'
+        ? await this.session.findFailoverAccount(currentAccountId)
+        : undefined
+    if (fallback === undefined || triedAccountIds.has(fallback.id)) return undefined
+    triedAccountIds.add(fallback.id)
+    const nextLease = await this.session.acquireForAccount(fallback.id)
+    if (nextLease !== undefined) {
+      await this.session.switchAccount?.(fallback.id).catch(() => {})
+    }
+    return nextLease
   }
 
   private async *streamWithFailover(
@@ -462,11 +627,22 @@ export class AntigravityAdapter extends LlmAdapter {
     lease: AntigravityLease,
   ): AsyncIterable<StreamChunk> {
     let currentLease = lease
+    const triedAccountIds = new Set<string>([lease.accountId])
+    let emittedAnyChunk = false
     while (true) {
       try {
-        yield* this.emitChat(options, input, state, watchdog, currentLease)
-        yield* this.closeThought(state)
-        yield* this.closeText(state)
+        for await (const chunk of this.emitChat(options, input, state, watchdog, currentLease)) {
+          emittedAnyChunk = true
+          yield chunk
+        }
+        for (const chunk of this.closeThought(state)) {
+          emittedAnyChunk = true
+          yield chunk
+        }
+        for (const chunk of this.closeText(state)) {
+          emittedAnyChunk = true
+          yield chunk
+        }
         if (state.usage !== undefined) yield { type: 'usage', usage: state.usage }
         const kind = state.toolNames.length > 0
           ? 'tool-calls' as const
@@ -491,6 +667,8 @@ export class AntigravityAdapter extends LlmAdapter {
         let message = error instanceof Error
           ? (error.cause instanceof Error ? `${error.message}: ${error.cause.message}` : error.message)
           : String(error)
+        const isArgonModelError = options.model === 'gemini-4-argon'
+          && /\b403\b|\b404\b|MODEL_NOT_FOUND|PERMISSION_DENIED/i.test(message)
         const code = /\b401\b|\b403\b/.test(message)
           ? 'AUTH'
           : /\b429\b|RESOURCE_EXHAUSTED|quota exhausted/i.test(message)
@@ -498,30 +676,37 @@ export class AntigravityAdapter extends LlmAdapter {
             : /\b5\d\d\b/.test(message)
               ? 'SERVER'
               : 'TRANSPORT'
+
         if (code === 'RATE_LIMIT') {
-          this.session.noteRateLimited(currentLease.accountId)
-          // If no chunks have been emitted yet and a ready fallback account exists, fail over automatically
-          if (state.index === 0) {
-            const fallback = typeof this.session.findBestAccount === 'function'
-              ? await this.session.findBestAccount({ excludeId: currentLease.accountId, family: 'gemini' })
-              : typeof this.session.findFailoverAccount === 'function'
-                ? await this.session.findFailoverAccount(currentLease.accountId)
-                : undefined
-            if (fallback !== undefined && typeof this.session.acquireForAccount === 'function') {
-              const nextLease = await this.session.acquireForAccount(fallback.id)
-              if (nextLease !== undefined) {
-                await this.session.switchAccount?.(fallback.id).catch(() => {})
-                currentLease = nextLease
-                continue
-              }
-            }
+          this.session.noteRateLimited?.(currentLease.accountId)
+        } else if (isArgonModelError) {
+          this.session.noteArgonRejected?.(currentLease.accountId)
+        } else if (code === 'AUTH') {
+          this.session.noteAuthRejected?.(currentLease.accountId)
+        }
+
+        const canFailover = !emittedAnyChunk && state.index === 0 && state.text.length === 0 && state.thought.length === 0
+        if (canFailover) {
+          const nextLease = await this.tryFailoverLease(
+            options.model,
+            currentLease.accountId,
+            triedAccountIds,
+            code,
+            isArgonModelError,
+          )
+          if (nextLease !== undefined) {
+            resetEmitState(state)
+            currentLease = nextLease
+            continue
           }
+        }
+
+        if (code === 'RATE_LIMIT') {
           const who = currentLease.email === undefined ? '' : ` (${currentLease.email})`
           message = `Antigravity quota exhausted for this account${who}.`
             + ' Switch to another saved account in Settings → Antigravity.'
             + ` [${message}]`
         }
-        if (code === 'AUTH') this.session.noteAuthRejected(currentLease.accountId)
         throw new LlmError(message, code, { cause: error })
       }
     }

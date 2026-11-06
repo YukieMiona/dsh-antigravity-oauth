@@ -247,6 +247,7 @@ export function registerAntigravityAuthRoutes(
             try {
               const body = await readJson(req)
               const settings = await session.saveAdvancedSettings(body as any)
+              await notify()
               json(res, 200, { ok: true, settings })
             } catch (err: unknown) {
               json(res, 500, { error: safeMessage(err) })

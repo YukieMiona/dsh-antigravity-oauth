@@ -13,7 +13,7 @@ const BACKUP_SUFFIX = '.v1.bak'
 const MAX_ACCOUNTS = 10
 const MIGRATED_ACCOUNT_ID = 'acc_default'
 const OAUTH_FIELDS = new Set(['type', 'access', 'refresh', 'expires', 'projectId', 'email'])
-const ACCOUNT_FIELDS = new Set([...OAUTH_FIELDS, 'id', 'addedAt'])
+const ACCOUNT_FIELDS = new Set([...OAUTH_FIELDS, 'id', 'addedAt', 'hasArgon'])
 
 export interface AdvancedSettings {
   defaultReasoningEffort: 'low' | 'medium' | 'high'
@@ -29,7 +29,7 @@ export const DEFAULT_ADVANCED_SETTINGS: AdvancedSettings = {
   proactiveThreshold: 20,
 }
 
-export type StoredAccount = AntigravityGrant & { id: string, addedAt?: string }
+export type StoredAccount = AntigravityGrant & { id: string, addedAt?: string, hasArgon?: boolean }
 
 interface AuthDocument {
   version: typeof AUTH_FORMAT_VERSION
@@ -109,10 +109,14 @@ function parseAccount(raw: unknown, filename: string): StoredAccount {
   if (raw.addedAt !== undefined && typeof raw.addedAt !== 'string') {
     throw new Error(`dsh-antigravity-oauth: ${filename} account addedAt must be a string`)
   }
+  if (raw.hasArgon !== undefined && typeof raw.hasArgon !== 'boolean') {
+    throw new Error(`dsh-antigravity-oauth: ${filename} account hasArgon must be a boolean`)
+  }
   return {
     ...grant,
     id: raw.id,
     ...typeof raw.addedAt === 'string' ? { addedAt: raw.addedAt } : {},
+    ...typeof raw.hasArgon === 'boolean' ? { hasArgon: raw.hasArgon } : {},
   }
 }
 
@@ -178,8 +182,8 @@ function parseDocument(text: string, filename: string): ParsedDocument {
       ? rawEffort as AdvancedSettings['defaultReasoningEffort']
       : DEFAULT_ADVANCED_SETTINGS.defaultReasoningEffort
     const rawWindow = Number(value.advanced.modelContextWindow)
-    const modelContextWindow = Number.isFinite(rawWindow) && rawWindow > 0
-      ? rawWindow
+    const modelContextWindow = Number.isFinite(rawWindow) && Math.floor(rawWindow) >= 1
+      ? Math.floor(rawWindow)
       : DEFAULT_ADVANCED_SETTINGS.modelContextWindow
     const rawStrategy = String(value.advanced.switchingStrategy || '')
     const switchingStrategy = ['failover_429', 'proactive_threshold', 'round_robin', 'manual'].includes(rawStrategy)
@@ -342,8 +346,8 @@ export class AntigravityCredentialStore {
         ? rawEffort as AdvancedSettings['defaultReasoningEffort']
         : current.defaultReasoningEffort
       const rawWindow = Number(settings.modelContextWindow ?? current.modelContextWindow)
-      const modelContextWindow = Number.isFinite(rawWindow) && rawWindow > 0
-        ? rawWindow
+      const modelContextWindow = Number.isFinite(rawWindow) && Math.floor(rawWindow) >= 1
+        ? Math.floor(rawWindow)
         : current.modelContextWindow
       const rawStrategy = String(settings.switchingStrategy || current.switchingStrategy)
       const switchingStrategy = ['failover_429', 'proactive_threshold', 'round_robin', 'manual'].includes(rawStrategy)
