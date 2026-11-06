@@ -218,11 +218,73 @@ export class AntigravitySession {
     })
     if (available.length === 0) return undefined
     const active = await this.store.active()
-    const activeReady = active !== undefined ? available.find(a => a.id === active.id) : undefined
-    if (activeReady !== undefined && this.isArgonCapable(activeReady)) {
-      return activeReady
+    if (excluded && excluded.size > 0) {
+      const activeMatch = active !== undefined ? available.find(a => a.id === active.id) : undefined
+      return activeMatch ?? available[0]
     }
-    return available.find(a => this.isArgonCapable(a)) ?? activeReady ?? available[0]
+    const adv = await this.getAdvancedSettings().catch(() => ({ switchingStrategy: 'failover_429', proactiveThreshold: 20 } as AdvancedSettings))
+    return this.selectAccountForStrategy(available, active, adv.switchingStrategy, adv.proactiveThreshold)
+  }
+
+  private async selectAccountForStrategy(
+    candidates: StoredAccount[],
+    active: StoredAccount | undefined,
+    strategy: AdvancedSettings['switchingStrategy'],
+    threshold: number,
+  ): Promise<StoredAccount | undefined> {
+    if (candidates.length === 0) return undefined
+    if (candidates.length === 1) return candidates[0]
+
+    // 1. Manual strategy: keep active account if present in candidates; otherwise first candidate
+    if (strategy === 'manual') {
+      const activeMatch = active !== undefined ? candidates.find(a => a.id === active.id) : undefined
+      return activeMatch ?? candidates[0]
+    }
+
+    // 2. Round-Robin strategy: rotate to the next candidate in circular order and persist activeId
+    if (strategy === 'round_robin') {
+      const currentIndex = active !== undefined ? candidates.findIndex(a => a.id === active.id) : -1
+      const nextAccount = candidates[(currentIndex + 1) % candidates.length]!
+      if (nextAccount.id !== active?.id) {
+        await Promise.resolve(this.store.setActive(nextAccount.id)).catch(() => {})
+      }
+      return nextAccount
+    }
+
+    // 3. Proactive Threshold strategy: check active account's quota score; if below threshold, pick best
+    if (strategy === 'proactive_threshold') {
+      const activeMatch = active !== undefined ? candidates.find(a => a.id === active.id) : undefined
+      if (activeMatch !== undefined) {
+        try {
+          const summaries = await this.retrieveAllQuotas()
+          const activeSummary = summaries[activeMatch.id]
+          const metrics = activeSummary?.ok && activeSummary.groups ? evaluateQuotaMetrics(activeSummary) : undefined
+          const currentScore = metrics?.score ?? 100
+          if (currentScore < threshold) {
+            let bestAccount = candidates.find(a => a.id !== activeMatch.id)
+            let bestScore = -1
+            for (const cand of candidates) {
+              if (cand.id === activeMatch.id) continue
+              const s = summaries[cand.id]
+              const m = s?.ok && s.groups ? evaluateQuotaMetrics(s)?.score ?? 50 : 50
+              if (m > bestScore) {
+                bestScore = m
+                bestAccount = cand
+              }
+            }
+            if (bestAccount !== undefined && bestScore > currentScore) {
+              await Promise.resolve(this.store.setActive(bestAccount.id)).catch(() => {})
+              return bestAccount
+            }
+          }
+        } catch {}
+        return activeMatch
+      }
+    }
+
+    // 4. Default ('failover_429'): keep active if candidate, otherwise first available candidate
+    const activeHealthy = active !== undefined ? candidates.find(a => a.id === active.id) : undefined
+    return activeHealthy ?? candidates[0]
   }
 
   async acquire(options?: { model?: string }): Promise<AntigravityLease | undefined> {
@@ -246,14 +308,25 @@ export class AntigravitySession {
       }
       if (explicitArgon.length > 0) return undefined
     }
-    const grant = await this.refreshGrant()
-    if (grant === undefined || grant.projectId === undefined) return undefined
+    const all = await this.store.list()
     const active = await this.store.active()
-    if (active === undefined) return undefined
-    const runtime = this.runtimeFor(active.id)
+    const now = Date.now()
+    const readyAccounts = all.filter(account => {
+      if (account.projectId === undefined) return false
+      const runtime = this.runtimes.get(account.id)
+      if (runtime?.dead) return false
+      if (runtime?.limitedUntil !== undefined && runtime.limitedUntil > now) return false
+      return true
+    })
+    const adv = await this.getAdvancedSettings().catch(() => ({ switchingStrategy: 'failover_429', proactiveThreshold: 20 } as AdvancedSettings))
+    const selectedAccount = await this.selectAccountForStrategy(readyAccounts, active, adv.switchingStrategy, adv.proactiveThreshold)
+    if (selectedAccount === undefined || selectedAccount.projectId === undefined) return undefined
+    const grant = await this.refreshGrantForAccount(selectedAccount.id)
+    if (grant === undefined || grant.projectId === undefined) return undefined
+    const runtime = this.runtimeFor(selectedAccount.id)
     return {
       oauth: { ...grant, projectId: grant.projectId },
-      accountId: active.id,
+      accountId: selectedAccount.id,
       ...grant.email === undefined ? {} : { email: grant.email },
       cca: runtime.cca,
     }

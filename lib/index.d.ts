@@ -334,6 +334,7 @@ declare class AntigravitySession {
   isArgonCapable(account: StoredAccount): boolean;
   noteArgonRejected(accountId: string): void;
   findArgonAccount(exclude?: string | ReadonlySet<string>): Promise<StoredAccount | undefined>;
+  private selectAccountForStrategy;
   acquire(options?: {
     model?: string;
   }): Promise<AntigravityLease | undefined>;

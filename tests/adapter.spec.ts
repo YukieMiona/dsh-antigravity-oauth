@@ -1,8 +1,8 @@
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createAntigravityAdapter } from '../src/adapter.ts'
 import { CcaHttpError } from '../src/cca-client.ts'
-import type { AntigravitySession } from '../src/session.ts'
+import { AntigravitySession } from '../src/session.ts'
 import type { CcaEvent, ChatGenerateInput, SearchGenerateInput } from '../src/types.ts'
 
 const oauth = {
@@ -1547,5 +1547,140 @@ describe('AntigravityAdapter Argon routing and failover', () => {
       type: 'usage',
       usage: { inputTokens: 100, outputTokens: 20 },
     })
+  })
+
+  it('routes background compaction and session-title requests to gemini-3.8-flash to save Argon quota (AM1)', async () => {
+    const fake = fakeSession({ chat: [{ type: 'text', text: 'Summary' }, { type: 'finish', reason: 'STOP' }] })
+    const acquiredModels: string[] = []
+    const session = {
+      ...fake.session,
+      acquire: async (opts?: { model?: string }) => {
+        if (opts?.model) acquiredModels.push(opts.model)
+        return fake.session.acquire()
+      },
+    } as unknown as AntigravitySession
+
+    const adapter = createAntigravityAdapter(session, { nativeTools: true, nativeSearch: true })
+
+    // Background compaction request with gemini-4-argon
+    await collect(adapter.stream({
+      ...options('compact memory'),
+      model: 'gemini-4-argon',
+      purpose: 'compaction',
+    }))
+
+    // Background session-title request with gemini-4-argon
+    await collect(adapter.stream({
+      ...options('summarize title'),
+      model: 'gemini-4-argon',
+      purpose: 'session-title',
+    }))
+
+    // Regular conversation request with gemini-4-argon
+    await collect(adapter.stream({
+      ...options('user turn'),
+      model: 'gemini-4-argon',
+    }))
+
+    // First two background calls should be downgraded to gemini-3.8-flash; third call stays gemini-4-argon
+    expect(acquiredModels).toEqual(['gemini-3.8-flash', 'gemini-3.8-flash', 'gemini-4-argon'])
+  })
+})
+
+describe('AntigravitySession switching strategies (R2b)', () => {
+  it('rotates across ready accounts when switchingStrategy is round_robin', async () => {
+    const store = {
+      list: async () => [
+        { id: 'acc_1', type: 'oauth', access: 'a1', refresh: 'r1', expires: Date.now() + 600000, projectId: 'p1' },
+        { id: 'acc_2', type: 'oauth', access: 'a2', refresh: 'r2', expires: Date.now() + 600000, projectId: 'p2' },
+        { id: 'acc_3', type: 'oauth', access: 'a3', refresh: 'r3', expires: Date.now() + 600000, projectId: 'p3' },
+      ],
+      active: async () => ({ id: 'acc_1', type: 'oauth', access: 'a1', refresh: 'r1', expires: Date.now() + 600000, projectId: 'p1' }),
+      setActive: vi.fn(async () => {}),
+    } as any
+
+    const session = new AntigravitySession(store)
+    vi.spyOn(session, 'getAdvancedSettings').mockResolvedValue({
+      defaultReasoningEffort: 'medium',
+      modelContextWindow: 1048576,
+      switchingStrategy: 'round_robin',
+      proactiveThreshold: 20,
+    })
+    vi.spyOn(session as any, 'refreshGrantForAccount').mockImplementation(async (id: any) => ({
+      type: 'oauth', access: `token_${String(id)}`, refresh: `ref_${String(id)}`, expires: Date.now() + 600000, projectId: `proj_${String(id)}`,
+    }))
+
+    // First call: starts from acc_1 (active), rotates to acc_2
+    const lease1 = await session.acquire()
+    expect(lease1?.accountId).toBe('acc_2')
+    expect(store.setActive).toHaveBeenCalledWith('acc_2')
+
+    // Second call: active is now acc_2, rotates to acc_3
+    store.active = async () => ({ id: 'acc_2', type: 'oauth', access: 'a2', refresh: 'r2', expires: Date.now() + 600000, projectId: 'p2' })
+    const lease2 = await session.acquire()
+    expect(lease2?.accountId).toBe('acc_3')
+
+    // Third call: active is acc_3, rotates back to acc_1
+    store.active = async () => ({ id: 'acc_3', type: 'oauth', access: 'a3', refresh: 'r3', expires: Date.now() + 600000, projectId: 'p3' })
+    const lease3 = await session.acquire()
+    expect(lease3?.accountId).toBe('acc_1')
+  })
+
+  it('keeps active account when switchingStrategy is manual or failover_429', async () => {
+    const store = {
+      list: async () => [
+        { id: 'acc_1', type: 'oauth', access: 'a1', refresh: 'r1', expires: Date.now() + 600000, projectId: 'p1' },
+        { id: 'acc_2', type: 'oauth', access: 'a2', refresh: 'r2', expires: Date.now() + 600000, projectId: 'p2' },
+      ],
+      active: async () => ({ id: 'acc_1', type: 'oauth', access: 'a1', refresh: 'r1', expires: Date.now() + 600000, projectId: 'p1' }),
+      setActive: vi.fn(async () => {}),
+    } as any
+
+    const session = new AntigravitySession(store)
+    vi.spyOn(session, 'getAdvancedSettings').mockResolvedValue({
+      defaultReasoningEffort: 'medium',
+      modelContextWindow: 1048576,
+      switchingStrategy: 'manual',
+      proactiveThreshold: 20,
+    })
+    vi.spyOn(session as any, 'refreshGrantForAccount').mockImplementation(async (id: any) => ({
+      type: 'oauth', access: `token_${String(id)}`, refresh: `ref_${String(id)}`, expires: Date.now() + 600000, projectId: `proj_${String(id)}`,
+    }))
+
+    const lease = await session.acquire()
+    expect(lease?.accountId).toBe('acc_1')
+    expect(store.setActive).not.toHaveBeenCalled()
+  })
+
+  it('rotates across multiple Argon accounts when switchingStrategy is round_robin', async () => {
+    const store = {
+      list: async () => [
+        { id: 'acc_flash', type: 'oauth', access: 'af', refresh: 'rf', expires: Date.now() + 600000, projectId: 'pf', hasArgon: false },
+        { id: 'acc_argon_1', type: 'oauth', access: 'a1', refresh: 'r1', expires: Date.now() + 600000, projectId: 'p1', hasArgon: true },
+        { id: 'acc_argon_2', type: 'oauth', access: 'a2', refresh: 'r2', expires: Date.now() + 600000, projectId: 'p2', hasArgon: true },
+      ],
+      active: async () => ({ id: 'acc_argon_1', type: 'oauth', access: 'a1', refresh: 'r1', expires: Date.now() + 600000, projectId: 'p1', hasArgon: true }),
+      setActive: vi.fn(async () => {}),
+    } as any
+
+    const session = new AntigravitySession(store)
+    vi.spyOn(session, 'getAdvancedSettings').mockResolvedValue({
+      defaultReasoningEffort: 'medium',
+      modelContextWindow: 1048576,
+      switchingStrategy: 'round_robin',
+      proactiveThreshold: 20,
+    })
+    vi.spyOn(session as any, 'refreshGrantForAccount').mockImplementation(async (id: any) => ({
+      type: 'oauth', access: `token_${String(id)}`, refresh: `ref_${String(id)}`, expires: Date.now() + 600000, projectId: `proj_${String(id)}`,
+    }))
+
+    const lease1 = await session.acquire({ model: 'gemini-4-argon' })
+    expect(lease1?.accountId).toBe('acc_argon_2')
+    expect(store.setActive).toHaveBeenCalledWith('acc_argon_2')
+
+    store.active = async () => ({ id: 'acc_argon_2', type: 'oauth', access: 'a2', refresh: 'r2', expires: Date.now() + 600000, projectId: 'p2', hasArgon: true })
+    const lease2 = await session.acquire({ model: 'gemini-4-argon' })
+    expect(lease2?.accountId).toBe('acc_argon_1')
+    expect(store.setActive).toHaveBeenCalledWith('acc_argon_1')
   })
 })
