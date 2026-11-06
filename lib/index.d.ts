@@ -331,7 +331,8 @@ declare class AntigravitySession {
   constructor(store: AntigravityCredentialStore, fetchImpl?: FetchImpl);
   private runtimeFor;
   isArgonCapable(account: StoredAccount): boolean;
-  findArgonAccount(excludeId?: string): Promise<StoredAccount | undefined>;
+  noteArgonRejected(accountId: string): void;
+  findArgonAccount(exclude?: string | ReadonlySet<string>): Promise<StoredAccount | undefined>;
   acquire(options?: {
     model?: string;
   }): Promise<AntigravityLease | undefined>;
@@ -404,6 +405,7 @@ declare class AntigravityAdapter extends LlmAdapter {
   listModels(provider: string): Promise<readonly LlmModelInfo[]>;
   resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo>;
   stream(options: GenerateOptions): AsyncIterable<StreamChunk>;
+  private tryFailoverLease;
   private streamWithFailover;
   private handleThoughtEvent;
   private handleTextEvent;

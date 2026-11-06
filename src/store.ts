@@ -182,8 +182,8 @@ function parseDocument(text: string, filename: string): ParsedDocument {
       ? rawEffort as AdvancedSettings['defaultReasoningEffort']
       : DEFAULT_ADVANCED_SETTINGS.defaultReasoningEffort
     const rawWindow = Number(value.advanced.modelContextWindow)
-    const modelContextWindow = Number.isFinite(rawWindow) && rawWindow > 0
-      ? rawWindow
+    const modelContextWindow = Number.isFinite(rawWindow) && Math.floor(rawWindow) >= 1
+      ? Math.floor(rawWindow)
       : DEFAULT_ADVANCED_SETTINGS.modelContextWindow
     const rawStrategy = String(value.advanced.switchingStrategy || '')
     const switchingStrategy = ['failover_429', 'proactive_threshold', 'round_robin', 'manual'].includes(rawStrategy)
@@ -346,8 +346,8 @@ export class AntigravityCredentialStore {
         ? rawEffort as AdvancedSettings['defaultReasoningEffort']
         : current.defaultReasoningEffort
       const rawWindow = Number(settings.modelContextWindow ?? current.modelContextWindow)
-      const modelContextWindow = Number.isFinite(rawWindow) && rawWindow > 0
-        ? rawWindow
+      const modelContextWindow = Number.isFinite(rawWindow) && Math.floor(rawWindow) >= 1
+        ? Math.floor(rawWindow)
         : current.modelContextWindow
       const rawStrategy = String(settings.switchingStrategy || current.switchingStrategy)
       const switchingStrategy = ['failover_429', 'proactive_threshold', 'round_robin', 'manual'].includes(rawStrategy)
