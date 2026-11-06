@@ -4,6 +4,9 @@ This file records completed features, fixes, and process milestones in `YukieMio
 
 ## Unreleased
 
+- AM1: Automatically downgrade background compaction and session-title tasks to `gemini-3.8-flash` to save Argon quota (#19).
+- R2b: Wire `switchingStrategy` (`manual`, `failover_429`, `round_robin`, `proactive_threshold`) across Flash and Argon account pools (#19).
+- P5: Remove redundant `DSHX_HARNESS` git clone steps from GitHub Actions workflows (#19).
 - UI1: Unify Accounts with sub-tabs for Native OAuth, Web2API, and Antigravity-Manager, and collapse top navigation to three tabs (#18).
 - U2: Clamp out-of-range quota percentage values to `0%` through `100%` in text and `aria-valuenow` (#14, #18).
 - R2: Add an interactive Argon toggle and status badge on account cards, and register the toggle route (#18).
