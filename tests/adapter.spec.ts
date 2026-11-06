@@ -1709,3 +1709,100 @@ describe('AntigravitySession switching strategies (R2b)', () => {
     expect(store.setActive).toHaveBeenCalledWith('acc_high')
   })
 })
+
+describe('AntigravityAdapter reliability patterns (AM2, AM3, AM4)', () => {
+  it('heals 400 bad-image rejection in place by blacklisting image ID and retrying with text placeholder (AM2)', async () => {
+    let callCount = 0
+    const fake = fakeSession({})
+    ;(fake.session as any).acquire = async () => ({
+      oauth,
+      accountId: 'acc_test',
+      email: 'test@example.test',
+      cca: {
+        async *chat(): AsyncIterable<CcaEvent> {
+          callCount++
+          if (callCount === 1) {
+            throw new CcaHttpError(400, 'INVALID_ARGUMENT: image processing failed')
+          }
+          yield { type: 'text', text: 'I see the image description now' }
+          yield { type: 'finish', reason: 'STOP' }
+        },
+      },
+    })
+
+    const pngBytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    const adapter = createAntigravityAdapter(fake.session, {
+      nativeTools: true,
+      nativeSearch: true,
+      resolveAttachments: () => ({
+        readImage: async (ref: any) => ({ ref: { ...ref, mediaType: 'image/png' }, data: pngBytes }),
+      }) as any,
+    })
+
+    const messages = [
+      {
+        id: 'u1',
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Check this image' },
+          { type: 'image', attachment: { attachmentId: 'att-bad-img-1', name: 'broken.png' } },
+        ],
+      },
+    ] as any
+
+    const chunks = await collect(adapter.stream({
+      provider: 'agy-google-antigravity',
+      model: 'gemini-3.8-flash',
+      messages,
+      tools: [],
+    } as any))
+
+    expect(callCount).toBe(2)
+    expect(visibleText(chunks)).toBe('I see the image description now')
+  })
+
+  it('fails over to ready backup account on 503 capacity error before first token (AM3)', async () => {
+    let callCount = 0
+    const session = {
+      thoughtSignatures: new Map<string, string>(),
+      acquire: async () => ({
+        oauth,
+        accountId: 'acc_overloaded',
+        email: 'overloaded@example.test',
+        cca: {
+          async *chat(): AsyncIterable<CcaEvent> {
+            callCount++
+            throw new CcaHttpError(503, 'The service is currently unavailable. Capacity exhausted.')
+          },
+        },
+      }),
+      findFailoverAccount: async (excludeId: string) => {
+        return excludeId === 'acc_overloaded'
+          ? { id: 'acc_backup', email: 'backup@example.test', projectId: 'proj-backup' }
+          : undefined
+      },
+      acquireForAccount: async (id: string) => {
+        if (id !== 'acc_backup') return undefined
+        return {
+          oauth,
+          accountId: 'acc_backup',
+          email: 'backup@example.test',
+          cca: {
+            async *chat(): AsyncIterable<CcaEvent> {
+              callCount++
+              yield { type: 'text', text: 'recovered from 503 capacity error' }
+              yield { type: 'finish', reason: 'STOP' }
+            },
+          },
+        }
+      },
+      switchAccount: async () => {},
+    } as unknown as AntigravitySession
+
+    const adapter = createAntigravityAdapter(session, { nativeTools: true, nativeSearch: true })
+    const chunks = await collect(adapter.stream(options('hello 503')))
+
+    expect(callCount).toBe(2)
+    expect(visibleText(chunks)).toBe('recovered from 503 capacity error')
+  })
+})

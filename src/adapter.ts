@@ -138,13 +138,18 @@ async function imagePartOf(
   resolveAccess?: ImageAccessResolver,
   disableImageUpload = false,
   isFresh = true,
+  badImageIds?: ReadonlySet<string>,
 ): Promise<ImagePart> {
   if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error('aborted')
+  const name = block.attachment?.name || block.attachment?.attachmentId || 'image'
+  const id = block.attachment?.attachmentId
+  if (id && badImageIds?.has(id)) {
+    return { text: `[Image: ${name} (upstream processing rejected, omitted)]` }
+  }
   if (block.offloaded === true) {
     const offloaded = await resolveImageBlock(block, attachments, signal, resolveAccess)
     return { text: offloaded.type === 'placeholder' ? offloaded.text : '[image omitted]' }
   }
-  const name = block.attachment?.name || block.attachment?.attachmentId || 'image'
   if (disableImageUpload) {
     return { text: `[Image: ${name} (Image upload disabled on Antigravity CCA route for account safety)]` }
   }
@@ -219,6 +224,7 @@ async function userPartsOf(
   resolveAccess?: ImageAccessResolver,
   disableImageUpload = false,
   freshSet?: ReadonlySet<Extract<ContentBlock, { type: 'image' }>>,
+  badImageIds?: ReadonlySet<string>,
 ): Promise<GeminiPart[]> {
   const parts: GeminiPart[] = []
   for (const block of blocks) {
@@ -228,7 +234,7 @@ async function userPartsOf(
     }
     if (block.type === 'image') {
       const isFresh = freshSet ? freshSet.has(block) : true
-      parts.push(await imagePartOf(block, attachments, signal, resolveAccess, disableImageUpload, isFresh))
+      parts.push(await imagePartOf(block, attachments, signal, resolveAccess, disableImageUpload, isFresh, badImageIds))
     }
   }
   return parts
@@ -246,6 +252,7 @@ async function toolResultOf(
   resolveAccess?: ImageAccessResolver,
   disableImageUpload = false,
   freshSet?: ReadonlySet<Extract<ContentBlock, { type: 'image' }>>,
+  badImageIds?: ReadonlySet<string>,
 ): Promise<{ text: string, images: GeminiInlineDataPart[] }> {
   let text = ''
   let afterPlaceholder = false
@@ -259,7 +266,7 @@ async function toolResultOf(
     }
     if (block.type !== 'image') continue
     const isFresh = freshSet ? freshSet.has(block) : true
-    const part = await imagePartOf(block, attachments, signal, resolveAccess, disableImageUpload, isFresh)
+    const part = await imagePartOf(block, attachments, signal, resolveAccess, disableImageUpload, isFresh, badImageIds)
     if ('inlineData' in part) {
       images.push(part)
       continue
@@ -279,6 +286,7 @@ async function convertMessages(
   disableImageUpload = false,
   imageSlidingWindow = true,
   maxFreshImages = 1,
+  badImageIds?: ReadonlySet<string>,
 ): Promise<GeminiContent[]> {
   const freshSet = selectFreshImages(messages, imageSlidingWindow, maxFreshImages)
   const toolNames = new Map<string, string>()
@@ -307,7 +315,7 @@ async function convertMessages(
   }
   for (const message of messages) {
     if (message.role === 'tool') {
-      const result = await toolResultOf(message.content, attachments, signal, resolveAccess, disableImageUpload, freshSet)
+      const result = await toolResultOf(message.content, attachments, signal, resolveAccess, disableImageUpload, freshSet, badImageIds)
       const queue = pendingCallIds.get(message.toolCallId)
       const id = queue !== undefined && queue.length > 0 ? queue.shift() : undefined
       if (id === undefined) {
@@ -381,7 +389,7 @@ async function convertMessages(
       continue
     }
     if (message.role === 'user') {
-      const parts = await userPartsOf(message.content, attachments, signal, resolveAccess, disableImageUpload, freshSet)
+      const parts = await userPartsOf(message.content, attachments, signal, resolveAccess, disableImageUpload, freshSet, badImageIds)
       if (parts.length > 0) {
         flushOrphans()
         contents.push({ role: 'user', parts })
@@ -458,6 +466,8 @@ function resetEmitState(state: EmitState): void {
 }
 
 export class AntigravityAdapter extends LlmAdapter {
+  private readonly badImageIds = new Set<string>()
+
   constructor(
     private readonly session: AntigravitySession,
     private readonly options: AntigravityAdapterOptions,
@@ -572,6 +582,7 @@ export class AntigravityAdapter extends LlmAdapter {
       this.options.disableImageUpload === true,
       this.options.imageSlidingWindow !== false,
       this.options.maxFreshImages ?? 1,
+      this.badImageIds,
     )
     const input: ChatGenerateInput = {
       kind: 'chat',
@@ -584,7 +595,10 @@ export class AntigravityAdapter extends LlmAdapter {
         : { thinkingLevel: thinkingLevelFor(targetModel, effort) },
     }
     const state = createEmitState()
-    const idleMs = this.options.streamIdleTimeoutMs ?? STREAM_IDLE_TIMEOUT_MS
+    const hasInlineImages = contents.some(c => c.parts.some(p => 'inlineData' in p))
+    // AM4: Extend first-byte idle timeout for inline images or high reasoning effort to prevent premature abort
+    const defaultIdleMs = (effort === 'high' || hasInlineImages) ? 180_000 : STREAM_IDLE_TIMEOUT_MS
+    const idleMs = this.options.streamIdleTimeoutMs ?? defaultIdleMs
     const watchdog = new IdleWatchdog(idleMs, options.signal)
     try {
       yield* this.streamWithFailover(options, targetModel, input, state, watchdog, lease)
@@ -599,10 +613,11 @@ export class AntigravityAdapter extends LlmAdapter {
     triedAccountIds: Set<string>,
     code: string,
     isArgonModelError: boolean,
+    isCapacityError = false,
   ): Promise<AntigravityLease | undefined> {
     if (typeof this.session.acquireForAccount !== 'function') return undefined
     if (model === 'gemini-4-argon') {
-      if (!isArgonModelError && code !== 'RATE_LIMIT' && code !== 'AUTH') return undefined
+      if (!isArgonModelError && code !== 'RATE_LIMIT' && code !== 'AUTH' && !isCapacityError) return undefined
       if (typeof this.session.findArgonAccount !== 'function') return undefined
       while (true) {
         const fallback = await this.session.findArgonAccount(triedAccountIds)
@@ -612,7 +627,7 @@ export class AntigravityAdapter extends LlmAdapter {
         if (nextLease !== undefined) return nextLease
       }
     }
-    if (code !== 'RATE_LIMIT') return undefined
+    if (code !== 'RATE_LIMIT' && !isCapacityError) return undefined
     const fallback = typeof this.session.findBestAccount === 'function'
       ? await this.session.findBestAccount({ excludeId: currentAccountId, family: 'gemini' })
       : typeof this.session.findFailoverAccount === 'function'
@@ -638,6 +653,7 @@ export class AntigravityAdapter extends LlmAdapter {
     let currentLease = lease
     const triedAccountIds = new Set<string>([lease.accountId])
     let emittedAnyChunk = false
+    let retriedBadImage = false
     while (true) {
       try {
         for await (const chunk of this.emitChat(options, input, state, watchdog, currentLease)) {
@@ -678,6 +694,9 @@ export class AntigravityAdapter extends LlmAdapter {
           : String(error)
         const isArgonModelError = targetModel === 'gemini-4-argon'
           && /\b403\b|\b404\b|MODEL_NOT_FOUND|PERMISSION_DENIED/i.test(message)
+        const isAccountBanned = /\bACCOUNT_DISABLED\b|\bUSER_SUSPENDED\b|\bACCOUNT_SUSPENDED\b|\baccount_forbidden\b/i.test(message)
+        const isCapacityError = /\b503\b|UNAVAILABLE|capacity exhausted|temporarily unavailable/i.test(message)
+        const isBadImageError = /\b400\b|INVALID_ARGUMENT|image.*(?:fail|corrupt|unsupported|invalid)|IMAGE_PROCESSING_FAILED/i.test(message)
         const code = /\b401\b|\b403\b/.test(message)
           ? 'AUTH'
           : /\b429\b|RESOURCE_EXHAUSTED|quota exhausted/i.test(message)
@@ -690,11 +709,42 @@ export class AntigravityAdapter extends LlmAdapter {
           this.session.noteRateLimited?.(currentLease.accountId)
         } else if (isArgonModelError) {
           this.session.noteArgonRejected?.(currentLease.accountId)
-        } else if (code === 'AUTH') {
+        } else if (code === 'AUTH' && isAccountBanned) {
           this.session.noteAuthRejected?.(currentLease.accountId)
         }
 
         const canFailover = !emittedAnyChunk && state.index === 0 && state.text.length === 0 && state.thought.length === 0
+
+        // AM2: In-place self-healing for bad/rejected images on HTTP 400
+        if (canFailover && isBadImageError && !retriedBadImage) {
+          const activeImageIds: string[] = []
+          for (const msg of options.messages) {
+            for (const b of msg.content) {
+              if (b.type === 'image' && b.attachment?.attachmentId) {
+                activeImageIds.push(b.attachment.attachmentId)
+              }
+            }
+          }
+          if (activeImageIds.length > 0) {
+            retriedBadImage = true
+            for (const id of activeImageIds) this.badImageIds.add(id)
+            input.contents = await convertMessages(
+              options.messages,
+              this.session.thoughtSignatures,
+              this.options.resolveAttachments?.(),
+              options.signal,
+              this.options.resolveImageAccess,
+              this.options.disableImageUpload === true,
+              this.options.imageSlidingWindow !== false,
+              this.options.maxFreshImages ?? 1,
+              this.badImageIds,
+            )
+            resetEmitState(state)
+            continue
+          }
+        }
+
+        // AM3: Failover on Rate Limit, Argon Model Error, or 503 Capacity Exhaustion
         if (canFailover) {
           const nextLease = await this.tryFailoverLease(
             targetModel,
@@ -702,6 +752,7 @@ export class AntigravityAdapter extends LlmAdapter {
             triedAccountIds,
             code,
             isArgonModelError,
+            isCapacityError,
           )
           if (nextLease !== undefined) {
             resetEmitState(state)

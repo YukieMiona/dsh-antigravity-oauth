@@ -406,6 +406,7 @@ interface AntigravityAdapterOptions {
 declare class AntigravityAdapter extends LlmAdapter {
   private readonly session;
   private readonly options;
+  private readonly badImageIds;
   constructor(session: AntigravitySession, options: AntigravityAdapterOptions);
   providerInfo(provider: string): LlmProviderInfo;
   listModels(provider: string): Promise<readonly LlmModelInfo[]>;
