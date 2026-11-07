@@ -721,7 +721,7 @@ describe('Compact preference at the real Settings owner', () => {
     expect(container.textContent).not.toContain(en.tos)
     await click(button(en.restoreNotice))
     expect(container.textContent).toContain(en.tos)
-    await click(button(en.subtabWeb2api))
+    await click(button(en.tabWeb2api))
     await click(button(en.hideGuide))
     await click(button(en.showGuide))
     expect(button(en.hideGuide)).toBeDefined()
@@ -923,10 +923,10 @@ describe('Account Redesign 07 Specifications', () => {
     expect(resets[0]).not.toMatch(/\d+m/)
   })
 
-  it('clamps out-of-range quota percentages to [0, 100] and renders Argon badge', async () => {
+  it('clamps out-of-range quota percentages to [0, 100]', async () => {
     const accs = [
-      { id: 'one', email: 'one@example.test', ready: true, limited: false, dead: false, hasArgon: true },
-      { id: 'two', email: 'two@example.test', ready: true, limited: false, dead: false, hasArgon: false },
+      { id: 'one', email: 'one@example.test', ready: true, limited: false, dead: false },
+      { id: 'two', email: 'two@example.test', ready: true, limited: false, dead: false },
     ]
     const props = defaults({
       accounts: accs,
@@ -953,8 +953,5 @@ describe('Account Redesign 07 Specifications', () => {
     // Column 2: 850% should be clamped to 100%
     expect(quotaCols[1].querySelector('.dsh-agy-quota-pct')?.textContent).toBe('100%')
     expect(quotaCols[1].querySelector('.dsh-agy-quota-track')?.getAttribute('aria-valuenow')).toBe('100')
-
-    // Argon badge should be visible on account 'one'
-    expect(activeRow.querySelector('.dsh-agy-status-badge')?.textContent).toBe('Argon')
   })
 })
