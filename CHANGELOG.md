@@ -4,18 +4,16 @@ This file records completed features, fixes, and process milestones in `YukieMio
 
 ## Unreleased
 
+- UI: Restore clean four-tab navigation and remove experimental nested sub-tabs (#22).
+- U2: Clamp out-of-range quota percentage values to `0%` through `100%` in text and `aria-valuenow` (#14, #18).
 - AM2: Heal HTTP 400 bad-image rejections in place by blacklisting image IDs and retrying with text (#21).
 - AM3: Rotate ready accounts on HTTP 503 capacity errors and distinguish account bans from model denials (#21).
 - AM4: Extend first-byte idle timeout by 180 seconds for inline images and high reasoning effort (#21).
-- P3: Add CONTRIBUTING.md documenting PR workflow, low-memory test constraints, and bundle builds (#21).
-- Q1: Cache account quotas for 60 seconds, rotate in memory without disk writes, retry across candidates, and persist custom Manager endpoints (#20).
+- P3: Add CONTRIBUTING.md documenting PR workflow, low-memory test constraints, and bundle builds (#21, `cde0253`).
+- Q1: Cache account quotas for 60 seconds, rotate in memory without disk writes, and retry across candidates (#20).
 - AM1: Automatically downgrade background compaction and session-title tasks to `gemini-3.8-flash` to save Argon quota (#19).
 - R2b: Wire `switchingStrategy` (`manual`, `failover_429`, `round_robin`, `proactive_threshold`) across Flash and Argon account pools (#19).
 - P5: Remove redundant `DSHX_HARNESS` git clone steps from GitHub Actions workflows (#19).
-- UI1: Unify Accounts with sub-tabs for Native OAuth, Web2API, and Antigravity-Manager, and collapse top navigation to three tabs (#18).
-- U2: Clamp out-of-range quota percentage values to `0%` through `100%` in text and `aria-valuenow` (#14, #18).
-- R2: Add an interactive Argon toggle and status badge on account cards, and register the toggle route (#18).
-- AM0: Add the Antigravity-Manager tab with direct status probe, copyable endpoints, and account export guidance (#18).
 
 ## v0.2.4.1 (2026-11-06)
 
