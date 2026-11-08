@@ -2,7 +2,9 @@
 
 This file records completed features, fixes, and process milestones in `YukieMiona/dsh-antigravity-oauth`. Open tasks and acceptance rules live on [Issue 2](https://github.com/YukieMiona/dsh-antigravity-oauth/issues/2). Pull requests hold full test and review logs.
 
-## Unreleased
+## v0.2.4.2 (2026-11-08)
+
+Release `v0.2.4.2` adds background quota protection, multi-strategy account rotation, self-healing for bad images, extended idle timeouts, and restores the clean four-tab navigation. Every item below passed GitHub Actions gates on `dev`:
 
 - UI: Restore clean four-tab navigation and remove experimental nested sub-tabs (#22).
 - U2: Clamp out-of-range quota percentage values to `0%` through `100%` in text and `aria-valuenow` (#14, #18).
