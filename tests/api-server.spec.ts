@@ -1,4 +1,5 @@
-import { mkdtemp, rm } from 'node:fs/promises'
+import { chmod, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises'
+import { createServer } from 'node:http'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
@@ -210,5 +211,87 @@ describe('AntigravityApiServer', () => {
   it('only accepts IP literals or localhost as the bind host', async () => {
     expect((await store.save({ host: '172.17.0.1' })).host).toBe('172.17.0.1')
     expect((await store.save({ host: 'evil.example.com' })).host).toBe('127.0.0.1')
+  })
+  it('follows the Official CLI route: no direct account, effort from the model suffix, tool calls returned', async () => {
+    const testPort = 19147
+    const testKey = 'sk-agy-test-secret-agy'
+    await store.save({ enabled: true, host: '127.0.0.1', port: testPort, apiKey: testKey })
+    const agyPath = join(tempDir, 'agy')
+    await writeFile(agyPath, `#!/usr/bin/env node
+const fs = require('node:fs')
+let input = ''
+process.stdin.on('data', c => { input += c })
+process.stdin.on('end', () => {
+  fs.writeFileSync(process.cwd() + '/seen.json', JSON.stringify({ args: process.argv.slice(2), input }))
+  console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'Calling.\\n<tool_call name="get_weather">{"city":"Paris"}</tool_call>', usage: { input_tokens: 7, output_tokens: 3 } } }))
+})
+`)
+    await chmod(agyPath, 0o755)
+    let acquired = 0
+    const fakeSession = {
+      store: { filename: join(tempDir, 'auth.json') },
+      manager: { read: async () => ({ route: 'agy', enabled: false, baseUrl: '', apiKey: '', agyPath }) },
+      getAdvancedSettings: async () => ({ enabledModels: ['gemini-3.8-flash'], defaultReasoningEffort: 'medium' }),
+      acquire: async () => { acquired += 1; return undefined },
+    } as unknown as AntigravitySession
+    server = new AntigravityApiServer(fakeSession, store)
+    await server.start()
+    const request = (stream: boolean) => fetch(`http://127.0.0.1:${testPort}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${testKey}` },
+      body: JSON.stringify({
+        model: 'gemini-3.8-flash-low',
+        stream,
+        messages: [{ role: 'system', content: 'Be brief.' }, { role: 'user', content: 'Weather in Paris?' }],
+        tools: [{ type: 'function', function: { name: 'get_weather', description: 'Weather', parameters: { type: 'object' } } }],
+      }),
+    })
+    const json = await (await request(false)).json() as any
+    expect(json.choices[0].message.content).toBe('Calling.')
+    expect(json.choices[0].message.tool_calls[0].function).toEqual({ name: 'get_weather', arguments: '{"city":"Paris"}' })
+    expect(json.choices[0].finish_reason).toBe('tool_calls')
+    expect(json.usage.prompt_tokens).toBe(7)
+    const streamed = await (await request(true)).text()
+    expect(streamed).toContain('"content":"Calling."')
+    expect(streamed).toContain('"finish_reason":"tool_calls"')
+    expect(acquired).toBe(0)
+    const seen = JSON.parse(await readFile(join(tempDir, '.dsh-antigravity-oauth.agy-workspace', 'seen.json'), 'utf8')) as { args: string[], input: string }
+    expect(seen.args.join(' ')).toContain('--model gemini-3.8-flash --effort low')
+    expect(JSON.parse(seen.input).message.content).toContain('<user>\nWeather in Paris?\n</user>')
+  })
+
+  it('follows the Gateway route by relaying the request with the wire model id', async () => {
+    const testPort = 19148
+    const testKey = 'sk-agy-test-secret-gw'
+    await store.save({ enabled: true, host: '127.0.0.1', port: testPort, apiKey: testKey })
+    let seen: { auth?: string, model?: string } = {}
+    const gateway = createServer((req, res) => {
+      let raw = ''
+      req.on('data', c => { raw += c })
+      req.on('end', () => {
+        seen = { auth: req.headers.authorization, model: JSON.parse(raw).model }
+        res.writeHead(200, { 'content-type': 'application/json' })
+        res.end(JSON.stringify({ choices: [{ message: { role: 'assistant', content: 'from gateway' } }] }))
+      })
+    })
+    await new Promise<void>(resolve => gateway.listen(19149, '127.0.0.1', resolve))
+    try {
+      const fakeSession = {
+        manager: { read: async () => ({ route: 'gateway', enabled: true, baseUrl: 'http://127.0.0.1:19149/v1', apiKey: 'gw-key', agyPath: '' }) },
+        getAdvancedSettings: async () => ({ enabledModels: ['gemini-3.8-flash'], defaultReasoningEffort: 'medium' }),
+        acquire: async () => { throw new Error('must not acquire a direct account') },
+      } as unknown as AntigravitySession
+      server = new AntigravityApiServer(fakeSession, store)
+      await server.start()
+      const res = await fetch(`http://127.0.0.1:${testPort}/v1/chat/completions`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${testKey}` },
+        body: JSON.stringify({ model: 'gemini-3.8-flash-low', messages: [{ role: 'user', content: 'hi' }] }),
+      })
+      expect(((await res.json()) as any).choices[0].message.content).toBe('from gateway')
+      expect(seen).toEqual({ auth: 'Bearer gw-key', model: 'gemini-3.8-flash-low' })
+    } finally {
+      await new Promise(resolve => gateway.close(resolve))
+    }
   })
 })

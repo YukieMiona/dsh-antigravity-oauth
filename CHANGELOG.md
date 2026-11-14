@@ -4,6 +4,8 @@ This file records completed features, fixes, and process milestones in `YukieMio
 
 ## Unreleased
 
+- API server follows the selected route: Official CLI (shared `agy/turn.ts` with the DSH adapter), Gateway (request relayed with the wire model id), or Direct. Streaming tool calls now carry distinct indexes and a `tool_calls` finish reason.
+- UI: the native core tile and note are removed; the standalone `language_server` service is no longer used.
 - UI: the Request route and Account switching strategy choices use the same list style as Enabled Models; descriptions no longer push the radio onto its own line, and each strategy explains what it does.
 - UI: on the Gateway and Official CLI routes, the header no longer shows a direct account and the Accounts tab drops the active check mark, with a note that those accounts are unused on that route.
 - Accounts: when the active account is banned, the active role moves to a healthy account.
