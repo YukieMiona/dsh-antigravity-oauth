@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto'
 import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import { AUTH_FILENAME } from './ids.ts'
-import type { AntigravityGrant } from './types.ts'
+import { DEFAULT_ENABLED_MODELS, isPublicModelId } from './models.ts'
+import type { AntigravityGrant, PublicModelId } from './types.ts'
 import { isRecord } from './types.ts'
 
 const AUTH_FORMAT_VERSION = 2
@@ -20,6 +21,7 @@ export interface AdvancedSettings {
   modelContextWindow: number
   switchingStrategy: 'failover_429' | 'proactive_threshold' | 'round_robin' | 'manual'
   proactiveThreshold: number
+  enabledModels?: PublicModelId[]
 }
 
 export const DEFAULT_ADVANCED_SETTINGS: AdvancedSettings = {
@@ -27,6 +29,7 @@ export const DEFAULT_ADVANCED_SETTINGS: AdvancedSettings = {
   modelContextWindow: 1_048_576,
   switchingStrategy: 'failover_429',
   proactiveThreshold: 20,
+  enabledModels: [...DEFAULT_ENABLED_MODELS],
 }
 
 export type StoredAccount = AntigravityGrant & { id: string, addedAt?: string, hasArgon?: boolean }
@@ -193,7 +196,14 @@ function parseDocument(text: string, filename: string): ParsedDocument {
     const proactiveThreshold = Number.isFinite(rawThresh) && rawThresh >= 0 && rawThresh <= 100
       ? rawThresh
       : DEFAULT_ADVANCED_SETTINGS.proactiveThreshold
-    advanced = { defaultReasoningEffort, modelContextWindow, switchingStrategy, proactiveThreshold }
+    let enabledModels: PublicModelId[] = [...(DEFAULT_ADVANCED_SETTINGS.enabledModels ?? ['gemini-3.8-flash'])]
+    if (Array.isArray(value.advanced.enabledModels)) {
+      const filtered = value.advanced.enabledModels.filter((id): id is PublicModelId => isPublicModelId(String(id)))
+      if (filtered.length > 0) {
+        enabledModels = Array.from(new Set(filtered))
+      }
+    }
+    advanced = { defaultReasoningEffort, modelContextWindow, switchingStrategy, proactiveThreshold, enabledModels }
   }
   return { fromV1: false, document: { version: AUTH_FORMAT_VERSION, activeId, accounts, ...advanced ? { advanced } : {} } }
 }
@@ -357,7 +367,14 @@ export class AntigravityCredentialStore {
       const proactiveThreshold = Number.isFinite(rawThresh) && rawThresh >= 0 && rawThresh <= 100
         ? rawThresh
         : current.proactiveThreshold
-      const nextAdv: AdvancedSettings = { defaultReasoningEffort, modelContextWindow, switchingStrategy, proactiveThreshold }
+      let enabledModels = current.enabledModels ?? [...(DEFAULT_ADVANCED_SETTINGS.enabledModels ?? ['gemini-3.8-flash'])]
+      if (Array.isArray(settings.enabledModels)) {
+        const filtered = settings.enabledModels.filter((id): id is PublicModelId => isPublicModelId(String(id)))
+        if (filtered.length > 0) {
+          enabledModels = Array.from(new Set(filtered))
+        }
+      }
+      const nextAdv: AdvancedSettings = { defaultReasoningEffort, modelContextWindow, switchingStrategy, proactiveThreshold, enabledModels }
       const nextDoc: AuthDocument = parsed === undefined
         ? { version: AUTH_FORMAT_VERSION, accounts: [], advanced: nextAdv }
         : { ...parsed.document, advanced: nextAdv }

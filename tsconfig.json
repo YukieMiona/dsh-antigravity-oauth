@@ -23,6 +23,7 @@
   "exclude": [
     "src/client",
     "tests/client-ui.spec.ts",
-    "tests/secondary-tabs.spec.ts"
+    "tests/secondary-tabs.spec.ts",
+    "tests/manager-tab.spec.ts"
   ]
 }

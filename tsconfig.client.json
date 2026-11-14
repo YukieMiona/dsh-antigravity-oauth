@@ -22,6 +22,7 @@
     "src/client/**/*.ts",
     "src/client/**/*.tsx",
     "tests/client-ui.spec.ts",
-    "tests/secondary-tabs.spec.ts"
+    "tests/secondary-tabs.spec.ts",
+    "tests/manager-tab.spec.ts"
   ]
 }

@@ -1,4 +1,5 @@
 import { createServer } from 'node:http'
+import { dirname, join } from 'node:path'
 import { existsSync, readFileSync } from 'node:fs'
 import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -7,6 +8,8 @@ import {
   CALLBACK_PORT,
   CALLBACK_URI,
   CCA_ENDPOINTS,
+  FETCH_AVAILABLE_MODELS_PATH,
+  MANAGER_FILENAME,
   OAUTH_REFRESH_COOLDOWN_MS,
   OAUTH_REFRESH_SOON_MS,
   PRECHECK_INTERVAL_MS,
@@ -39,8 +42,11 @@ import type {
 } from './types.ts'
 import { AntigravityNetwork } from './network.ts'
 import { AntigravityWeb2ApiStore } from './web2api/store.ts'
+import { AntigravityApiServerStore, AntigravityApiServer } from './api-server/index.ts'
+import { AntigravityManagerStore } from './manager/store.ts'
 import { evaluateQuotaMetrics } from './quota-core.ts'
 import { antigravityUserAgent, ensureAntigravityVersion } from './user-agent.ts'
+import { DEFAULT_CATALOG_MODELS, type ModelCatalogItem } from './models.ts'
 
 export type FetchImpl = typeof fetch
 
@@ -159,6 +165,9 @@ export class AntigravitySession {
   readonly thoughtSignatures: ThoughtSignatureStore
   readonly network: AntigravityNetwork
   readonly web2api: AntigravityWeb2ApiStore
+  readonly apiServerStore: AntigravityApiServerStore
+  readonly manager: AntigravityManagerStore
+  readonly apiServer: AntigravityApiServer
   private readonly fetchImpl: FetchImpl
   private readonly runtimes = new Map<string, AccountRuntime>()
   private readonly precheckAt = new Map<string, number>()
@@ -179,8 +188,12 @@ export class AntigravitySession {
     this.store = store
     this.network = new AntigravityNetwork(store.filename + '.network.json')
     this.web2api = new AntigravityWeb2ApiStore(store.filename + '.web2api.json')
+    this.apiServerStore = new AntigravityApiServerStore(store.filename + '.api-server.json')
+    // Next to the auth file. String() keeps minimal test stores (no filename) constructible.
+    this.manager = new AntigravityManagerStore(join(dirname(String(store.filename)), MANAGER_FILENAME))
     this.fetchImpl = fetchImpl ?? this.network.fetch
     this.thoughtSignatures = new ThoughtSignatureStore(store.filename + '.signatures.json')
+    this.apiServer = new AntigravityApiServer(this, this.apiServerStore)
   }
 
   private runtimeFor(accountId: string): AccountRuntime {
@@ -666,6 +679,7 @@ export class AntigravitySession {
     this.operation = undefined
     this.cancellation = undefined
     this.listening = undefined
+    await this.apiServer.stop().catch(() => undefined)
     await this.network.dispose()
   }
 
@@ -895,5 +909,106 @@ export class AntigravitySession {
     }))
     this.cachedQuotas = { timestamp: Date.now(), data: result }
     return result
+  }
+
+  private availableModelsCache?: { models: ModelCatalogItem[]; fetchedAt: number }
+  private availableModelsFailedAt = 0
+  private availableModelsInflight?: Promise<ModelCatalogItem[]>
+
+  /**
+   * The model picker calls this often. A failed upstream fetch backs off for a minute, and
+   * concurrent callers share one fetch, so a flaky upstream never stalls every model lookup.
+   */
+  async getAvailableModels(): Promise<ModelCatalogItem[]> {
+    const now = Date.now()
+    const fallback = (): ModelCatalogItem[] => this.availableModelsCache?.models ?? [...DEFAULT_CATALOG_MODELS]
+    if (this.availableModelsCache && now - this.availableModelsCache.fetchedAt < 300_000) {
+      return this.availableModelsCache.models
+    }
+    if (now - this.availableModelsFailedAt < 60_000) return fallback()
+    this.availableModelsInflight ??= (async () => {
+      try {
+        const fetched = await this.fetchAvailableModelsFromUpstream().catch(() => null)
+        if (fetched && fetched.length > 0) {
+          this.availableModelsCache = { models: fetched, fetchedAt: Date.now() }
+          return fetched
+        }
+        this.availableModelsFailedAt = Date.now()
+        return fallback()
+      } finally {
+        this.availableModelsInflight = undefined
+      }
+    })()
+    return this.availableModelsInflight
+  }
+
+  private async fetchAvailableModelsFromUpstream(): Promise<ModelCatalogItem[] | null> {
+    const active = await this.store.active() ?? (await this.store.list())[0]
+    if (!active) return null
+    let access = active.access
+    if (Date.now() >= active.expires - 30_000) {
+      try {
+        const refreshed = await refreshAccessToken(active, this.fetchImpl)
+        await this.store.update(active.id, {
+          access: refreshed.access,
+          refresh: refreshed.refresh,
+          expires: refreshed.expires,
+        })
+        access = refreshed.access
+      } catch {}
+    }
+    const body = JSON.stringify({ project: active.projectId || 'aicode-consumers' })
+    let data: any = null
+    for (const endpoint of CCA_ENDPOINTS) {
+      try {
+        const resp = await this.fetchImpl(`${endpoint}${FETCH_AVAILABLE_MODELS_PATH}`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${access}`,
+            'Content-Type': 'application/json',
+            'User-Agent': antigravityUserAgent(),
+          },
+          body,
+          signal: AbortSignal.timeout(5000),
+        })
+        if (resp.ok) {
+          data = await resp.json()
+          break
+        }
+      } catch {}
+    }
+    if (!data || typeof data !== 'object') return null
+    const rawModels = typeof data.models === 'object' && data.models !== null ? data.models : {}
+    const list: ModelCatalogItem[] = []
+
+    // Ensure default gemini-3.8-flash entry
+    list.push({
+      id: 'gemini-3.8-flash',
+      name: 'Gemini 3.8 Flash',
+      contextWindow: 1_048_576,
+      maxTokens: 65_536,
+      supportsImages: true,
+      supportsThinking: true,
+    })
+
+    for (const [id, info] of Object.entries(rawModels)) {
+      if (!info || typeof info !== 'object') continue
+      const rec = info as any
+      if (rec.isInternal || id.startsWith('chat_') || id.startsWith('tab_')) continue
+      if (id === 'gemini-3.8-flash' || list.some(m => m.id === id)) continue
+      const contextWindow = Number(rec.maxTokens ?? rec.inputTokenLimit ?? rec.contextWindow) || 1048576
+      const maxTokens = Number(rec.maxOutputTokens ?? rec.outputTokenLimit) || 65536
+      list.push({
+        id,
+        name: typeof rec.displayName === 'string' && rec.displayName.length > 0 ? rec.displayName : id,
+        description: typeof rec.description === 'string' ? rec.description : undefined,
+        contextWindow,
+        maxTokens,
+        supportsImages: Boolean(rec.supportsImages),
+        supportsThinking: Boolean(rec.supportsThinking),
+        thinkingBudget: typeof rec.thinkingBudget === 'number' ? rec.thinkingBudget : undefined,
+      })
+    }
+    return list
   }
 }

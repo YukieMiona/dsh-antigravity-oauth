@@ -27,7 +27,16 @@ export type CcaSession = {
   lastGoodEndpoint: string
 }
 
-export type PublicModelId = 'gemini-4-argon' | 'gemini-3.8-flash' | 'gemini-3.7-flash' | 'gemini-3.5-flash'
+export type PublicModelId =
+  | 'gemini-4-argon'
+  | 'gemini-3.8-flash'
+  | 'gemini-3.7-flash'
+  | 'gemini-3.5-flash'
+  | 'claude-sonnet-4-6'
+  | 'claude-opus-4-6-thinking'
+  | 'gemini-2.5-pro'
+  | 'gpt-oss-120b-medium'
+  | (string & {})
 
 export type ReasoningEffort = 'low' | 'medium' | 'high'
 
@@ -44,6 +53,7 @@ export type ChatWireModelId =
   | 'gemini-3.5-flash-extra-low'
   | 'gemini-3.5-flash-low'
   | 'gemini-3-flash-agent'
+  | (string & {})
 
 export type WireModelId = ChatWireModelId
 

@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import { act, createElement, isValidElement, useState, type ReactNode } from 'react'
 import { createRoot, type Root } from 'react-dom/client'
 import { AdvancedTab, type AdvancedTabProps } from '../src/client/tabs/AdvancedTab.tsx'
+import { ApiServerTab, type ApiServerTabProps } from '../src/client/tabs/ApiServerTab.tsx'
 import { Web2ApiTab, type Web2ApiTabProps } from '../src/client/tabs/Web2ApiTab.tsx'
 import { NetworkTab } from '../src/client/tabs/NetworkTab.tsx'
 import { en, type AntigravityKey } from '../src/client/locales.ts'
@@ -28,7 +29,9 @@ const t = (key: AntigravityKey, params?: Record<string, unknown>) => {
 const advanced = (): AdvancedTabProps => ({
   t, advancedEffort: 'medium', setAdvancedEffort: vi.fn(), advancedContextWindow: 262144,
   setAdvancedContextWindow: vi.fn(), advancedStrategy: 'proactive_threshold', setAdvancedStrategy: vi.fn(),
-  advancedThreshold: 25, setAdvancedThreshold: vi.fn(), savingAdvanced: false, saveAdvanced: vi.fn(),
+  advancedThreshold: 25, setAdvancedThreshold: vi.fn(),
+  advancedEnabledModels: ['gemini-3.8-flash'], setAdvancedEnabledModels: vi.fn(),
+  savingAdvanced: false, saveAdvanced: vi.fn(),
 })
 const web = (): Web2ApiTabProps => ({
   t, guideDismissed: false, dismissGuide: vi.fn(), restoreGuide: vi.fn(), dockerCmd: 'docker run fixture',
@@ -37,6 +40,23 @@ const web = (): Web2ApiTabProps => ({
   web2apiBaseUrl: 'http://fixture/v1', setWeb2apiBaseUrl: vi.fn(), web2apiApiKey: '', setWeb2apiApiKey: vi.fn(),
   web2apiImageTool: false, setWeb2apiImageTool: vi.fn(), saveWeb2Api: vi.fn(), web2apiTesting: false,
   testWeb2Api: vi.fn(), web2apiFeedback: null,
+})
+const apiServer = (): ApiServerTabProps => ({
+  t,
+  settings: {
+    enabled: true,
+    host: '127.0.0.1',
+    port: 18045,
+    apiKey: 'sk-agy-fixture-1234',
+  },
+  status: {
+    running: true,
+    host: '127.0.0.1',
+    port: 18045,
+  },
+  saving: false,
+  saveSettings: vi.fn(),
+  regenerateKey: vi.fn(),
 })
 function button(tree: ReactNode, label: string) {
   const result = nodes(tree).find(n => n.type === 'button' && text(n.props.children) === label)
@@ -297,5 +317,27 @@ describe('Secondary tabs mounted DOM fixtures (not real-browser acceptance)', ()
     expect(alert.textContent).toBe('Fixture rejected')
     expect(alert.className).toContain('is-error')
     expect(alert.className).not.toContain('is-success')
+  })
+
+  it('renders ApiServerTab, allows toggling enable and editing settings', () => {
+    const p = apiServer()
+    const host = mount(createElement(ApiServerTab, p))
+    expect(host.textContent).toContain(en.apiServerRunning)
+    expect(host.textContent).toContain('http://127.0.0.1:18045/v1')
+
+    const disableBtn = domButton(host, en.apiServerDisable)
+    act(() => disableBtn.click())
+    expect(p.saveSettings).toHaveBeenCalledWith(expect.objectContaining({ enabled: false }))
+  })
+
+  it('renders model checkboxes in AdvancedTab and updates enabled models', () => {
+    const p = advanced()
+    const tree = AdvancedTab(p)
+    const checkboxes = nodes(tree).filter(n => n.props.type === 'checkbox')
+    expect(checkboxes.length).toBeGreaterThanOrEqual(4)
+
+    // Click checkbox to toggle
+    checkboxes[0].props.onChange()
+    expect(p.setAdvancedEnabledModels).toHaveBeenCalled()
   })
 })

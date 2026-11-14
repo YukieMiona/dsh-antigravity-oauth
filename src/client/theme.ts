@@ -119,10 +119,10 @@ export const SETTINGS_CSS = `
   background: var(--dsw-alias-border-l3, GrayText);
 }
 
-/* Tabs */
+/* Tabs: as many columns as fit, so adding a tab never breaks the row. */
 .dsh-agy-tabs {
   display: grid;
-  grid-template-columns: repeat(4, 1fr);
+  grid-template-columns: repeat(auto-fit, minmax(78px, 1fr));
   gap: 3px;
   padding: 3px;
   background: var(--dsw-alias-bg-module-platform, Canvas);
@@ -135,6 +135,7 @@ export const SETTINGS_CSS = `
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  gap: 6px;
   padding: 6px 4px;
   border: none;
   border-radius: 6px;
@@ -743,6 +744,8 @@ export const SETTINGS_CSS = `
 .dsh-agy-link:hover {
   text-decoration: underline;
 }
+.dsh-agy-link-btn { padding: 0; border: 0; background: none; font: inherit; font-size: inherit; cursor: pointer; }
+.dsh-agy-link-btn:disabled { opacity: .5; cursor: not-allowed; }
 .dsh-agy-segmented-btn { display: inline-flex; align-items: center; gap: 6px; }
 .dsh-agy-radio-card, .dsh-agy-segmented { min-width: 0; flex-wrap: wrap; }
 .dsh-agy-radio-card:has(input:disabled), .dsh-agy-segmented-btn:has(input:disabled) { cursor: not-allowed; opacity: .6; }
@@ -759,6 +762,227 @@ export const SETTINGS_CSS = `
 .dsh-agy-page :is(button, input, select, a):focus-visible { outline: 2px solid var(--dsw-alias-label-primary, Highlight); outline-offset: 2px; }
 .dsh-agy-input::placeholder { color: var(--dsw-alias-label-secondary, GrayText); opacity: 1; }
 .dsh-agy-page :is(input, select):disabled { opacity: .6; cursor: not-allowed; }
+
+/* ---- Shared layout primitives (every tab uses these instead of inline styles) ---- */
+.dsh-agy-stack { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.dsh-agy-stack.is-tight { gap: 6px; }
+.dsh-agy-fieldset { border: 0; padding: 0; margin: 0; min-width: 0; display: flex; flex-direction: column; gap: 6px; }
+.dsh-agy-fieldset > legend { padding: 0; margin-bottom: 6px; }
+
+/* Card header: title and one-line description on the left, a trailing control on the right. */
+.dsh-agy-section-head {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  min-width: 0;
+}
+.dsh-agy-section-text { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.dsh-agy-section-title {
+  margin: 0;
+  font-size: 13px;
+  line-height: 18px;
+  font-weight: 600;
+  color: var(--dsw-alias-label-primary, CanvasText);
+}
+.dsh-agy-section-desc {
+  margin: 0;
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-secondary, GrayText);
+  overflow-wrap: anywhere;
+}
+.dsh-agy-divider { height: 1px; border: 0; margin: 0; background: var(--dsw-alias-border-l3, GrayText); opacity: .7; }
+
+/* Two fields side by side once the page is wide enough. */
+.dsh-agy-field-grid { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
+@container agy-settings (min-width: 460px) {
+  .dsh-agy-field-grid { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+}
+.dsh-agy-input-row { display: flex; align-items: center; gap: 6px; min-width: 0; }
+.dsh-agy-input-row > .dsh-agy-input { flex: 1 1 auto; min-width: 0; }
+.dsh-agy-input-row > .dsh-agy-btn { flex: 0 0 auto; }
+.dsh-agy-mono, .dsh-agy-input.dsh-agy-mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+}
+.dsh-agy-hint { margin: 0; font-size: 11px; line-height: 16px; color: var(--dsw-alias-label-secondary, GrayText); }
+
+/* Toggle switch: a native checkbox restyled, so labels, forms and keyboard keep working. */
+.dsh-agy-switch {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  font-size: 12px;
+  line-height: 18px;
+  color: var(--dsw-alias-label-primary, CanvasText);
+  cursor: pointer;
+  user-select: none;
+  min-width: 0;
+}
+.dsh-agy-switch input {
+  appearance: none;
+  -webkit-appearance: none;
+  position: relative;
+  flex: 0 0 auto;
+  width: 30px;
+  height: 18px;
+  margin: 0;
+  border-radius: 9px;
+  border: 1px solid var(--dsw-alias-border-l3, GrayText);
+  background: var(--dsw-alias-interactive-bg-hover, ButtonFace);
+  cursor: pointer;
+  transition: background 0.15s ease, border-color 0.15s ease;
+}
+.dsh-agy-switch input::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  border-radius: 50%;
+  background: var(--dsw-alias-label-secondary, GrayText);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.dsh-agy-switch input:checked {
+  background: var(--dsw-alias-button-primary-fill, Highlight);
+  border-color: var(--dsw-alias-button-primary-fill, Highlight);
+}
+.dsh-agy-switch input:checked::after {
+  transform: translateX(12px);
+  background: var(--dsw-alias-label-primary-foreground, HighlightText);
+}
+.dsh-agy-switch:has(input:disabled) { cursor: not-allowed; opacity: .6; }
+
+/* Status strip: one line that says what is running, where, and how healthy. */
+.dsh-agy-status-strip {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-width: 0;
+}
+.dsh-agy-status-main { display: flex; align-items: center; gap: 8px; min-width: 0; }
+.dsh-agy-status-label { font-size: 13px; line-height: 18px; font-weight: 600; color: var(--dsw-alias-label-primary, CanvasText); }
+.dsh-agy-status-meta { font-size: 11px; color: var(--dsw-alias-label-secondary, GrayText); overflow-wrap: anywhere; }
+.dsh-agy-dot.is-warn { background: var(--dsw-alias-state-warn-primary, CanvasText); }
+.dsh-agy-dot.is-pulse { animation: dsh-agy-pulse 1.2s ease-in-out infinite; }
+@keyframes dsh-agy-pulse { 50% { opacity: .35; } }
+
+/* Health tiles: small independent checks shown side by side. */
+.dsh-agy-health {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 6px;
+}
+.dsh-agy-health-tile {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-l3, GrayText);
+  background: var(--dsw-alias-interactive-bg-hover, ButtonFace);
+  min-width: 0;
+}
+.dsh-agy-health-name { display: flex; align-items: center; gap: 6px; font-size: 12px; font-weight: 500; color: var(--dsw-alias-label-primary, CanvasText); }
+.dsh-agy-health-detail { font-size: 11px; color: var(--dsw-alias-label-secondary, GrayText); overflow-wrap: anywhere; }
+
+/* Pills: compact facts such as latency or a model count. */
+.dsh-agy-pills { display: flex; flex-wrap: wrap; gap: 4px; }
+.dsh-agy-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--dsw-alias-border-l3, GrayText);
+  font-size: 11px;
+  line-height: 16px;
+  font-variant-numeric: tabular-nums;
+  color: var(--dsw-alias-label-secondary, GrayText);
+  white-space: nowrap;
+}
+.dsh-agy-pill.is-success { color: var(--dsw-alias-state-success-primary, CanvasText); border-color: rgba(65, 201, 119, 0.4); }
+.dsh-agy-pill.is-warn { color: var(--dsw-alias-state-warn-primary, CanvasText); border-color: rgba(250, 140, 22, 0.4); }
+.dsh-agy-pill.is-error { color: var(--dsw-alias-state-error-primary, CanvasText); border-color: rgba(242, 90, 90, 0.4); }
+
+/* Callout: one explanatory paragraph that should not look like an error. */
+.dsh-agy-callout {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border-left: 3px solid var(--dsw-alias-button-primary-fill, Highlight);
+  background: var(--dsw-alias-interactive-bg-hover, ButtonFace);
+  font-size: 11px;
+  line-height: 16px;
+  color: var(--dsw-alias-label-secondary, GrayText);
+}
+.dsh-agy-callout.is-warn { border-left-color: var(--dsw-alias-state-warn-primary, CanvasText); }
+
+/* Code block for copyable snippets. */
+.dsh-agy-pre {
+  margin: 0;
+  padding: 8px 10px;
+  border-radius: 6px;
+  border: 1px solid var(--dsw-alias-border-l3, GrayText);
+  background: var(--dsw-alias-bg-layer-2, Canvas);
+  color: var(--dsw-alias-label-primary, CanvasText);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 11px;
+  line-height: 16px;
+  overflow-x: auto;
+  white-space: pre;
+}
+.dsh-agy-code-terminal > code { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
+/* Selectable rows (model list): the account list's divider rhythm with a leading checkbox. */
+.dsh-agy-option-list {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--dsw-alias-border-l3, GrayText);
+  border-radius: 6px;
+  overflow: hidden;
+}
+.dsh-agy-option {
+  display: grid;
+  grid-template-columns: 16px minmax(0, 1fr) max-content;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 10px;
+  cursor: pointer;
+  transition: background 0.15s ease;
+  min-width: 0;
+}
+.dsh-agy-option + .dsh-agy-option { border-top: 1px solid var(--dsw-alias-border-l3, GrayText); }
+.dsh-agy-option:hover { background: var(--dsw-alias-interactive-bg-hover, ButtonFace); }
+.dsh-agy-option.is-active { background: rgba(22, 119, 255, 0.06); }
+.dsh-agy-option input { margin: 0; accent-color: var(--dsw-alias-button-primary-fill, Highlight); cursor: pointer; }
+.dsh-agy-option-text { display: flex; flex-direction: column; gap: 1px; min-width: 0; }
+.dsh-agy-option-name { font-size: 12px; line-height: 18px; font-weight: 500; color: var(--dsw-alias-label-primary, CanvasText); overflow-wrap: anywhere; }
+.dsh-agy-option-meta {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 10.5px;
+  line-height: 14px;
+  color: var(--dsw-alias-label-secondary, GrayText);
+  overflow-wrap: anywhere;
+}
+.dsh-agy-option:has(input:disabled) { cursor: not-allowed; opacity: .6; }
+.dsh-agy-radio-card input[type="radio"] { margin: 0; accent-color: var(--dsw-alias-button-primary-fill, Highlight); }
+.dsh-agy-segmented-btn input[type="radio"] { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
+.dsh-agy-segmented-btn { position: relative; }
+.dsh-agy-segmented-btn:has(input:focus-visible) { outline: 2px solid var(--dsw-alias-label-primary, Highlight); outline-offset: 1px; }
+.dsh-agy-range { width: 100%; accent-color: var(--dsw-alias-button-primary-fill, Highlight); }
+
+/* Summary bar above the account list. */
+.dsh-agy-summary { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+.dsh-agy-summary-main { display: flex; align-items: center; gap: 8px; min-width: 0; flex-wrap: wrap; }
+
+@media (prefers-reduced-motion: reduce) {
+  .dsh-agy-page *, .dsh-agy-toast-float { animation: none !important; transition: none !important; }
+}
 `
 
 export function ensureThemeStyles(): void {

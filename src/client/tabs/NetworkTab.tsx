@@ -27,7 +27,11 @@ export function NetworkTab(props: NetworkTabProps) {
 
   return (
     <div className="dsh-agy-card">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '8px', marginTop: '2px' }}>
+      <div className="dsh-agy-section-text">
+        <p className="dsh-agy-section-title">{t('tabNetwork')}</p>
+        <p className="dsh-agy-section-desc">{t('networkDesc')}</p>
+      </div>
+      <div className="dsh-agy-stack is-tight">
         <label className="dsh-agy-field">
           <span className="dsh-agy-control-label">{t('network')}</span>
           <select
@@ -50,7 +54,7 @@ export function NetworkTab(props: NetworkTabProps) {
             </span>
             <input
               type="text"
-              className="dsh-agy-input"
+              className="dsh-agy-input dsh-agy-mono"
               aria-label={t('proxyUrl')}
               placeholder="http://127.0.0.1:7890"
               value={network.url}
@@ -60,9 +64,9 @@ export function NetworkTab(props: NetworkTabProps) {
           </label>
         ) : null}
 
-        <div className="dsh-agy-field dsh-agy-muted">
-          <span>{t('effectiveNetwork')}</span>
-          <code className="dsh-agy-proxy-route">
+        <div className="dsh-agy-actions">
+          <span className="dsh-agy-status-meta">{t('effectiveNetwork')}</span>
+          <code className="dsh-agy-pill dsh-agy-mono dsh-agy-proxy-route">
             {network.effective || 'direct'}
           </code>
         </div>
