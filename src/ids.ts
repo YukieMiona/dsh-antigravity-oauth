@@ -14,7 +14,9 @@ export const ACCOUNT_SWITCH_PATH = '/plugins/dsh-antigravity-oauth/auth/accounts
 export const ACCOUNT_REMOVE_PATH = '/plugins/dsh-antigravity-oauth/auth/accounts/remove'
 export const ACCOUNT_QUOTAS_PATH = '/plugins/dsh-antigravity-oauth/auth/accounts/quotas'
 export const ADVANCED_SETTINGS_PATH = '/plugins/dsh-antigravity-oauth/advanced'
+export const AVAILABLE_MODELS_PATH = '/plugins/dsh-antigravity-oauth/models/available'
 export const QUOTA_SUMMARY_PATH = '/v1internal:retrieveUserQuotaSummary'
+export const FETCH_AVAILABLE_MODELS_PATH = '/v1internal:fetchAvailableModels'
 
 export const DAILY_ENDPOINT = 'https://daily-cloudcode-pa.googleapis.com'
 export const SANDBOX_ENDPOINT = 'https://daily-cloudcode-pa.sandbox.googleapis.com'
@@ -58,5 +60,15 @@ export const WEB2API_SETTINGS_PATH = '/plugins/dsh-antigravity-oauth/web2api/set
 export const WEB2API_TEST_PATH = '/plugins/dsh-antigravity-oauth/web2api/test'
 export const ACCOUNT_TOGGLE_ARGON_PATH = '/plugins/dsh-antigravity-oauth/auth/accounts/toggle-argon'
 export const MANAGER_TEST_PATH = '/plugins/dsh-antigravity-oauth/manager/test'
+export const MANAGER_SETTINGS_PATH = '/plugins/dsh-antigravity-oauth/manager/settings'
+export const MANAGER_FILENAME = '.dsh-antigravity-oauth.manager.json'
+export const DEFAULT_MANAGER_BASE_URL = 'http://127.0.0.1:8045/v1'
+/** The native language_server only needs to answer; any HTTP status proves it is up. */
+export const DEFAULT_NATIVE_CORE_URL = 'http://127.0.0.1:18046'
+
+export const API_SERVER_FILENAME = '.dsh-antigravity-oauth.api-server.json'
+export const API_SERVER_PATH = '/plugins/dsh-antigravity-oauth/api-server'
+export const DEFAULT_API_SERVER_PORT = 18045
+export const DEFAULT_API_SERVER_HOST = '127.0.0.1'
 
 export const THOUGHT_SIGNATURE_MAX_ENTRIES = 5000

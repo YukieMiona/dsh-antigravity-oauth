@@ -11,15 +11,19 @@ const REMOVE_PATH = '/plugins/dsh-antigravity-oauth/auth/accounts/remove'
 const QUOTAS_PATH = '/plugins/dsh-antigravity-oauth/auth/accounts/quotas'
 const ADVANCED_PATH = '/plugins/dsh-antigravity-oauth/advanced'
 const NETWORK_PATH = '/plugins/dsh-antigravity-oauth/network'
+const API_SERVER_PATH = '/plugins/dsh-antigravity-oauth/api-server'
+const AVAILABLE_MODELS_PATH = '/plugins/dsh-antigravity-oauth/models/available'
 const WEB2API_SETTINGS_PATH = '/plugins/dsh-antigravity-oauth/web2api/settings'
 const WEB2API_TEST_PATH = '/plugins/dsh-antigravity-oauth/web2api/test'
+const MANAGER_SETTINGS_PATH = '/plugins/dsh-antigravity-oauth/manager/settings'
+const MANAGER_TEST_PATH = '/plugins/dsh-antigravity-oauth/manager/test'
 
 const DOCKER_CMD = 'docker run -d --name gemini-web2api -p 18088:18088 zexadev/gemini-web2api-go:latest'
 export const COMPACT_VIEW_KEY = 'dsh-antigravity-oauth.compact-view'
 const DISMISSED_BANNER_KEY = 'dsh-antigravity-oauth.dismissed-banner'
 const DISMISSED_WEB2API_GUIDE_KEY = 'dsh-antigravity-oauth.dismissed-web2api-guide'
 
-type ActiveTab = 'accounts' | 'advanced' | 'web2api' | 'network'
+type ActiveTab = 'accounts' | 'bridge' | 'advanced' | 'api-server' | 'web2api' | 'network'
 
 export interface AntigravitySettingsInjected {
   t: (key: AntigravityKey, params?: Record<string, unknown>) => string
@@ -29,8 +33,15 @@ export type AntigravitySettingsProps = Partial<AntigravitySettingsInjected>
 
 import { AccountsTab } from './tabs/AccountsTab.tsx'
 import { AdvancedTab } from './tabs/AdvancedTab.tsx'
+import { ApiServerTab } from './tabs/ApiServerTab.tsx'
+import { ManagerTab, type BridgePatch } from './tabs/ManagerTab.tsx'
+import type { ManagerSettingsView } from '../manager/store.ts'
+import type { BridgeProbeResult } from '../manager/probe.ts'
 import { Web2ApiTab } from './tabs/Web2ApiTab.tsx'
 import { NetworkTab, type Network } from './tabs/NetworkTab.tsx'
+import type { ApiServerSettings, ApiServerStatus } from '../api-server/types.ts'
+import { DEFAULT_API_SERVER_SETTINGS } from '../api-server/types.ts'
+import { DEFAULT_CATALOG_MODELS, type ModelCatalogItem } from '../models.ts'
 import { ensureThemeStyles } from './theme.ts'
 import { evaluateQuotaMetrics as getAccountQuotaMetrics } from '../quota-core.ts'
 
@@ -85,7 +96,17 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
   const [advancedContextWindow, setAdvancedContextWindow] = useState<number>(1_048_576)
   const [advancedStrategy, setAdvancedStrategy] = useState<'failover_429' | 'proactive_threshold' | 'round_robin' | 'manual'>('failover_429')
   const [advancedThreshold, setAdvancedThreshold] = useState<number>(20)
+  const [advancedEnabledModels, setAdvancedEnabledModels] = useState<string[]>(['gemini-3.8-flash'])
+  const [availableModels, setAvailableModels] = useState<ModelCatalogItem[]>([...DEFAULT_CATALOG_MODELS])
   const [savingAdvanced, setSavingAdvanced] = useState(false)
+
+  // API Server state
+  const [apiServerSettings, setApiServerSettings] = useState<ApiServerSettings>(DEFAULT_API_SERVER_SETTINGS)
+  const [apiServerStatus, setApiServerStatus] = useState<ApiServerStatus>({ running: false, host: '127.0.0.1', port: 18045 })
+  const [savingApiServer, setSavingApiServer] = useState(false)
+
+  // Native bridge state
+  const [bridgeSettings, setBridgeSettings] = useState<ManagerSettingsView>()
 
   // One-time dismissible banner state (persisted)
   const [bannerDismissed, setBannerDismissed] = useState<boolean>(() => {
@@ -127,15 +148,18 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     }
   }, [t])
 
-  const refreshQuotas = useCallback(async () => {
+  const refreshQuotas = useCallback(async (announce = false) => {
     setLoadingQuotas(true)
     setError(undefined)
     try {
       const res = await jsonRequest<{ ok: boolean, quotas: Record<string, AccountQuotaSummary> }>(QUOTAS_PATH)
       if (res?.quotas) {
         setQuotas(res.quotas)
-        setToastMessage(t('quotas') + ' ' + (t('statusConnected') || 'refreshed'))
-        setTimeout(() => setToastMessage(null), 2500)
+        // Opening the page loads quotas silently; only an explicit refresh deserves a toast.
+        if (announce) {
+          setToastMessage(t('quotasRefreshed'))
+          setTimeout(() => setToastMessage(null), 2500)
+        }
       } else {
         setError('Quota response was empty')
       }
@@ -154,6 +178,9 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
         if (res.settings.modelContextWindow) setAdvancedContextWindow(Number(res.settings.modelContextWindow))
         if (res.settings.switchingStrategy) setAdvancedStrategy(res.settings.switchingStrategy)
         if (typeof res.settings.proactiveThreshold === 'number') setAdvancedThreshold(res.settings.proactiveThreshold)
+        if (Array.isArray(res.settings.enabledModels) && res.settings.enabledModels.length > 0) {
+          setAdvancedEnabledModels(res.settings.enabledModels)
+        }
       }
     } catch {}
   }, [])
@@ -167,6 +194,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
         modelContextWindow: advancedContextWindow,
         switchingStrategy: advancedStrategy,
         proactiveThreshold: advancedThreshold,
+        enabledModels: advancedEnabledModels,
       })
       setToastMessage(t('advancedSaved'))
       setTimeout(() => setToastMessage(null), 3000)
@@ -176,6 +204,56 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
       setSavingAdvanced(false)
     }
   }
+
+  const loadApiServer = useCallback(async () => {
+    try {
+      const res = await jsonRequest<{ ok: boolean, settings: ApiServerSettings, status: ApiServerStatus }>(API_SERVER_PATH)
+      if (res?.settings) setApiServerSettings(res.settings)
+      if (res?.status) setApiServerStatus(res.status)
+    } catch {}
+  }, [])
+
+  const saveApiServerSettings = async (partial: Partial<ApiServerSettings>) => {
+    setSavingApiServer(true)
+    setError(undefined)
+    try {
+      const nextSettings = { ...apiServerSettings, ...partial }
+      const res = await jsonRequest<{ ok: boolean, settings: ApiServerSettings, status: ApiServerStatus }>(API_SERVER_PATH, 'POST', nextSettings)
+      if (res?.settings) setApiServerSettings(res.settings)
+      if (res?.status) setApiServerStatus(res.status)
+      setToastMessage(t('saveSettings'))
+      setTimeout(() => setToastMessage(null), 2500)
+    } catch (caught: unknown) {
+      setError(caught instanceof Error ? caught.message : 'Failed to save API server settings')
+    } finally {
+      setSavingApiServer(false)
+    }
+  }
+
+  const regenerateApiKey = () => {
+    const chars = '0123456789abcdef'
+    let rand = ''
+    for (let i = 0; i < 32; i++) {
+      rand += chars[Math.floor(Math.random() * chars.length)]
+    }
+    const newKey = `sk-agy-${rand}`
+    setApiServerSettings(prev => ({ ...prev, apiKey: newKey }))
+  }
+
+  const loadBridge = useCallback(async () => {
+    try {
+      setBridgeSettings(await jsonRequest<ManagerSettingsView>(MANAGER_SETTINGS_PATH))
+    } catch {}
+  }, [])
+
+  const saveBridge = async (patch: BridgePatch): Promise<ManagerSettingsView> => {
+    const saved = await jsonRequest<ManagerSettingsView>(MANAGER_SETTINGS_PATH, 'POST', patch)
+    setBridgeSettings(saved)
+    return saved
+  }
+
+  const testBridge = (target: { baseUrl: string, apiKey?: string }): Promise<BridgeProbeResult> =>
+    jsonRequest<BridgeProbeResult>(MANAGER_TEST_PATH, 'POST', target)
 
   const loadNetwork = useCallback(async () => {
     try {
@@ -196,13 +274,25 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     } catch {}
   }, [])
 
+  const loadAvailableModels = useCallback(async () => {
+    try {
+      const res = await jsonRequest<{ ok: boolean, models: ModelCatalogItem[] }>(AVAILABLE_MODELS_PATH)
+      if (res?.models && Array.isArray(res.models) && res.models.length > 0) {
+        setAvailableModels(res.models)
+      }
+    } catch {}
+  }, [])
+
   useEffect(() => {
     void refresh()
     void refreshQuotas()
     void loadNetwork()
     void loadWeb2Api()
     void loadAdvanced()
-  }, [refresh, refreshQuotas, loadNetwork, loadWeb2Api, loadAdvanced])
+    void loadApiServer()
+    void loadAvailableModels()
+    void loadBridge()
+  }, [refresh, refreshQuotas, loadNetwork, loadWeb2Api, loadAdvanced, loadApiServer, loadAvailableModels, loadBridge])
 
   const dismissGuide = () => {
     setGuideDismissed(true)
@@ -450,6 +540,16 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
   }, [accounts, searchQuery, sortBy, quotas, activeAccountId])
 
   const signing = status?.status === 'signing-in'
+  const readyCount = useMemo(() => accounts.filter(a => a.ready && !a.dead && !a.limited).length, [accounts])
+  const bridgeOn = bridgeSettings?.enabled === true
+  const tabs: { id: ActiveTab, label: string, on?: boolean }[] = [
+    { id: 'accounts', label: t('tabAccounts') },
+    { id: 'bridge', label: t('tabBridge'), on: bridgeOn },
+    { id: 'advanced', label: t('tabAdvanced') },
+    { id: 'api-server', label: t('tabApiServer'), on: apiServerStatus.running },
+    { id: 'web2api', label: t('tabWeb2api'), on: web2apiEnabled },
+    { id: 'network', label: t('tabNetwork') },
+  ]
 
   return (
     <section className="dsh-agy-page" aria-labelledby="antigravity-settings-title">
@@ -469,49 +569,26 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
             <span className={'dsh-agy-dot ' + (signing ? 'is-signing-in' : activeAccount?.ready ? 'is-signed-in' : 'is-error')} />
             <span>{signing ? t('signingIn') : activeAccount ? activeAccount.email ?? activeAccount.id : t('signedOut')}</span>
           </div>
+          <span className={'dsh-agy-pill ' + (bridgeOn ? 'is-success' : '')} title={bridgeOn ? t('bridgeStatusOn') : t('bridgeStatusOff')}>
+            {bridgeOn ? t('routeBridge') : t('routeDirect')}
+          </span>
         </div>
 
         {/* Navigation Tabs */}
         <nav className="dsh-agy-tabs" role="tablist">
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'accounts'}
-            className={'dsh-agy-tab-btn ' + (activeTab === 'accounts' ? 'is-active' : '')}
-            onClick={() => setActiveTab('accounts')}
-          >
-            <span>{t('tabAccounts')}</span>
-          </button>
-
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'advanced'}
-            className={'dsh-agy-tab-btn ' + (activeTab === 'advanced' ? 'is-active' : '')}
-            onClick={() => setActiveTab('advanced')}
-          >
-            <span>{t('tabAdvanced')}</span>
-          </button>
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'web2api'}
-            className={'dsh-agy-tab-btn ' + (activeTab === 'web2api' ? 'is-active' : '')}
-            onClick={() => setActiveTab('web2api')}
-          >
-            <span className={'dsh-agy-dot ' + (web2apiEnabled ? 'is-signed-in' : '')} style={{ width: '6px', height: '6px' }} />
-            <span>{t('tabWeb2api')}</span>
-          </button>
-
-          <button
-            type="button"
-            role="tab"
-            aria-selected={activeTab === 'network'}
-            className={'dsh-agy-tab-btn ' + (activeTab === 'network' ? 'is-active' : '')}
-            onClick={() => setActiveTab('network')}
-          >
-            <span>{t('tabNetwork')}</span>
-          </button>
+          {tabs.map(tab => (
+            <button
+              key={tab.id}
+              type="button"
+              role="tab"
+              aria-selected={activeTab === tab.id}
+              className={'dsh-agy-tab-btn ' + (activeTab === tab.id ? 'is-active' : '')}
+              onClick={() => setActiveTab(tab.id)}
+            >
+              {tab.on !== undefined ? <span className={'dsh-agy-dot ' + (tab.on ? 'is-signed-in' : '')} style={{ width: '6px', height: '6px' }} /> : null}
+              <span>{tab.label}</span>
+            </button>
+          ))}
         </nav>
       </div>
 
@@ -542,26 +619,29 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
         <div style={{ display: 'flex', flexDirection: 'column', gap: '10px' }}>
           {/* Streamlined Summary Bar */}
           <div className="dsh-agy-card" style={{ padding: '8px 12px' }}>
-            <div className="dsh-agy-row">
-              <div style={{ display: 'flex', alignItems: 'center', gap: '8px' }}>
-                <span className={'dsh-agy-dot ' + (signing ? 'is-signing-in' : activeAccount?.ready ? 'is-signed-in' : 'is-error')} />
-                <span style={{ fontSize: '12px', fontWeight: 500 }}>
+            <div className="dsh-agy-summary">
+              <div className="dsh-agy-summary-main">
+                <span className={'dsh-agy-dot ' + (signing ? 'is-signing-in is-pulse' : activeAccount?.ready ? 'is-signed-in' : 'is-error')} />
+                <span className="dsh-agy-status-label" style={{ fontSize: '12px' }}>
                   {signing ? t('signingIn') : activeAccount ? (activeAccount.ready ? t('signedIn') : t('authorized')) : t('signedOut')}
                 </span>
+                {accounts.length > 0 ? (
+                  <span className="dsh-agy-status-meta">{t('accountsSummary', { ready: readyCount, total: accounts.length })}</span>
+                ) : null}
               </div>
-              <div style={{ display: 'flex', gap: '8px' }}>
+              <div className="dsh-agy-actions">
                 {signing ? (
                   <button type="button" className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact" disabled={busy || Boolean(switchingId)} onClick={() => { void recover('cancel') }}>
                     {t('cancel')}
                   </button>
                 ) : (
-                  <button type="button" className="dsh-agy-btn dsh-agy-btn-primary" disabled={busy || Boolean(switchingId)} onClick={() => { void signIn() }}>
+                  <button type="button" className="dsh-agy-btn dsh-agy-btn-primary dsh-agy-btn-compact" disabled={busy || Boolean(switchingId)} onClick={() => { void signIn() }}>
                     {busy ? t('working') : accounts.length === 0 ? t('login') : t('addAccount')}
                   </button>
                 )}
                 {accounts.length > 0 ? (
-                  <button type="button" className="dsh-agy-btn dsh-agy-btn-secondary" disabled={busy || Boolean(switchingId) || loadingQuotas} onClick={() => { void refreshQuotas() }}>
-                    {loadingQuotas ? '...' : t('refreshQuotas')}
+                  <button type="button" className="dsh-agy-btn dsh-agy-btn-secondary dsh-agy-btn-compact" disabled={busy || Boolean(switchingId) || loadingQuotas} onClick={() => { void refreshQuotas(true) }}>
+                    {loadingQuotas ? t('working') : t('refreshQuotas')}
                   </button>
                 ) : null}
               </div>
@@ -613,7 +693,18 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
         </div>
       ) : null}
 
-      {/* TAB 2: ADVANCED CONFIGURATION */}
+      {/* TAB 2: NATIVE BRIDGE */}
+      {activeTab === 'bridge' ? (
+        <ManagerTab
+          t={t}
+          settings={bridgeSettings}
+          enabledModels={advancedEnabledModels}
+          save={saveBridge}
+          test={testBridge}
+        />
+      ) : null}
+
+      {/* TAB 3: ADVANCED CONFIGURATION */}
       {activeTab === 'advanced' ? (
         <AdvancedTab
           t={t}
@@ -625,12 +716,27 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
           setAdvancedStrategy={setAdvancedStrategy}
           advancedThreshold={advancedThreshold}
           setAdvancedThreshold={setAdvancedThreshold}
+          advancedEnabledModels={advancedEnabledModels}
+          setAdvancedEnabledModels={setAdvancedEnabledModels}
+          availableModels={availableModels}
           savingAdvanced={savingAdvanced}
           saveAdvanced={() => { void saveAdvanced() }}
         />
       ) : null}
 
-      {/* TAB 3: WEB2API GATEWAY (PLAN C) */}
+      {/* TAB 4: API SERVER PROXY */}
+      {activeTab === 'api-server' ? (
+        <ApiServerTab
+          t={t}
+          settings={apiServerSettings}
+          status={apiServerStatus}
+          saving={savingApiServer}
+          saveSettings={saveApiServerSettings}
+          regenerateKey={regenerateApiKey}
+        />
+      ) : null}
+
+      {/* TAB 5: WEB2API GATEWAY */}
       {activeTab === 'web2api' ? (
         <Web2ApiTab
           t={t}
@@ -658,7 +764,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
         />
       ) : null}
 
-      {/* TAB 4: NETWORK & PROXY */}
+      {/* TAB 6: NETWORK & PROXY */}
       {activeTab === 'network' ? (
         <NetworkTab
           t={t}

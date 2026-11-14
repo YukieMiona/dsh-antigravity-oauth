@@ -2,6 +2,16 @@
 
 This file records completed features, fixes, and process milestones in `YukieMiona/dsh-antigravity-oauth`. Open tasks and acceptance rules live on [Issue 2](https://github.com/YukieMiona/dsh-antigravity-oauth/issues/2). Pull requests hold full test and review logs.
 
+## Unreleased
+
+Not yet through GitHub Actions; typecheck and bundle build pass locally.
+
+- Bridge: route the `agy-google-antigravity` provider through a local OpenAI-compatible gateway (Antigravity Manager) when enabled, with full tool-call and tool-result translation, complete block lifecycles, usage, two gateway 5xx retries, and gateway plus native-core health probes. The API key never leaves the server (`GET` returns a masked view).
+- Bridge: register the provider route while the bridge is on even without direct accounts, and keep DSH's own web tools on that route because native Google search exists only on the direct path.
+- Stability: back off for 60 seconds after a failed model-catalog fetch and share one in-flight fetch, so a flaky upstream no longer stalls every model lookup.
+- Stability: the local API server force-closes lingering sockets on stop and retries `EADDRINUSE` during hot reload instead of staying down.
+- UI: add the Bridge tab; rebuild Advanced, API Server, Web2API and Network on shared primitives (section headers, switches, health tiles, option rows) in the Accounts tab's style; make the tab bar fit any tab count; mask the API server key by default; announce quota refreshes only when asked.
+
 ## v0.2.4.2 (2026-11-08)
 
 Release `v0.2.4.2` adds background quota protection, multi-strategy account rotation, self-healing for bad images, extended idle timeouts, and restores the clean four-tab navigation. Every item below passed GitHub Actions gates on `dev`:

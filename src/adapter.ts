@@ -20,8 +20,10 @@ import { resolveImageBlock, type ImageAccessResolver } from './image-input.ts'
 import { HARNESS_ROUTE, STREAM_IDLE_TIMEOUT_MS } from './ids.ts'
 import { IdleWatchdog } from './idle-watchdog.ts'
 import {
+  DEFAULT_CATALOG_MODELS,
   DEFAULT_REASONING_EFFORT,
   isPublicModelId,
+  type ModelCatalogItem,
   PUBLIC_MODELS,
   publicModel,
   REASONING_EFFORTS,
@@ -49,6 +51,8 @@ import {
   withSearchContinueGuidance,
 } from './search-turn.ts'
 import type { AntigravitySession } from './session.ts'
+import { streamBridge, toBridgeMessages, toBridgeTools, type BridgeRequest } from './manager/bridge.ts'
+import type { ManagerSettings } from './manager/store.ts'
 import type {
   AntigravityLease,
   CcaEvent,
@@ -479,20 +483,46 @@ export class AntigravityAdapter extends LlmAdapter {
     return { id: provider, name: 'Google Antigravity' }
   }
 
-  override listModels(provider: string): Promise<readonly LlmModelInfo[]> {
+  override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
     const inputModalities = this.options.disableImageUpload === true
       ? (['text'] as const)
       : (['text', 'image'] as const)
-    return Promise.resolve(PUBLIC_MODELS.map(model => ({
+    let catalog: readonly ModelCatalogItem[] = DEFAULT_CATALOG_MODELS
+    if (typeof (this.session as any).getAvailableModels === 'function') {
+      try {
+        catalog = await (this.session as any).getAvailableModels()
+      } catch {}
+    }
+    const catalogMap = new Map(catalog.map(m => [m.id, m]))
+
+    let enabledIds: string[] = ['gemini-3.8-flash']
+    if (typeof this.session.getAdvancedSettings === 'function') {
+      try {
+        const adv = await this.session.getAdvancedSettings()
+        if (Array.isArray(adv?.enabledModels) && adv.enabledModels.length > 0) {
+          enabledIds = adv.enabledModels
+        }
+      } catch {}
+    }
+    const enabledSet = new Set(enabledIds)
+    const activeModels = catalog.filter(m => enabledSet.has(m.id))
+    const list = activeModels.length > 0 ? activeModels : catalog.filter(m => m.id === 'gemini-3.8-flash')
+    return list.map(model => ({
       provider,
       id: model.id,
       name: model.name,
-      inputModalities,
-    })))
+      inputModalities: model.supportsImages === false ? (['text'] as const) : inputModalities,
+    }))
   }
 
   override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
-    const spec = publicModel(model)
+    let spec = publicModel(model)
+    if (!spec && typeof (this.session as any).getAvailableModels === 'function') {
+      try {
+        const catalog: ModelCatalogItem[] = await (this.session as any).getAvailableModels()
+        spec = catalog.find(m => m.id === model)
+      } catch {}
+    }
     const name = spec?.name ?? model
     const inputModalities = this.options.disableImageUpload === true
       ? (['text'] as const)
@@ -549,6 +579,12 @@ export class AntigravityAdapter extends LlmAdapter {
       ? 'gemini-3.8-flash'
       : options.model
 
+    const bridge = await this.session.manager?.read()
+    if (bridge?.enabled === true) {
+      yield* this.streamViaBridge(options, targetModel, bridge)
+      return
+    }
+
     const lease = await this.session.acquire({ model: targetModel })
     if (lease === undefined) {
       throw new LlmError(
@@ -559,20 +595,7 @@ export class AntigravityAdapter extends LlmAdapter {
     const effort = effortOf(options)
     const wire = routeChatModel(targetModel, effort)
     const functions = functionsFor(options, this.options.nativeSearch)
-    if (this.options.disableImageUpload !== true) {
-      const offloadImages = requiredImageOffload(
-        options.messages,
-        IMAGE_REQUEST_BUDGET,
-        block => imageBytesOf(block.attachment),
-      )
-      if (offloadImages > 0) {
-        throw new LlmError(
-          `Request images exceed the route budget; ${offloadImages} more oldest occurrence(s) must be offloaded.`,
-          IMAGE_OFFLOAD_REQUIRED_CODE,
-          { offloadImages },
-        )
-      }
-    }
+    this.assertImageBudget(options)
     const contents = await convertMessages(
       options.messages,
       this.session.thoughtSignatures,
@@ -596,14 +619,74 @@ export class AntigravityAdapter extends LlmAdapter {
     }
     const state = createEmitState()
     const hasInlineImages = contents.some(c => c.parts.some(p => 'inlineData' in p))
-    // AM4: Extend first-byte idle timeout for inline images or high reasoning effort to prevent premature abort
+    const watchdog = new IdleWatchdog(this.idleTimeoutFor(effort, hasInlineImages), options.signal)
+    try {
+      yield* this.streamWithFailover(options, targetModel, input, state, watchdog, lease)
+    } finally {
+      watchdog.dispose()
+    }
+  }
+
+  private assertImageBudget(options: GenerateOptions): void {
+    if (this.options.disableImageUpload === true) return
+    const offloadImages = requiredImageOffload(
+      options.messages,
+      IMAGE_REQUEST_BUDGET,
+      block => imageBytesOf(block.attachment),
+    )
+    if (offloadImages > 0) {
+      throw new LlmError(
+        `Request images exceed the route budget; ${offloadImages} more oldest occurrence(s) must be offloaded.`,
+        IMAGE_OFFLOAD_REQUIRED_CODE,
+        { offloadImages },
+      )
+    }
+  }
+
+  private idleTimeoutFor(effort: ReasoningEffort, hasInlineImages: boolean): number {
+    // AM4: a high-effort answer or an inline image can take long before its first byte.
     const defaultIdleMs = (effort === 'high' || hasInlineImages)
       ? STREAM_IDLE_TIMEOUT_MS + 180_000
       : STREAM_IDLE_TIMEOUT_MS
-    const idleMs = this.options.streamIdleTimeoutMs ?? defaultIdleMs
-    const watchdog = new IdleWatchdog(idleMs, options.signal)
+    return this.options.streamIdleTimeoutMs ?? defaultIdleMs
+  }
+
+  /**
+   * Native bridge: send the request to the local Antigravity Manager (OpenAI-compatible) instead
+   * of Cloud Code Assist. The gateway runs its own account pool and failover, so none of the
+   * direct-path account logic applies here.
+   */
+  private async *streamViaBridge(
+    options: GenerateOptions,
+    targetModel: string,
+    settings: ManagerSettings,
+  ): AsyncIterable<StreamChunk> {
+    this.assertImageBudget(options)
+    const effort = effortOf(options)
+    const messages = await toBridgeMessages(options, {
+      attachments: this.options.resolveAttachments?.(),
+      resolveAccess: this.options.resolveImageAccess,
+      allowImages: this.options.disableImageUpload !== true,
+    })
+    const auxiliary = options.purpose === 'compaction' || options.purpose === 'session-title'
+    const tools = auxiliary ? [] : toBridgeTools(options.tools)
+    const request: BridgeRequest = {
+      model: routeChatModel(targetModel, effort),
+      messages,
+      stream: true,
+      stream_options: { include_usage: true },
+      ...options.maxTokens === undefined ? {} : { max_tokens: options.maxTokens },
+      ...options.temperature === undefined ? {} : { temperature: options.temperature },
+      ...options.stop === undefined || options.stop.length === 0 ? {} : { stop: options.stop },
+      ...tools.length > 0 ? { tools } : {},
+    }
+    const hasInlineImages = messages.some(m => Array.isArray(m.content) && m.content.some(p => p.type === 'image_url'))
+    const watchdog = new IdleWatchdog(this.idleTimeoutFor(effort, hasInlineImages), options.signal)
     try {
-      yield* this.streamWithFailover(options, targetModel, input, state, watchdog, lease)
+      yield* streamBridge({ settings, request, signal: watchdog.signal, onActivity: () => watchdog.touch() })
+    } catch (error) {
+      if (watchdog.timedOut) throw new LlmError(IDLE_TIMEOUT_MESSAGE, 'TIMEOUT', { cause: error })
+      throw error
     } finally {
       watchdog.dispose()
     }

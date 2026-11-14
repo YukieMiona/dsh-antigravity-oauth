@@ -76,7 +76,9 @@ export async function syncAuthenticatedRoute(
   web2apiRegistration?: AdapterRegistrationHandle,
 ): Promise<void> {
   try {
-    registration.replace(await session.hasReadyAccount() ? [HARNESS_ROUTE] : [])
+    // With the bridge on, the gateway owns the accounts, so the route needs no direct sign-in.
+    const bridged = (await session.manager.read()).enabled
+    registration.replace(bridged || await session.hasReadyAccount() ? [HARNESS_ROUTE] : [])
     if (web2apiRegistration) {
       const webSettings = await session.web2api.read()
       web2apiRegistration.replace(webSettings.enabled ? [WEB2API_ROUTE] : [])
@@ -120,6 +122,14 @@ export function apply(ctx: Context, config: Config): void {
   void refreshRoutes()
   void ensureAntigravityVersion(envProxyFetch)
   ctx.effect(() => {
+    void session.apiServer.start().catch(err => {
+      console.warn('[dsh-antigravity-oauth] failed to start API server:', err)
+    })
+    return () => {
+      void session.apiServer.stop().catch(() => {})
+    }
+  }, 'dsh-antigravity-oauth: api proxy server')
+  ctx.effect(() => {
     const timer = setInterval(() => {
       void session.refreshIfNeeded().catch(() => { /* next poll retries */ })
     }, OAUTH_REFRESH_POLL_MS)
@@ -133,9 +143,9 @@ export function apply(ctx: Context, config: Config): void {
     ctx.inject(['systemPrompt'], promptCtx => {
       promptCtx.on('system-prompt/assemble', async (_assembly, context, next) => {
         const assembled = await next()
-        return context.agent?.options?.provider === HARNESS_ROUTE
-          ? maskDshWebAssembly(assembled)
-          : assembled
+        if (context.agent?.options?.provider !== HARNESS_ROUTE) return assembled
+        // Native Google search only exists on the direct route; through the bridge, DSH keeps its own web tools.
+        return (await session.manager.read()).enabled ? assembled : maskDshWebAssembly(assembled)
       })
     })
   }

@@ -75,7 +75,8 @@ type CcaSession = {
   sessionId: string;
   lastGoodEndpoint: string;
 };
-type ChatWireModelId = 'gemini-4-argon-low' | 'gemini-4-argon-medium' | 'gemini-4-argon-high' | 'gemini-3.8-flash-low' | 'gemini-3.8-flash-medium' | 'gemini-3.8-flash-high' | 'gemini-3.7-flash-low' | 'gemini-3.7-flash-medium' | 'gemini-3.7-flash-high' | 'gemini-3.5-flash-extra-low' | 'gemini-3.5-flash-low' | 'gemini-3-flash-agent';
+type PublicModelId = 'gemini-4-argon' | 'gemini-3.8-flash' | 'gemini-3.7-flash' | 'gemini-3.5-flash' | 'claude-sonnet-4-6' | 'claude-opus-4-6-thinking' | 'gemini-2.5-pro' | 'gpt-oss-120b-medium' | (string & {});
+type ChatWireModelId = 'gemini-4-argon-low' | 'gemini-4-argon-medium' | 'gemini-4-argon-high' | 'gemini-3.8-flash-low' | 'gemini-3.8-flash-medium' | 'gemini-3.8-flash-high' | 'gemini-3.7-flash-low' | 'gemini-3.7-flash-medium' | 'gemini-3.7-flash-high' | 'gemini-3.5-flash-extra-low' | 'gemini-3.5-flash-low' | 'gemini-3-flash-agent' | (string & {});
 type GeminiPart = {
   text: string;
   thought?: boolean;
@@ -220,6 +221,7 @@ interface AdvancedSettings {
   modelContextWindow: number;
   switchingStrategy: 'failover_429' | 'proactive_threshold' | 'round_robin' | 'manual';
   proactiveThreshold: number;
+  enabledModels?: PublicModelId[];
 }
 type StoredAccount = AntigravityGrant & {
   id: string;
@@ -288,6 +290,84 @@ declare class AntigravityWeb2ApiStore {
   testConnection(settings: Partial<Web2ApiSettings>): Promise<Web2ApiTestResult>;
 }
 //#endregion
+//#region src/api-server/types.d.ts
+interface ApiServerSettings {
+  enabled: boolean;
+  host: string;
+  port: number;
+  apiKey: string;
+}
+interface ApiServerStatus {
+  running: boolean;
+  host: string;
+  port: number;
+  error?: string;
+}
+//#endregion
+//#region src/api-server/store.d.ts
+declare class AntigravityApiServerStore {
+  readonly filename: string;
+  constructor(filename: string);
+  read(): Promise<ApiServerSettings>;
+  save(settings: unknown): Promise<ApiServerSettings>;
+}
+//#endregion
+//#region src/api-server/server.d.ts
+declare class AntigravityApiServer {
+  private readonly session;
+  private readonly store;
+  private server;
+  private status;
+  constructor(session: AntigravitySession, store: AntigravityApiServerStore);
+  getStatus(): ApiServerStatus;
+  start(): Promise<ApiServerStatus>;
+  private listen;
+  stop(): Promise<void>;
+  private getEffectiveEnabledModels;
+  private authenticate;
+  private handleRequest;
+  private handleChatCompletions;
+}
+//#endregion
+//#region src/manager/store.d.ts
+/**
+ * Route model requests through a local OpenAI-compatible gateway (Antigravity Manager) instead of
+ * calling Cloud Code Assist directly. The gateway owns its own account pool and failover.
+ */
+interface ManagerSettings {
+  enabled: boolean;
+  /** OpenAI-style base URL ending in `/v1`. */
+  baseUrl: string;
+  apiKey: string;
+}
+declare class AntigravityManagerStore {
+  readonly filename: string;
+  private cached?;
+  constructor(filename: string);
+  /**
+   * The adapter reads this on every request, so a short cache avoids a disk read per turn.
+   * `save()` refreshes it, so a toggle in the UI takes effect immediately.
+   */
+  read(): Promise<ManagerSettings>;
+  /**
+   * Merge a UI patch. `apiKey` omitted keeps the stored key; an empty string clears it.
+   * Throws on an invalid URL so the UI can show the reason.
+   */
+  save(patch: unknown): Promise<ManagerSettings>;
+}
+//#endregion
+//#region src/models.d.ts
+interface ModelCatalogItem {
+  id: string;
+  name: string;
+  contextWindow: number;
+  maxTokens: number;
+  description?: string;
+  supportsImages?: boolean;
+  supportsThinking?: boolean;
+  thinkingBudget?: number;
+}
+//#endregion
 //#region src/session.d.ts
 type FetchImpl = typeof fetch;
 declare class ThoughtSignatureStore implements ReadonlyMap<string, string> {
@@ -314,6 +394,9 @@ declare class AntigravitySession {
   readonly thoughtSignatures: ThoughtSignatureStore;
   readonly network: AntigravityNetwork;
   readonly web2api: AntigravityWeb2ApiStore;
+  readonly apiServerStore: AntigravityApiServerStore;
+  readonly manager: AntigravityManagerStore;
+  readonly apiServer: AntigravityApiServer;
   private readonly fetchImpl;
   private readonly runtimes;
   private readonly precheckAt;
@@ -383,6 +466,15 @@ declare class AntigravitySession {
   retrieveAllQuotas(options?: {
     force?: boolean;
   }): Promise<Record<string, AccountQuotaSummary>>;
+  private availableModelsCache?;
+  private availableModelsFailedAt;
+  private availableModelsInflight?;
+  /**
+   * The model picker calls this often. A failed upstream fetch backs off for a minute, and
+   * concurrent callers share one fetch, so a flaky upstream never stalls every model lookup.
+   */
+  getAvailableModels(): Promise<ModelCatalogItem[]>;
+  private fetchAvailableModelsFromUpstream;
 }
 //#endregion
 //#region src/image-input.d.ts
@@ -412,6 +504,14 @@ declare class AntigravityAdapter extends LlmAdapter {
   listModels(provider: string): Promise<readonly LlmModelInfo[]>;
   resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo>;
   stream(options: GenerateOptions): AsyncIterable<StreamChunk>;
+  private assertImageBudget;
+  private idleTimeoutFor;
+  /**
+   * Native bridge: send the request to the local Antigravity Manager (OpenAI-compatible) instead
+   * of Cloud Code Assist. The gateway runs its own account pool and failover, so none of the
+   * direct-path account logic applies here.
+   */
+  private streamViaBridge;
   private tryFailoverLease;
   private streamWithFailover;
   private handleThoughtEvent;

@@ -4,6 +4,7 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import {
   ACCOUNT_QUOTAS_PATH,
   ADVANCED_SETTINGS_PATH,
+  API_SERVER_PATH,
   ACCOUNT_REMOVE_PATH,
   ACCOUNT_SWITCH_PATH,
   ACCOUNT_TOGGLE_ARGON_PATH,
@@ -11,6 +12,8 @@ import {
   AUTH_LOGIN_PATH,
   AUTH_LOGOUT_PATH,
   AUTH_STATUS_PATH,
+  AVAILABLE_MODELS_PATH,
+  MANAGER_SETTINGS_PATH,
   MANAGER_TEST_PATH,
   WEB2API_SETTINGS_PATH,
   WEB2API_TEST_PATH,
@@ -18,6 +21,8 @@ import {
 import { isSafeAuthUrl, safeMessage } from './redact.ts'
 import type { AntigravitySession } from './session.ts'
 import { NETWORK_PATH } from './network.ts'
+import { probeBridge } from './manager/probe.ts'
+import { normalizeBaseUrl, viewOf } from './manager/store.ts'
 
 function trustedRequest(req: IncomingMessage): boolean {
   const remote = req.socket.remoteAddress
@@ -240,36 +245,39 @@ export function registerAntigravityAuthRoutes(
       }),
       ctx.webServer.register({
         kind: 'exact',
+        path: MANAGER_SETTINGS_PATH,
+        handler: async (req, res) => {
+          if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
+          try {
+            if (req.method === 'GET') return json(res, 200, viewOf(await session.manager.read()))
+            if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+            if (req.headers['content-type']?.split(';')[0] !== 'application/json') {
+              return json(res, 415, { error: 'application/json required' })
+            }
+            const saved = await session.manager.save(await readJson(req))
+            // The model route depends on the bridge switch, so refresh it before answering.
+            await notify()
+            json(res, 200, viewOf(saved))
+          } catch (error) {
+            json(res, 400, { error: safeMessage(error) })
+          }
+        },
+      }),
+      ctx.webServer.register({
+        kind: 'exact',
         path: MANAGER_TEST_PATH,
         handler: async (req, res) => {
           if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
           if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
           try {
-            const start = Date.now()
-            const body = await readJson(req).catch(() => ({}))
-            const rawUrl = typeof (body as Record<string, unknown>).baseUrl === 'string'
-              ? (body as Record<string, unknown>).baseUrl as string
-              : 'http://127.0.0.1:8045/v1'
-            const apiKey = typeof (body as Record<string, unknown>).apiKey === 'string'
-              ? (body as Record<string, unknown>).apiKey as string
-              : ''
-            const testUrl = rawUrl.replace(/\/+$/, '') + '/models'
-            const headers: Record<string, string> = { accept: 'application/json' }
-            if (apiKey) headers.authorization = `Bearer ${apiKey}`
-            const response = await fetch(testUrl, {
-              headers,
-              signal: AbortSignal.timeout(4000),
-            })
-            const latency = Date.now() - start
-            if (!response.ok) {
-              json(res, 200, { ok: false, error: `HTTP ${response.status} ${response.statusText}` })
-              return
-            }
-            const data: any = await response.json().catch(() => ({}))
-            const modelsCount = Array.isArray(data?.data) ? data.data.length : 0
-            json(res, 200, { ok: true, latency, modelsCount })
-          } catch (err: unknown) {
-            json(res, 200, { ok: false, error: safeMessage(err) })
+            const body = await readJson(req) as Record<string, unknown>
+            const stored = await session.manager.read()
+            const baseUrl = body.baseUrl === undefined ? stored.baseUrl : normalizeBaseUrl(body.baseUrl)
+            // An empty key field in the UI means "use the saved key", so the key never has to round-trip.
+            const apiKey = typeof body.apiKey === 'string' && body.apiKey.trim().length > 0 ? body.apiKey.trim() : stored.apiKey
+            json(res, 200, await probeBridge({ baseUrl, apiKey }))
+          } catch (error) {
+            json(res, 400, { error: safeMessage(error) })
           }
         },
       }),
@@ -313,6 +321,49 @@ export function registerAntigravityAuthRoutes(
             return
           }
           json(res, 405, { error: 'method not allowed' })
+        },
+      }),
+      ctx.webServer.register({
+        kind: 'exact',
+        path: API_SERVER_PATH,
+        handler: async (req, res) => {
+          if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
+          if (req.method === 'GET') {
+            try {
+              const settings = await session.apiServerStore.read()
+              const status = session.apiServer.getStatus()
+              json(res, 200, { ok: true, settings, status })
+            } catch (err: unknown) {
+              json(res, 500, { error: safeMessage(err) })
+            }
+            return
+          }
+          if (req.method === 'POST') {
+            try {
+              const body = await readJson(req)
+              const settings = await session.apiServerStore.save(body)
+              const status = await session.apiServer.start()
+              json(res, 200, { ok: true, settings, status })
+            } catch (err: unknown) {
+              json(res, 500, { error: safeMessage(err) })
+            }
+            return
+          }
+          json(res, 405, { error: 'method not allowed' })
+        },
+      }),
+      ctx.webServer.register({
+        kind: 'exact',
+        path: AVAILABLE_MODELS_PATH,
+        handler: async (req, res) => {
+          if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+          if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
+          try {
+            const models = await session.getAvailableModels()
+            json(res, 200, { ok: true, models })
+          } catch (err: unknown) {
+            json(res, 500, { error: safeMessage(err) })
+          }
         },
       }),
       ctx.webServer.register({
