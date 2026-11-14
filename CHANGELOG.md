@@ -2,37 +2,21 @@
 
 This file records completed features, fixes, and process milestones in `YukieMiona/dsh-antigravity-oauth`. Open tasks and acceptance rules live on [Issue 2](https://github.com/YukieMiona/dsh-antigravity-oauth/issues/2). Pull requests hold full test and review logs.
 
-## Unreleased
+## v0.2.5 (2026-11-14)
 
-- agy: older turns that do not fit the 100 KB user message now go into the agent template (verified whole at 600 KB), so about 620 KB travels per request; on this route the plugin reports a 128K-token context window so DSH compacts before anything is dropped.
-- agy: the Route tab shows the CLI version and the Gemini quota left (weekly and five-hour), and warns when the version is outside the tested 1.5.x line.
-- Gateway: no default URL any more (the old default pointed at a removed local manager); an unset URL is reported as such instead of a connection error. The unused native-core probe is removed.
-- API server: non-streaming answers no longer end with a stray line break; reasoning tokens are reported in `completion_tokens_details`.
-- README: document the three request routes (en, zh).
-- API server follows the selected route: Official CLI (shared `agy/turn.ts` with the DSH adapter), Gateway (request relayed with the wire model id), or Direct. Streaming tool calls now carry distinct indexes and a `tool_calls` finish reason.
-- UI: the native core tile and note are removed; the standalone `language_server` service is no longer used.
-- UI: the Request route and Account switching strategy choices use the same list style as Enabled Models; descriptions no longer push the radio onto its own line, and each strategy explains what it does.
-- UI: on the Gateway and Official CLI routes, the header no longer shows a direct account and the Accounts tab drops the active check mark, with a note that those accounts are unused on that route.
-- Accounts: when the active account is banned, the active role moves to a healthy account.
-- agy: the template now states plainly that DSH's tools are available and only the backend's own built-ins are off.
+Release `v0.2.5` adds three request routes (Direct, Gateway, Official CLI), a local OpenAI-compatible API server, handling for accounts that Google disables, and a rebuilt settings UI. Every item below passed GitHub Actions gates on `dev`:
 
-- agy route speed and truncation fix: DSH's system prompt and tools now go into a generated agent template with `excludeDefaultComponents: true` (removes agy's ~60 built-in tools and default instructions: 9,488 → 415 overhead tokens), the user message carries only the conversation within a 100 KB budget (agy cut longer messages, losing the latest turn), answer text streams as written, tool calls use a validated `<tool_call>` text contract instead of `--json-schema`, and effort goes to `--effort`. Measured on a 47k-token request: 8 s per turn, down from ~105 s.
-
-- Route: add **Official CLI** (`agy`). Each request is sent to Google's own Antigravity CLI, signed in as the user, as one transcript on stdin; a JSON schema returns either an answer or DSH tool calls. agy's own tools are denied by policy (`permissions.deny` for every action class, `--sandbox`), one agy process runs at a time (~230 MB each), and the Route tab shows its sign-in state. Settings gain `route` (`direct` | `gateway` | `agy`) and `agyPath`; older files with `enabled` still load as before.
-
-- Bans: recognise Google's `403 TOS_VIOLATION` as a disabled account, persist it as `bannedAt` (token refresh no longer clears it), skip it in every account picker, fail over before output, and label it "Disabled by Google (ToS)".
-- API server: accept effort-suffixed ids (`gemini-3.8-flash-low`) and `reasoning_effort`; fail over from banned or rate-limited accounts before response headers are sent; bind host must be an IP literal or `localhost`, editable with suggestions (`172.17.0.1` for Docker containers).
-
-- Route: the Bridge tab becomes a Route selector (Direct or Gateway) with per-route descriptions; the official core is shown for health only, because its generation API takes one plain-text prompt with no tools or streaming.
-- Diagnostics: log one `route=… model=… effort=…` line per request so the journal shows which route served each chat.
-
-### Merged in #23
-
-- Bridge: route the `agy-google-antigravity` provider through a local OpenAI-compatible gateway (Antigravity Manager) when enabled, with full tool-call and tool-result translation, complete block lifecycles, usage, two gateway 5xx retries, and gateway plus native-core health probes. The API key never leaves the server (`GET` returns a masked view).
-- Bridge: register the provider route while the bridge is on even without direct accounts, and keep DSH's own web tools on that route because native Google search exists only on the direct path.
-- Stability: back off for 60 seconds after a failed model-catalog fetch and share one in-flight fetch, so a flaky upstream no longer stalls every model lookup.
-- Stability: the local API server force-closes lingering sockets on stop and retries `EADDRINUSE` during hot reload instead of staying down.
-- UI: add the Bridge tab; rebuild Advanced, API Server, Web2API and Network on shared primitives (section headers, switches, health tiles, option rows) in the Accounts tab's style; make the tab bar fit any tab count; mask the API server key by default; announce quota refreshes only when asked.
+- Routes: a Route tab chooses how the provider reaches Google: Direct (the plugin's own client), Gateway (any OpenAI-compatible gateway, with tool-call translation, usage, and two 5xx retries), or Official CLI (#23, #24, #26).
+- Official CLI: requests go to Google's `agy` client, signed in as the user. DSH's system prompt and tools go into a generated agent template that removes `agy`'s built-in tools; a deny rule for every action class backs it up; DSH runs the tools. Text streams as written, and tool calls use a validated `<tool_call>` contract (#26, #27).
+- Official CLI: about 620 KB travels per request (100 KB in the message, older turns in the template), and the plugin reports a 128K-token context window on this route so DSH compacts before anything is dropped. The Route tab shows the CLI version and the Gemini quota left, and warns outside the tested 1.5.x line (#32).
+- API server: a local OpenAI-compatible endpoint (`/v1/models`, `/v1/chat/completions`, stream and non-stream, tools) that follows the selected route, accepts effort-suffixed model ids and `reasoning_effort`, and binds to an IP literal of your choice (#23, #25, #31).
+- Bans: Google's `403 TOS_VIOLATION` is recognised, persisted as `bannedAt`, skipped by every account picker, failed over before output, and labelled "Disabled by Google (ToS)". The active role moves to a healthy account (#25, #28).
+- Models: the model list comes from the upstream catalog with a 60-second failure backoff and one shared in-flight fetch; Advanced gains an Enabled Models list (#23).
+- Stability: the API server force-closes lingering sockets on stop and retries `EADDRINUSE` during hot reload (#23).
+- UI: Advanced, API Server, Web2API and Network use shared primitives in the Accounts tab's style; route and strategy choices are lists with descriptions; the header and account list follow the route; the tab bar fits any tab count; the API server key is masked by default (#23, #24, #28, #30).
+- Gateway: no default URL; an unset URL is reported as such (#32).
+- Diagnostics: one `route=… model=… effort=…` log line per request, for DSH chats and for the API server (#24, #31).
+- Docs: README documents the request routes in English and Chinese (#32).
 
 ## v0.2.4.2 (2026-11-08)
 
