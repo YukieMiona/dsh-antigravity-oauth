@@ -4,6 +4,8 @@ This file records completed features, fixes, and process milestones in `YukieMio
 
 ## Unreleased
 
+- Route: add **Official CLI** (`agy`). Each request is sent to Google's own Antigravity CLI, signed in as the user, as one transcript on stdin; a JSON schema returns either an answer or DSH tool calls. agy's own tools are denied by policy (`permissions.deny` for every action class, `--sandbox`), one agy process runs at a time (~230 MB each), and the Route tab shows its sign-in state. Settings gain `route` (`direct` | `gateway` | `agy`) and `agyPath`; older files with `enabled` still load as before.
+
 - Bans: recognise Google's `403 TOS_VIOLATION` as a disabled account, persist it as `bannedAt` (token refresh no longer clears it), skip it in every account picker, fail over before output, and label it "Disabled by Google (ToS)".
 - API server: accept effort-suffixed ids (`gemini-3.8-flash-low`) and `reasoning_effort`; fail over from banned or rate-limited accounts before response headers are sent; bind host must be an IP literal or `localhost`, editable with suggestions (`172.17.0.1` for Docker containers).
 

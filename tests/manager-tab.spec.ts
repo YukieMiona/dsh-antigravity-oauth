@@ -17,12 +17,13 @@ describe('ManagerTab', () => {
     root = createRoot(host)
     const full = {
       t,
-      settings: { enabled: false, baseUrl: 'http://127.0.0.1:8045/v1', hasApiKey: true, apiKeyHint: '…4e5f' },
+      settings: { route: 'direct' as const, enabled: false, agyPath: '/root/.local/bin/agy', baseUrl: 'http://127.0.0.1:8045/v1', hasApiKey: true, apiKeyHint: '…4e5f' },
       enabledModels: ['gemini-3.8-flash', 'gemini-3.7-flash'],
-      save: vi.fn(async () => ({ enabled: true, baseUrl: 'http://127.0.0.1:8045/v1', hasApiKey: true, apiKeyHint: '…4e5f' })),
+      save: vi.fn(async () => ({ route: 'gateway' as const, enabled: true, agyPath: '/root/.local/bin/agy', baseUrl: 'http://127.0.0.1:8045/v1', hasApiKey: true, apiKeyHint: '…4e5f' })),
       test: vi.fn(async () => ({
         ok: true, latencyMs: 42, gatewayUp: true, coreUp: true,
         models: ['gemini-3.8-flash-low', 'gemini-3.8-flash-medium', 'gemini-3.8-flash-high'],
+        agy: { installed: true, signedIn: true, models: ['gemini-3.8-flash-low', 'claude-sonnet-4-6'] },
       })),
       ...props,
     }
@@ -46,9 +47,17 @@ describe('ManagerTab', () => {
     expect(host.querySelector<HTMLInputElement>('input[name="agy-route"][value="direct"]')!.checked).toBe(true)
     expect(gateway.closest('label')?.textContent).toContain(en.routeGatewayDesc)
     await act(async () => { gateway.click() })
-    expect(props.save).toHaveBeenLastCalledWith({ enabled: true })
+    expect(props.save).toHaveBeenLastCalledWith({ route: 'gateway' })
     const save = Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find(b => b.textContent === en.bridgeSave)!
     await act(async () => { save.click() })
     expect(props.save).toHaveBeenLastCalledWith({ baseUrl: 'http://127.0.0.1:8045/v1' })
+  })
+  it('offers the official CLI route and shows its sign-in state', async () => {
+    const { host, props } = await mount({})
+    expect(host.textContent).toContain(t('agySignedIn', { count: 2 }))
+    const agy = host.querySelector<HTMLInputElement>('input[name="agy-route"][value="agy"]')!
+    expect(agy.closest('label')?.textContent).toContain(en.routeAgy)
+    await act(async () => { agy.click() })
+    expect(props.save).toHaveBeenLastCalledWith({ route: 'agy' })
   })
 })

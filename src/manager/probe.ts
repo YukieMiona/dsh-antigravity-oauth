@@ -11,6 +11,8 @@ export interface BridgeProbeResult {
   gatewayUp: boolean
   /** Native language_server answers on its local port (any status counts). */
   coreUp: boolean
+  /** Official CLI status; filled by the settings route, absent in direct probe calls. */
+  agy?: { installed: boolean, signedIn: boolean, models: string[], error?: string }
 }
 
 type FetchLike = typeof fetch

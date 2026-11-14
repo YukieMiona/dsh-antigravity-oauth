@@ -14,7 +14,7 @@ import {
 import { probeBridge } from '../src/manager/probe.ts'
 import { AntigravityManagerStore, normalizeBaseUrl, viewOf } from '../src/manager/store.ts'
 
-const settings = { enabled: true, baseUrl: 'http://127.0.0.1:8045/v1', apiKey: 'sk-fixture-key' }
+const settings = { route: 'gateway' as const, enabled: true, baseUrl: 'http://127.0.0.1:8045/v1', apiKey: 'sk-fixture-key', agyPath: '/opt/fixture/agy' }
 
 function msg(role: string, content: unknown[], extra: Record<string, unknown> = {}) {
   return { id: `${role}-${Math.random()}`, role, source: { kind: role }, content, ...extra }
@@ -42,7 +42,7 @@ describe('AntigravityManagerStore', () => {
   it('defaults to off with no key, and never ships a key in source defaults', async () => {
     dir = await mkdtemp(join(tmpdir(), 'agy-mgr-'))
     const store = new AntigravityManagerStore(join(dir, 'm.json'))
-    expect(await store.read()).toEqual({ enabled: false, baseUrl: 'http://127.0.0.1:8045/v1', apiKey: '' })
+    expect(await store.read()).toMatchObject({ route: 'direct', enabled: false, baseUrl: 'http://127.0.0.1:8045/v1', apiKey: '' })
   })
 
   it('merges patches: omitted key is kept, empty key clears, file is private', async () => {
@@ -50,7 +50,9 @@ describe('AntigravityManagerStore', () => {
     const file = join(dir, 'm.json')
     const store = new AntigravityManagerStore(file)
     await store.save({ apiKey: 'sk-secret-1234', baseUrl: 'http://127.0.0.1:8045/v1/' })
-    expect(await store.save({ enabled: true })).toEqual({ enabled: true, baseUrl: 'http://127.0.0.1:8045/v1', apiKey: 'sk-secret-1234' })
+    expect(await store.save({ enabled: true })).toMatchObject({ route: 'gateway', enabled: true, baseUrl: 'http://127.0.0.1:8045/v1', apiKey: 'sk-secret-1234' })
+    expect(await store.save({ route: 'agy' })).toMatchObject({ route: 'agy', enabled: false, apiKey: 'sk-secret-1234' })
+    await store.save({ route: 'gateway' })
     expect((await stat(file)).mode & 0o777).toBe(0o600)
     expect((await store.save({ apiKey: '' })).apiKey).toBe('')
     expect(JSON.parse(await readFile(file, 'utf8')).enabled).toBe(true)
@@ -61,7 +63,7 @@ describe('AntigravityManagerStore', () => {
     expect(() => normalizeBaseUrl('http://user:pw@host/v1')).toThrow()
     expect(normalizeBaseUrl('http://127.0.0.1:8045/v1//')).toBe('http://127.0.0.1:8045/v1')
     const view = viewOf({ ...settings, apiKey: 'sk-abcdefgh1234' })
-    expect(view).toEqual({ enabled: true, baseUrl: settings.baseUrl, hasApiKey: true, apiKeyHint: '…1234' })
+    expect(view).toMatchObject({ route: 'gateway', enabled: true, baseUrl: settings.baseUrl, hasApiKey: true, apiKeyHint: '…1234' })
     expect(JSON.stringify(view)).not.toContain('abcdefgh')
   })
 })

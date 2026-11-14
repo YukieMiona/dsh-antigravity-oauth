@@ -541,7 +541,8 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
 
   const signing = status?.status === 'signing-in'
   const readyCount = useMemo(() => accounts.filter(a => a.ready && !a.dead && !a.limited).length, [accounts])
-  const bridgeOn = bridgeSettings?.enabled === true
+  const routeKind = bridgeSettings?.route ?? (bridgeSettings?.enabled === true ? 'gateway' : 'direct')
+  const bridgeOn = routeKind !== 'direct'
   const tabs: { id: ActiveTab, label: string, on?: boolean }[] = [
     { id: 'accounts', label: t('tabAccounts') },
     { id: 'bridge', label: t('tabBridge'), on: bridgeOn },
@@ -569,8 +570,8 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
             <span className={'dsh-agy-dot ' + (signing ? 'is-signing-in' : activeAccount?.ready ? 'is-signed-in' : 'is-error')} />
             <span>{signing ? t('signingIn') : activeAccount ? activeAccount.email ?? activeAccount.id : t('signedOut')}</span>
           </div>
-          <span className={'dsh-agy-pill ' + (bridgeOn ? 'is-success' : '')} title={bridgeOn ? t('bridgeStatusOn') : t('bridgeStatusOff')}>
-            {bridgeOn ? t('routeBridge') : t('routeDirect')}
+          <span className={'dsh-agy-pill ' + (bridgeOn ? 'is-success' : '')} title={t('routeTitle')}>
+            {routeKind === 'agy' ? t('routeAgy') : routeKind === 'gateway' ? t('routeBridge') : t('routeDirect')}
           </span>
         </div>
 
