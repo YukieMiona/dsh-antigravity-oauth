@@ -24,6 +24,7 @@
     "src/client",
     "tests/client-ui.spec.ts",
     "tests/secondary-tabs.spec.ts",
-    "tests/manager-tab.spec.ts"
+    "tests/manager-tab.spec.ts",
+    "tests/route-header.spec.ts"
   ]
 }
