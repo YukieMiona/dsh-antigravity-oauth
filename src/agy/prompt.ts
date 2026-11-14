@@ -13,6 +13,8 @@ type Tool = NonNullable<GenerateOptions['tools']>[number]
 
 /** agy truncates a long user message (verified: 140 KB intact, 200 KB cut), so stay well below. */
 export const CONVERSATION_BUDGET_BYTES = 100_000
+/** A template body is read whole up to at least 600 KB (1 MB fails), so older turns go there. */
+export const TEMPLATE_BUDGET_BYTES = 520_000
 /** One tool result may not crowd out the rest of the conversation. */
 export const TOOL_RESULT_BUDGET_BYTES = 24_000
 
@@ -88,29 +90,64 @@ function renderMessage(message: GenerateOptions['messages'][number]): string | u
   return undefined
 }
 
+export interface ConversationParts {
+  /** Newest turns, for the user message. */
+  recent: string
+  /** Older turns that did not fit there, for the agent template; empty when everything fits. */
+  earlier: string
+}
+
 /**
- * The conversation for the user message, newest turns first within the budget. The latest turn is
- * always kept (clipped if it alone is too big); older turns that do not fit are summarised as a count.
+ * Split the conversation by size, newest first: the latest turns go into the user message, older
+ * ones into the agent template (which agy reads whole), and only what fits neither is left out,
+ * with a note saying how many turns that was. The latest turn is always kept, clipped if it alone
+ * is too big.
  */
-export function buildConversation(messages: GenerateOptions['messages'], budgetBytes = CONVERSATION_BUDGET_BYTES): string {
+export function splitConversation(
+  messages: GenerateOptions['messages'],
+  recentBudget = CONVERSATION_BUDGET_BYTES,
+  earlierBudget = 0,
+): ConversationParts {
   const rendered = messages.map(renderMessage).filter((m): m is string => m !== undefined)
-  const kept: string[] = []
+  const recent: string[] = []
+  const earlier: string[] = []
   let used = 0
-  for (let i = rendered.length - 1; i >= 0; i--) {
+  let i = rendered.length - 1
+  for (; i >= 0; i--) {
     const piece = rendered[i]!
     const size = Buffer.byteLength(piece) + 2
-    if (kept.length === 0 && size > budgetBytes) {
-      kept.unshift(clipMiddle(piece, budgetBytes - 200))
-      used = budgetBytes
+    if (recent.length === 0 && size > recentBudget) {
+      recent.unshift(clipMiddle(piece, recentBudget - 200))
+      used = recentBudget
       continue
     }
-    if (used + size > budgetBytes) break
-    kept.unshift(piece)
+    if (used + size > recentBudget) break
+    recent.unshift(piece)
     used += size
   }
-  const omitted = rendered.length - kept.length
-  const head = omitted > 0 ? [`[${omitted} earlier turn(s) omitted to fit the request size; the latest turns follow.]`] : []
-  return [...head, ...kept].join('\n\n')
+  let usedEarlier = 0
+  for (; i >= 0; i--) {
+    const piece = rendered[i]!
+    const size = Buffer.byteLength(piece) + 2
+    if (usedEarlier + size > earlierBudget) break
+    earlier.unshift(piece)
+    usedEarlier += size
+  }
+  const omitted = i + 1
+  if (earlier.length === 0) {
+    const head = omitted > 0 ? [`[${omitted} earlier turn(s) omitted to fit the request size; the latest turns follow.]`] : []
+    return { recent: [...head, ...recent].join('\n\n'), earlier: '' }
+  }
+  const earlierHead = omitted > 0 ? [`[${omitted} oldest turn(s) omitted to fit the request size.]`] : []
+  return {
+    recent: ['[Earlier turns of this conversation are in your instructions under "Earlier conversation".]', ...recent].join('\n\n'),
+    earlier: [...earlierHead, ...earlier].join('\n\n'),
+  }
+}
+
+/** The conversation as one user message, without template overflow. */
+export function buildConversation(messages: GenerateOptions['messages'], budgetBytes = CONVERSATION_BUDGET_BYTES): string {
+  return splitConversation(messages, budgetBytes, 0).recent
 }
 
 /**

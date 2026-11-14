@@ -108,6 +108,28 @@ It is **not** `dsh-oauth-login`. Do not merge the two.
 
 ---
 
+## Request routes
+
+**Settings → Antigravity → Route** chooses how this provider reaches Google. The local API server follows the same choice.
+
+| Route | What sends the request | Accounts used |
+|---|---|---|
+| **Direct** | The plugin's own Cloud Code Assist client | The accounts on the Accounts tab |
+| **Gateway** | An OpenAI-compatible gateway that you run | The gateway's own |
+| **Official CLI** | Google's `agy` command-line client | The account `agy` is signed in to |
+
+Official CLI route:
+
+- Install `agy` from <https://antigravity.google> and run it once in a terminal to sign in. The Route tab shows whether it is signed in, its version, and the quota left.
+- DSH keeps the tools. The plugin writes DSH's system prompt and tool list into an agent template under `.dsh-antigravity-oauth.agy-workspace/` next to the auth file. That template removes `agy`'s built-in tools, and a deny rule for every action class backs it up.
+- One request runs at a time and takes about 5–10 seconds. Most of the answer arrives near the end. Images are not sent.
+- A request carries about 620 KB, so the plugin reports a 128K-token context window on this route and DSH compacts earlier.
+- `agy` updates itself. The Route tab warns when its version is outside the release line this route was tested with (1.5.x).
+
+An account that Google disables for a Terms of Service violation is marked **Disabled by Google (ToS)** and is never selected again.
+
+---
+
 ## Sign in
 
 1. Settings → Antigravity → **Sign in** (or **Add account** when already signed in).

@@ -3,6 +3,7 @@ import type { AntigravityKey } from '../locales.ts'
 import type { ManagerSettingsView, RouteKind } from '../../manager/store.ts'
 import type { BridgeProbeResult } from '../../manager/probe.ts'
 import { REASONING_EFFORTS, routeChatModel } from '../../models.ts'
+import { AGY_TESTED_LINE, isTestedAgyVersion } from '../../agy/version.ts'
 
 export type BridgePatch = { route?: RouteKind, enabled?: boolean, baseUrl?: string, apiKey?: string }
 
@@ -123,7 +124,7 @@ export function ManagerTab({ t, settings, enabledModels, save, test }: ManagerTa
                     <span className="dsh-agy-option-name">{t(label)}</span>
                     <span className="dsh-agy-option-desc">{t(desc)}</span>
                   </span>
-                  {selected && value === 'gateway' ? (
+                  {selected && value === 'gateway' && settings.baseUrl.length > 0 ? (
                     <span className={'dsh-agy-pill ' + (probe?.ok === false ? 'is-error' : 'is-success')}>{hostOf(settings.baseUrl)}</span>
                   ) : <span />}
                 </label>
@@ -134,8 +135,10 @@ export function ManagerTab({ t, settings, enabledModels, save, test }: ManagerTa
         <div className="dsh-agy-health">
           <HealthTile
             name={t('bridgeGateway')}
-            up={probe === undefined ? undefined : probe.gatewayUp}
-            detail={probe === undefined
+            up={probe === undefined || settings.baseUrl.length === 0 ? undefined : probe.gatewayUp}
+            detail={settings.baseUrl.length === 0
+              ? t('gatewayNotSet')
+              : probe === undefined
               ? (testing ? t('bridgeTesting') : t('bridgeNotTested'))
               : probe.ok
                 ? `${t('bridgeUp')} · ${probe.latencyMs} ms · ${probe.models.length} models`
@@ -147,10 +150,20 @@ export function ManagerTab({ t, settings, enabledModels, save, test }: ManagerTa
             detail={agy === undefined
               ? (testing ? t('bridgeTesting') : t('bridgeNotTested'))
               : agy.signedIn
-                ? t('agySignedIn', { count: agy.models.length })
+                ? [
+                    t('agySignedIn', { count: agy.models.length }),
+                    ...agy.version === undefined ? [] : [`v${agy.version}`],
+                    ...agy.quota?.weekly === undefined || agy.quota.fiveHour === undefined ? [] : [t('agyQuota', {
+                      weekly: Math.round(agy.quota.weekly * 100),
+                      fiveHour: Math.round(agy.quota.fiveHour * 100),
+                    })],
+                  ].join(' · ')
                 : agy.installed ? t('agyNotSignedIn') : t('agyNotInstalled')}
           />
         </div>
+        {agy?.version !== undefined && !isTestedAgyVersion(agy.version) ? (
+          <p className="dsh-agy-callout is-warn" role="status">{t('agyUntested', { version: agy.version, tested: AGY_TESTED_LINE })}</p>
+        ) : null}
         {missing.length > 0 ? (
           <p className="dsh-agy-callout is-warn" role="status">{t('bridgeModelsMissing', { models: missing.join(', ') })}</p>
         ) : null}
@@ -167,7 +180,7 @@ export function ManagerTab({ t, settings, enabledModels, save, test }: ManagerTa
           <input
             type="text"
             className="dsh-agy-input dsh-agy-mono"
-            placeholder="http://127.0.0.1:8045/v1"
+            placeholder="http://127.0.0.1:8000/v1"
             value={baseUrl}
             disabled={busy}
             spellCheck={false}
@@ -217,7 +230,7 @@ export function ManagerTab({ t, settings, enabledModels, save, test }: ManagerTa
           <button
             type="button"
             className="dsh-agy-btn dsh-agy-btn-primary dsh-agy-btn-compact"
-            disabled={busy || baseUrl.trim().length === 0}
+            disabled={busy}
             onClick={() => { void persist({ baseUrl: baseUrl.trim(), ...apiKey.trim() ? { apiKey: apiKey.trim() } : {} }) }}
           >
             {saving ? t('working') : t('bridgeSave')}

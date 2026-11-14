@@ -2,7 +2,6 @@ import { readFile } from 'node:fs/promises'
 import { homedir } from 'node:os'
 import { isAbsolute, join } from 'node:path'
 import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
-import { DEFAULT_MANAGER_BASE_URL } from '../ids.ts'
 
 /**
  * Route model requests through a local OpenAI-compatible gateway (Antigravity Manager) instead of
@@ -16,7 +15,7 @@ export interface ManagerSettings {
   route: RouteKind
   /** Legacy mirror of `route === 'gateway'`, kept so older settings files and callers still work. */
   enabled: boolean
-  /** OpenAI-style base URL ending in `/v1`. */
+  /** OpenAI-style base URL ending in `/v1`; empty until the user sets one. */
   baseUrl: string
   apiKey: string
   /** Path of the official Antigravity CLI binary used by the `agy` route. */
@@ -38,7 +37,7 @@ export const DEFAULT_AGY_PATH = join(homedir(), '.local', 'bin', 'agy')
 export const DEFAULT_MANAGER_SETTINGS: ManagerSettings = {
   route: 'direct',
   enabled: false,
-  baseUrl: DEFAULT_MANAGER_BASE_URL,
+  baseUrl: '',
   apiKey: '',
   agyPath: DEFAULT_AGY_PATH,
 }
@@ -54,9 +53,9 @@ function normalizeAgyPath(raw: unknown): string {
   return path
 }
 
-/** Accepts `http(s)://host[:port][/path]` without credentials, query, or fragment; strips trailing slashes. */
+/** Accepts `http(s)://host[:port][/path]` without credentials, query, or fragment; strips trailing slashes. Empty stays empty. */
 export function normalizeBaseUrl(raw: unknown): string {
-  if (typeof raw !== 'string' || raw.trim().length === 0) return DEFAULT_MANAGER_BASE_URL
+  if (typeof raw !== 'string' || raw.trim().length === 0) return ''
   const parsed = new URL(raw.trim())
   if (!['http:', 'https:'].includes(parsed.protocol)) throw new Error('Gateway URL must use http or https')
   if (parsed.username || parsed.password || parsed.search || parsed.hash) {
@@ -81,7 +80,7 @@ export function healthUrl(baseUrl: string): string {
 function parseStored(raw: unknown): ManagerSettings {
   if (typeof raw !== 'object' || raw === null) return { ...DEFAULT_MANAGER_SETTINGS }
   const data = raw as Record<string, unknown>
-  let baseUrl = DEFAULT_MANAGER_BASE_URL
+  let baseUrl = ''
   try { baseUrl = normalizeBaseUrl(data.baseUrl) } catch { /* keep default for a hand-edited bad value */ }
   // Files written before routes existed only have `enabled`, which meant the gateway.
   const route: RouteKind = isRouteKind(data.route) ? data.route : data.enabled === true ? 'gateway' : 'direct'

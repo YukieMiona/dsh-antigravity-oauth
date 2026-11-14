@@ -1,4 +1,4 @@
-import { DEFAULT_NATIVE_CORE_URL } from '../ids.ts'
+import type { AgyStatus } from '../agy/run.ts'
 import { healthUrl, modelsUrl } from './store.ts'
 
 export interface BridgeProbeResult {
@@ -9,19 +9,17 @@ export interface BridgeProbeResult {
   error?: string
   /** Gateway process answers its unauthenticated health check. */
   gatewayUp: boolean
-  /** Native language_server answers on its local port (any status counts). */
-  coreUp: boolean
   /** Official CLI status; filled by the settings route, absent in direct probe calls. */
-  agy?: { installed: boolean, signedIn: boolean, models: string[], error?: string }
+  agy?: AgyStatus
 }
 
 type FetchLike = typeof fetch
 
 const PROBE_TIMEOUT_MS = 4_000
 
-async function reachable(url: string, fetchImpl: FetchLike, init?: RequestInit): Promise<boolean> {
+async function reachable(url: string, fetchImpl: FetchLike): Promise<boolean> {
   try {
-    const res = await fetchImpl(url, { ...init, signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) })
+    const res = await fetchImpl(url, { signal: AbortSignal.timeout(PROBE_TIMEOUT_MS) })
     await res.body?.cancel().catch(() => undefined)
     return true
   } catch {
@@ -58,13 +56,13 @@ async function listModels(
 
 export async function probeBridge(
   target: { baseUrl: string, apiKey: string },
-  options: { fetchImpl?: FetchLike, coreUrl?: string } = {},
+  options: { fetchImpl?: FetchLike } = {},
 ): Promise<BridgeProbeResult> {
+  if (target.baseUrl.length === 0) return { ok: false, latencyMs: 0, models: [], error: 'no gateway URL set', gatewayUp: false }
   const fetchImpl = options.fetchImpl ?? fetch
-  const [models, gatewayUp, coreUp] = await Promise.all([
+  const [models, gatewayUp] = await Promise.all([
     listModels(target.baseUrl, target.apiKey, fetchImpl),
     reachable(healthUrl(target.baseUrl), fetchImpl),
-    reachable(options.coreUrl ?? DEFAULT_NATIVE_CORE_URL, fetchImpl),
   ])
-  return { ...models, gatewayUp: gatewayUp || models.ok, coreUp }
+  return { ...models, gatewayUp: gatewayUp || models.ok }
 }
