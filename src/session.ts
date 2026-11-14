@@ -444,9 +444,17 @@ export class AntigravitySession {
   async noteBanned(accountId: string): Promise<void> {
     this.runtimeFor(accountId).dead = true
     const account = await this.store.get(accountId).catch(() => undefined)
-    if (account === undefined || account.bannedAt !== undefined) return
-    console.warn(`[dsh-antigravity-oauth] account ${account.email ?? accountId} disabled by Google (ToS); it will no longer be used`)
-    await this.store.update(accountId, { bannedAt: new Date().toISOString() }).catch(() => undefined)
+    if (account === undefined) return
+    if (account.bannedAt === undefined) {
+      console.warn(`[dsh-antigravity-oauth] account ${account.email ?? accountId} disabled by Google (ToS); it will no longer be used`)
+      await this.store.update(accountId, { bannedAt: new Date().toISOString() }).catch(() => undefined)
+    }
+    // A banned account must not stay "current" in the UI; hand that role to a healthy one if any.
+    const active = await this.store.active().catch(() => undefined)
+    if (active?.id === accountId) {
+      const next = await this.findBestAccount({ excludeId: accountId }).catch(() => undefined)
+      if (next !== undefined) await this.switchAccount(next.id).catch(() => undefined)
+    }
   }
 
   async snapshot(): Promise<AntigravityStatus> {

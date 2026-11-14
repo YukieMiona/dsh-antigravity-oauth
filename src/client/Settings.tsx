@@ -566,10 +566,13 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
       <div className="dsh-agy-header">
         <div className="dsh-agy-title-row">
           <h2 id="antigravity-settings-title" className="dsh-agy-title">{t('title')}</h2>
-          <div className="dsh-agy-header-active-badge" title={activeAccount ? activeAccount.email ?? activeAccount.id : t('signedOut')}>
-            <span className={'dsh-agy-dot ' + (signing ? 'is-signing-in' : activeAccount?.ready ? 'is-signed-in' : 'is-error')} />
-            <span>{signing ? t('signingIn') : activeAccount ? activeAccount.email ?? activeAccount.id : t('signedOut')}</span>
-          </div>
+          {/* The direct account only matters on the Direct route; elsewhere it would mislead. */}
+          {routeKind === 'direct' ? (
+            <div className="dsh-agy-header-active-badge" title={activeAccount ? activeAccount.email ?? activeAccount.id : t('signedOut')}>
+              <span className={'dsh-agy-dot ' + (signing ? 'is-signing-in' : activeAccount?.ready && !activeAccount.dead ? 'is-signed-in' : 'is-error')} />
+              <span>{signing ? t('signingIn') : activeAccount ? activeAccount.email ?? activeAccount.id : t('signedOut')}</span>
+            </div>
+          ) : null}
           <span className={'dsh-agy-pill ' + (bridgeOn ? 'is-success' : '')} title={t('routeTitle')}>
             {routeKind === 'agy' ? t('routeAgy') : routeKind === 'gateway' ? t('routeBridge') : t('routeDirect')}
           </span>
@@ -649,12 +652,16 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
             </div>
           </div>
 
+          {routeKind !== 'direct' ? (
+            <p className="dsh-agy-callout">{t('accountsUnusedOnRoute', { route: routeKind === 'agy' ? t('routeAgy') : t('routeBridge') })}</p>
+          ) : null}
+
           <AccountsTab
             t={t}
             language={t('quotaLanguage') === 'zh' ? 'zh' : 'en'}
             accounts={accounts}
-            activeAccountId={activeAccountId}
-            activeAccount={activeAccount}
+            activeAccountId={routeKind === 'direct' ? activeAccountId : undefined}
+            activeAccount={routeKind === 'direct' ? activeAccount : undefined}
             switchingId={switchingId}
             busy={busy}
             searchQuery={searchQuery}

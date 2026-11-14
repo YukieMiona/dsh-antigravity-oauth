@@ -29,4 +29,21 @@ describe('AntigravitySession.noteBanned', () => {
     expect(typeof stored.bannedAt).toBe('string')
     expect(await session.hasReadyAccount()).toBe(false)
   })
+
+  it('moves the active role off a banned account to a healthy one', async () => {
+    const session = Object.create(AntigravitySession.prototype) as AntigravitySession & Record<string, unknown>
+    const switched: string[] = []
+    Object.assign(session, {
+      runtimes: new Map(),
+      store: {
+        get: async () => ({ id: 'bad', email: 'bad@example.test' }),
+        update: async () => ({}),
+        active: async () => ({ id: 'bad' }),
+      },
+      findBestAccount: async () => ({ id: 'good' }),
+      switchAccount: async (id: string) => { switched.push(id); return {} },
+    })
+    await session.noteBanned('bad')
+    expect(switched).toEqual(['good'])
+  })
 })

@@ -50,7 +50,10 @@ export function buildTemplateBody(options: Pick<GenerateOptions, 'messages' | 's
   const system = [options.system ?? '', ...options.messages.filter(m => m.role === 'system').map(m => textOf(m.content))]
     .map(text => text.trim()).filter(text => text.length > 0).join('\n\n')
   const out: string[] = [
-    'You are the language model behind the DSH agent harness. DSH owns the conversation, runs every tool and handles approvals. You have no tools of your own and never try to call any.',
+    'You are the language model behind the DSH agent harness. DSH owns the conversation and handles approvals.',
+    tools.length > 0
+      ? 'DSH\'s tools listed below are fully available to you: use them whenever the task needs them, by writing <tool_call> blocks as described at the end. Only this backend\'s own built-in tools are switched off; that never limits what DSH\'s tools can do.'
+      : 'This request offers no tools; answer in text.',
     'The conversation arrives in the user message as tagged turns. Write the next assistant turn.',
   ]
   if (system.length > 0) out.push('# DSH system instructions', system)
