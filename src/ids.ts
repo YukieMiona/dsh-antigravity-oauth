@@ -65,6 +65,8 @@ export const MANAGER_FILENAME = '.dsh-antigravity-oauth.manager.json'
 export const DEFAULT_MANAGER_BASE_URL = 'http://127.0.0.1:8045/v1'
 /** The native language_server only needs to answer; any HTTP status proves it is up. */
 export const DEFAULT_NATIVE_CORE_URL = 'http://127.0.0.1:18046'
+/** Empty directory next to the auth file that agy runs in; it never holds user files. */
+export const AGY_WORKSPACE_DIRNAME = '.dsh-antigravity-oauth.agy-workspace'
 
 export const API_SERVER_FILENAME = '.dsh-antigravity-oauth.api-server.json'
 export const API_SERVER_PATH = '/plugins/dsh-antigravity-oauth/api-server'

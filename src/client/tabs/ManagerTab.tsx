@@ -1,10 +1,10 @@
 import { useEffect, useRef, useState } from 'react'
 import type { AntigravityKey } from '../locales.ts'
-import type { ManagerSettingsView } from '../../manager/store.ts'
+import type { ManagerSettingsView, RouteKind } from '../../manager/store.ts'
 import type { BridgeProbeResult } from '../../manager/probe.ts'
 import { REASONING_EFFORTS, routeChatModel } from '../../models.ts'
 
-export type BridgePatch = { enabled?: boolean, baseUrl?: string, apiKey?: string }
+export type BridgePatch = { route?: RouteKind, enabled?: boolean, baseUrl?: string, apiKey?: string }
 
 export interface ManagerTabProps {
   t: (key: AntigravityKey, params?: Record<string, unknown>) => string
@@ -86,7 +86,9 @@ export function ManagerTab({ t, settings, enabledModels, save, test }: ManagerTa
 
   if (settings === undefined) return null
   const busy = saving || testing
-  const enabled = settings.enabled
+  const route: RouteKind = settings.route ?? (settings.enabled ? 'gateway' : 'direct')
+  const enabled = route === 'gateway'
+  const agy = probe?.agy
   // The bridge sends the effort-specific wire id, so every effort's id must exist on the gateway.
   const offered = new Set(probe?.models ?? [])
   const missing = probe?.ok
@@ -104,8 +106,9 @@ export function ManagerTab({ t, settings, enabledModels, save, test }: ManagerTa
           {([
             ['direct', 'routeDirect', 'routeDirectDesc'],
             ['gateway', 'routeBridge', 'routeGatewayDesc'],
+            ['agy', 'routeAgy', 'routeAgyDesc'],
           ] as const).map(([value, label, desc]) => {
-            const selected = (value === 'gateway') === enabled
+            const selected = value === route
             return (
               <label key={value} className={'dsh-agy-radio-card ' + (selected ? 'is-active' : '')}>
                 <input
@@ -113,7 +116,7 @@ export function ManagerTab({ t, settings, enabledModels, save, test }: ManagerTa
                   name="agy-route"
                   value={value}
                   checked={selected}
-                  onChange={() => { void persist({ enabled: value === 'gateway' }) }}
+                  onChange={() => { void persist({ route: value }) }}
                 />
                 <span className="dsh-agy-option-text">
                   <span className="dsh-agy-option-name">{t(label)}</span>
@@ -135,6 +138,15 @@ export function ManagerTab({ t, settings, enabledModels, save, test }: ManagerTa
               : probe.ok
                 ? `${t('bridgeUp')} · ${probe.latencyMs} ms · ${probe.models.length} models`
                 : probe.gatewayUp ? (probe.error ?? t('bridgeDown')) : t('bridgeDown')}
+          />
+          <HealthTile
+            name={t('agyTile')}
+            up={agy === undefined ? undefined : agy.signedIn}
+            detail={agy === undefined
+              ? (testing ? t('bridgeTesting') : t('bridgeNotTested'))
+              : agy.signedIn
+                ? t('agySignedIn', { count: agy.models.length })
+                : agy.installed ? t('agyNotSignedIn') : t('agyNotInstalled')}
           />
           <HealthTile
             name={t('bridgeCore')}

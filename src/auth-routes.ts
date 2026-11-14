@@ -22,6 +22,7 @@ import { isSafeAuthUrl, safeMessage } from './redact.ts'
 import type { AntigravitySession } from './session.ts'
 import { NETWORK_PATH } from './network.ts'
 import { probeBridge } from './manager/probe.ts'
+import { checkAgy } from './agy/run.ts'
 import { normalizeBaseUrl, viewOf } from './manager/store.ts'
 
 function trustedRequest(req: IncomingMessage): boolean {
@@ -275,7 +276,9 @@ export function registerAntigravityAuthRoutes(
             const baseUrl = body.baseUrl === undefined ? stored.baseUrl : normalizeBaseUrl(body.baseUrl)
             // An empty key field in the UI means "use the saved key", so the key never has to round-trip.
             const apiKey = typeof body.apiKey === 'string' && body.apiKey.trim().length > 0 ? body.apiKey.trim() : stored.apiKey
-            json(res, 200, await probeBridge({ baseUrl, apiKey }))
+            // Gateway and agy checks are independent; run them side by side.
+            const [bridge, agy] = await Promise.all([probeBridge({ baseUrl, apiKey }), checkAgy(stored.agyPath)])
+            json(res, 200, { ...bridge, agy })
           } catch (error) {
             json(res, 400, { error: safeMessage(error) })
           }

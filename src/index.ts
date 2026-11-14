@@ -76,8 +76,9 @@ export async function syncAuthenticatedRoute(
   web2apiRegistration?: AdapterRegistrationHandle,
 ): Promise<void> {
   try {
-    // With the bridge on, the gateway owns the accounts, so the route needs no direct sign-in.
-    const bridged = (await session.manager?.read())?.enabled === true
+    // With the gateway or agy route, the accounts live elsewhere, so the route needs no direct sign-in.
+    const settings = await session.manager?.read()
+    const bridged = settings !== undefined && (settings.route ?? (settings.enabled ? 'gateway' : 'direct')) !== 'direct'
     registration.replace(bridged || await session.hasReadyAccount() ? [HARNESS_ROUTE] : [])
     if (web2apiRegistration) {
       const webSettings = await session.web2api.read()
@@ -145,7 +146,9 @@ export function apply(ctx: Context, config: Config): void {
         const assembled = await next()
         if (context.agent?.options?.provider !== HARNESS_ROUTE) return assembled
         // Native Google search only exists on the direct route; through the bridge, DSH keeps its own web tools.
-        return (await session.manager?.read())?.enabled === true ? assembled : maskDshWebAssembly(assembled)
+        const settings = await session.manager?.read()
+        const direct = settings === undefined || (settings.route ?? (settings.enabled ? 'gateway' : 'direct')) === 'direct'
+        return direct ? maskDshWebAssembly(assembled) : assembled
       })
     })
   }

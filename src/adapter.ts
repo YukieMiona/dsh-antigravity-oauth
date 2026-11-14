@@ -17,7 +17,7 @@ import type {
 } from '@deepseek-ai/dsh-llm'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
 import { resolveImageBlock, type ImageAccessResolver } from './image-input.ts'
-import { HARNESS_ROUTE, STREAM_IDLE_TIMEOUT_MS } from './ids.ts'
+import { AGY_WORKSPACE_DIRNAME, HARNESS_ROUTE, STREAM_IDLE_TIMEOUT_MS } from './ids.ts'
 import { IdleWatchdog } from './idle-watchdog.ts'
 import {
   DEFAULT_CATALOG_MODELS,
@@ -54,6 +54,10 @@ import type { AntigravitySession } from './session.ts'
 import { isAccountBannedError } from './ban.ts'
 import { streamBridge, toBridgeMessages, toBridgeTools, type BridgeRequest } from './manager/bridge.ts'
 import type { ManagerSettings } from './manager/store.ts'
+import { agyResultChunks, agySchema, buildAgyPrompt } from './agy/prompt.ts'
+import { AgyError, runAgy } from './agy/run.ts'
+import { randomUUID } from 'node:crypto'
+import { dirname, join } from 'node:path'
 import type {
   AntigravityLease,
   CcaEvent,
@@ -581,11 +585,16 @@ export class AntigravityAdapter extends LlmAdapter {
       : options.model
 
     const bridge = await this.session.manager?.read()
+    const route = bridge?.route ?? (bridge?.enabled === true ? 'gateway' : 'direct')
     // One line per request, so the journal shows which route served each chat.
-    console.info(`[dsh-antigravity-oauth] route=${bridge?.enabled === true ? 'gateway' : 'direct'} model=${targetModel}`
+    console.info(`[dsh-antigravity-oauth] route=${route} model=${targetModel}`
       + ` effort=${effortOf(options)}${options.purpose === undefined ? '' : ` purpose=${options.purpose}`}`)
-    if (bridge?.enabled === true) {
+    if (bridge !== undefined && route === 'gateway') {
       yield* this.streamViaBridge(options, targetModel, bridge)
+      return
+    }
+    if (bridge !== undefined && route === 'agy') {
+      yield* this.streamViaAgy(options, targetModel, bridge)
       return
     }
 
@@ -691,6 +700,43 @@ export class AntigravityAdapter extends LlmAdapter {
     } catch (error) {
       if (watchdog.timedOut) throw new LlmError(IDLE_TIMEOUT_MESSAGE, 'TIMEOUT', { cause: error })
       throw error
+    } finally {
+      watchdog.dispose()
+    }
+  }
+
+  /**
+   * Official CLI route: hand the request to Google's own `agy` binary, signed in as the user.
+   * agy answers once (no token streaming); its own tools are denied, and DSH runs any tool calls.
+   */
+  private async *streamViaAgy(
+    options: GenerateOptions,
+    targetModel: string,
+    settings: ManagerSettings,
+  ): AsyncIterable<StreamChunk> {
+    const effort = effortOf(options)
+    const { prompt, tools } = buildAgyPrompt(options)
+    const cwd = join(dirname(String(this.session.store?.filename)), AGY_WORKSPACE_DIRNAME)
+    const watchdog = new IdleWatchdog(this.idleTimeoutFor(effort, false), options.signal)
+    try {
+      const result = await runAgy({
+        binary: settings.agyPath,
+        cwd,
+        model: routeChatModel(targetModel, effort),
+        prompt,
+        ...agySchema(tools) === undefined ? {} : { schema: agySchema(tools)! },
+        signal: watchdog.signal,
+        onActivity: () => watchdog.touch(),
+      })
+      yield* agyResultChunks(result, options.model, () => `agy_${randomUUID()}`)
+    } catch (error) {
+      if (watchdog.timedOut) throw new LlmError(IDLE_TIMEOUT_MESSAGE, 'TIMEOUT', { cause: error })
+      if (error instanceof AgyError && error.kind === 'aborted') throw error
+      const message = error instanceof Error ? error.message : String(error)
+      const code = error instanceof AgyError && (error.kind === 'not-installed' || error.kind === 'not-signed-in')
+        ? 'MISSING_CREDENTIAL'
+        : isAccountBannedError(message) ? 'AUTH' : /\b429\b|RESOURCE_EXHAUSTED|quota/i.test(message) ? 'RATE_LIMIT' : 'UNKNOWN'
+      throw new LlmError(`Antigravity CLI: ${message}`, code, { cause: error })
     } finally {
       watchdog.dispose()
     }

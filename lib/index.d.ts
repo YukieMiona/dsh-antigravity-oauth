@@ -343,11 +343,17 @@ declare class AntigravityApiServer {
  * Route model requests through a local OpenAI-compatible gateway (Antigravity Manager) instead of
  * calling Cloud Code Assist directly. The gateway owns its own account pool and failover.
  */
+/** How the main provider reaches Google: the plugin itself, a local gateway, or the official agy CLI. */
+type RouteKind = 'direct' | 'gateway' | 'agy';
 interface ManagerSettings {
+  route: RouteKind;
+  /** Legacy mirror of `route === 'gateway'`, kept so older settings files and callers still work. */
   enabled: boolean;
   /** OpenAI-style base URL ending in `/v1`. */
   baseUrl: string;
   apiKey: string;
+  /** Path of the official Antigravity CLI binary used by the `agy` route. */
+  agyPath: string;
 }
 declare class AntigravityManagerStore {
   readonly filename: string;
@@ -526,6 +532,11 @@ declare class AntigravityAdapter extends LlmAdapter {
    * direct-path account logic applies here.
    */
   private streamViaBridge;
+  /**
+   * Official CLI route: hand the request to Google's own `agy` binary, signed in as the user.
+   * agy answers once (no token streaming); its own tools are denied, and DSH runs any tool calls.
+   */
+  private streamViaAgy;
   private tryFailoverLease;
   private streamWithFailover;
   private handleThoughtEvent;
