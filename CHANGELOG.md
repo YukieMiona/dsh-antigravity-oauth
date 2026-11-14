@@ -4,7 +4,10 @@ This file records completed features, fixes, and process milestones in `YukieMio
 
 ## Unreleased
 
-Not yet through GitHub Actions; typecheck and bundle build pass locally.
+- Route: the Bridge tab becomes a Route selector (Direct or Gateway) with per-route descriptions; the official core is shown for health only, because its generation API takes one plain-text prompt with no tools or streaming.
+- Diagnostics: log one `route=… model=… effort=…` line per request so the journal shows which route served each chat.
+
+### Merged in #23
 
 - Bridge: route the `agy-google-antigravity` provider through a local OpenAI-compatible gateway (Antigravity Manager) when enabled, with full tool-call and tool-result translation, complete block lifecycles, usage, two gateway 5xx retries, and gateway plus native-core health probes. The API key never leaves the server (`GET` returns a masked view).
 - Bridge: register the provider route while the bridge is on even without direct accounts, and keep DSH's own web tools on that route because native Google search exists only on the direct path.

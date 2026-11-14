@@ -40,11 +40,12 @@ describe('ManagerTab', () => {
     expect(host.querySelector<HTMLInputElement>('input[type="password"]')!.value).toBe('')
   })
 
-  it('saves the switch immediately and sends a typed key only when present', async () => {
+  it('switches route immediately and sends a typed key only when present', async () => {
     const { host, props } = await mount({})
-    const toggle = host.querySelector<HTMLInputElement>('input[type="checkbox"]')!
-    expect(toggle.labels?.[0]?.textContent).toContain(en.bridgeEnable)
-    await act(async () => { toggle.click() })
+    const gateway = host.querySelector<HTMLInputElement>('input[name="agy-route"][value="gateway"]')!
+    expect(host.querySelector<HTMLInputElement>('input[name="agy-route"][value="direct"]')!.checked).toBe(true)
+    expect(gateway.closest('label')?.textContent).toContain(en.routeGatewayDesc)
+    await act(async () => { gateway.click() })
     expect(props.save).toHaveBeenLastCalledWith({ enabled: true })
     const save = Array.from(host.querySelectorAll<HTMLButtonElement>('button')).find(b => b.textContent === en.bridgeSave)!
     await act(async () => { save.click() })

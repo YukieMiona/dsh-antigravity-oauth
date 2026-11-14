@@ -974,6 +974,7 @@ export const SETTINGS_CSS = `
 .dsh-agy-segmented-btn input[type="radio"] { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
 .dsh-agy-segmented-btn { position: relative; }
 .dsh-agy-segmented-btn:has(input:focus-visible) { outline: 2px solid var(--dsw-alias-label-primary, Highlight); outline-offset: 1px; }
+.dsh-agy-radio-card > .dsh-agy-pill { margin-left: auto; }
 .dsh-agy-range { width: 100%; accent-color: var(--dsw-alias-button-primary-fill, Highlight); }
 
 /* Summary bar above the account list. */
