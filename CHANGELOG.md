@@ -4,6 +4,9 @@ This file records completed features, fixes, and process milestones in `YukieMio
 
 ## Unreleased
 
+- Bans: recognise Google's `403 TOS_VIOLATION` as a disabled account, persist it as `bannedAt` (token refresh no longer clears it), skip it in every account picker, fail over before output, and label it "Disabled by Google (ToS)".
+- API server: accept effort-suffixed ids (`gemini-3.8-flash-low`) and `reasoning_effort`; fail over from banned or rate-limited accounts before response headers are sent; bind host must be an IP literal or `localhost`, editable with suggestions (`172.17.0.1` for Docker containers).
+
 - Route: the Bridge tab becomes a Route selector (Direct or Gateway) with per-route descriptions; the official core is shown for health only, because its generation API takes one plain-text prompt with no tools or streaming.
 - Diagnostics: log one `route=… model=… effort=…` line per request so the journal shows which route served each chat.
 

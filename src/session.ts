@@ -224,7 +224,7 @@ export class AntigravitySession {
       if (requireExplicit && account.hasArgon !== true) return false
       if (excluded?.has(account.id)) return false
       const runtime = this.runtimes.get(account.id)
-      if (runtime?.dead) return false
+      if (runtime?.dead || account.bannedAt !== undefined) return false
       if (runtime?.argonIneligible) return false
       if (runtime?.limitedUntil !== undefined && runtime.limitedUntil > now) return false
       return true
@@ -325,7 +325,7 @@ export class AntigravitySession {
     const readyAccounts = all.filter(account => {
       if (account.projectId === undefined) return false
       const runtime = this.runtimes.get(account.id)
-      if (runtime?.dead) return false
+      if (runtime?.dead || account.bannedAt !== undefined) return false
       if (runtime?.limitedUntil !== undefined && runtime.limitedUntil > now) return false
       return true
     })
@@ -376,7 +376,7 @@ export class AntigravitySession {
     // Filter out dead or rate-limited accounts
     const available = ready.filter(account => {
       const runtime = this.runtimes.get(account.id)
-      if (runtime?.dead) return false
+      if (runtime?.dead || account.bannedAt !== undefined) return false
       if (runtime?.limitedUntil !== undefined && runtime.limitedUntil > now) return false
       return true
     })
@@ -412,7 +412,7 @@ export class AntigravitySession {
       if (account.id === excludeAccountId) return false
       if (account.projectId === undefined) return false
       const runtime = this.runtimes.get(account.id)
-      if (runtime?.dead === true) return false
+      if (runtime?.dead === true || account.bannedAt !== undefined) return false
       if (runtime?.limitedUntil !== undefined && runtime.limitedUntil > now) return false
       return true
     })
@@ -420,7 +420,7 @@ export class AntigravitySession {
 
   async hasReadyAccount(): Promise<boolean> {
     const accounts = await this.store.list()
-    return accounts.some(account => account.projectId !== undefined)
+    return accounts.some(account => account.projectId !== undefined && account.bannedAt === undefined)
   }
 
   noteRateLimited(accountId: string): void {
@@ -435,6 +435,18 @@ export class AntigravitySession {
 
   noteAuthRejected(accountId: string): void {
     this.runtimeFor(accountId).dead = true
+  }
+
+  /**
+   * Google disabled this account (`TOS_VIOLATION`). Persist it: token refresh keeps working for a
+   * banned account, so a runtime flag alone would be cleared and the account picked again.
+   */
+  async noteBanned(accountId: string): Promise<void> {
+    this.runtimeFor(accountId).dead = true
+    const account = await this.store.get(accountId).catch(() => undefined)
+    if (account === undefined || account.bannedAt !== undefined) return
+    console.warn(`[dsh-antigravity-oauth] account ${account.email ?? accountId} disabled by Google (ToS); it will no longer be used`)
+    await this.store.update(accountId, { bannedAt: new Date().toISOString() }).catch(() => undefined)
   }
 
   async snapshot(): Promise<AntigravityStatus> {
@@ -483,7 +495,8 @@ export class AntigravitySession {
         ...Number.isNaN(account.expires) ? {} : { expiresAt: new Date(account.expires).toISOString() },
         ready: account.projectId !== undefined,
         limited: runtime?.limitedUntil !== undefined && runtime.limitedUntil > now,
-        dead: runtime?.dead === true,
+        dead: runtime?.dead === true || account.bannedAt !== undefined,
+        ...account.bannedAt === undefined ? {} : { banned: true },
         ...account.hasArgon === undefined ? {} : { hasArgon: account.hasArgon },
       }
     })

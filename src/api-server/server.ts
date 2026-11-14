@@ -1,6 +1,7 @@
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http'
 import { randomUUID } from 'node:crypto'
-import { isPublicModelId, publicModel, routeChatModel, thinkingLevelFor } from '../models.ts'
+import { isPublicModelId, isReasoningEffort, publicModel, routeChatModel, thinkingLevelFor } from '../models.ts'
+import { isAccountBannedError } from '../ban.ts'
 import type { AntigravitySession } from '../session.ts'
 import type {
   ChatGenerateInput,
@@ -8,6 +9,7 @@ import type {
   GeminiContent,
   GeminiPart,
   PublicModelId,
+  ReasoningEffort,
 } from '../types.ts'
 import type { AntigravityApiServerStore } from './store.ts'
 import type { ApiServerSettings, ApiServerStatus, OpenAiModelsResponse } from './types.ts'
@@ -314,6 +316,45 @@ export class AntigravityApiServer {
     sendError(res, 404, `Not Found: ${req.method} ${pathname}`, 'invalid_request_error')
   }
 
+  /**
+   * Pull the first upstream event before any response header is sent, so a banned or rate-limited
+   * account can still be swapped for another one. After the first event, the stream is committed.
+   */
+  private async openWithFailover(
+    model: PublicModelId,
+    input: ChatGenerateInput,
+    first: { accountId: string, oauth: unknown, cca: { chat: (o: any, i: ChatGenerateInput, s: AbortSignal) => AsyncIterable<any> } },
+    signal: AbortSignal,
+  ): Promise<AsyncIterable<any>> {
+    let lease = first
+    for (let attempt = 0; ; attempt++) {
+      const iterator = lease.cca.chat(lease.oauth, input, signal)[Symbol.asyncIterator]()
+      try {
+        const head = await iterator.next()
+        return (async function* () {
+          if (head.done) return
+          yield head.value
+          while (true) {
+            const next = await iterator.next()
+            if (next.done) return
+            yield next.value
+          }
+        })()
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error)
+        const banned = isAccountBannedError(message)
+        const limited = !banned && /\b429\b|RESOURCE_EXHAUSTED/i.test(message)
+        if (banned) await this.session.noteBanned(lease.accountId)
+        else if (limited) this.session.noteRateLimited(lease.accountId)
+        if (!(banned || limited) || attempt >= 3 || signal.aborted) throw error
+        const next = await this.session.acquire({ model })
+        if (next === undefined || next.accountId === lease.accountId) throw error
+        console.warn(`[dsh-antigravity-oauth] api-server: ${banned ? 'banned' : 'rate-limited'} account skipped, retrying on another`)
+        lease = next
+      }
+    }
+  }
+
   private async handleChatCompletions(req: IncomingMessage, res: ServerResponse): Promise<void> {
     let body: any
     try {
@@ -330,7 +371,13 @@ export class AntigravityApiServer {
     }
 
     const enabledModels = await this.getEffectiveEnabledModels()
-    if (!isPublicModelId(modelName) || !enabledModels.includes(modelName as PublicModelId)) {
+    // Accept OpenAI-style effort suffixes (`gemini-3.8-flash-low`) as well as the bare id.
+    const suffixed = /^(.+)-(low|medium|high)$/.exec(modelName)
+    const baseModel = suffixed !== null && enabledModels.includes(suffixed[1] as PublicModelId) ? suffixed[1]! : modelName
+    const requestedEffort = suffixed !== null && baseModel === suffixed[1]
+      ? suffixed[2]
+      : typeof body.reasoning_effort === 'string' && isReasoningEffort(body.reasoning_effort) ? body.reasoning_effort : undefined
+    if (!isPublicModelId(baseModel) || !enabledModels.includes(baseModel as PublicModelId)) {
       sendError(res, 400, `The model '${modelName}' does not exist or is not enabled in Antigravity settings.`, 'invalid_request_error', 'model_not_found')
       return
     }
@@ -340,7 +387,7 @@ export class AntigravityApiServer {
       return
     }
 
-    const publicId = modelName as PublicModelId
+    const publicId = baseModel as PublicModelId
     const { system, contents } = parseOpenAiMessages(body.messages)
     const functions = parseOpenAiTools(body.tools)
 
@@ -349,7 +396,7 @@ export class AntigravityApiServer {
       adv = await this.session.getAdvancedSettings()
     } catch {}
 
-    const effort = adv?.defaultReasoningEffort ?? 'medium'
+    const effort = (requestedEffort ?? adv?.defaultReasoningEffort ?? 'medium') as ReasoningEffort
     const wireModel = routeChatModel(publicId, effort)
     const thinkingLevel = thinkingLevelFor(publicId, effort)
 
@@ -385,7 +432,7 @@ export class AntigravityApiServer {
     const createdTime = Math.floor(Date.now() / 1000)
 
     try {
-      const ccaStream = lease.cca.chat(lease.oauth, input, abortController.signal)
+      const ccaStream = await this.openWithFailover(publicId, input, lease, abortController.signal)
 
       if (isStream) {
         res.writeHead(200, {

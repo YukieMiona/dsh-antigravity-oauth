@@ -145,15 +145,20 @@ export function ApiServerTab(props: ApiServerTabProps) {
         <div className="dsh-agy-field-grid">
           <label className="dsh-agy-field">
             <span className="dsh-agy-control-label">{t('apiServerHost')}</span>
-            <select
-              className="dsh-agy-select"
+            <input
+              type="text"
+              className="dsh-agy-input dsh-agy-mono"
+              list="dsh-agy-api-hosts"
               value={host}
               disabled={saving}
-              onChange={e => setHost(e.target.value)}
-            >
-              <option value="127.0.0.1">127.0.0.1 (Localhost)</option>
-              <option value="0.0.0.0">0.0.0.0 (All Interfaces / Tailscale)</option>
-            </select>
+              spellCheck={false}
+              onChange={e => setHost(e.target.value.trim())}
+            />
+            <datalist id="dsh-agy-api-hosts">
+              <option value="127.0.0.1">Localhost only</option>
+              <option value="172.17.0.1">Docker containers (docker0)</option>
+              <option value="0.0.0.0">All interfaces (public if not firewalled)</option>
+            </datalist>
           </label>
 
           <label className="dsh-agy-field">
