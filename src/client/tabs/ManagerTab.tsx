@@ -103,31 +103,33 @@ export function ManagerTab({ t, settings, enabledModels, save, test }: ManagerTa
             <span className="dsh-agy-section-title">{t('routeTitle')}</span>
             <span className="dsh-agy-section-desc">{t('routeDesc')}</span>
           </legend>
-          {([
-            ['direct', 'routeDirect', 'routeDirectDesc'],
-            ['gateway', 'routeBridge', 'routeGatewayDesc'],
-            ['agy', 'routeAgy', 'routeAgyDesc'],
-          ] as const).map(([value, label, desc]) => {
-            const selected = value === route
-            return (
-              <label key={value} className={'dsh-agy-radio-card ' + (selected ? 'is-active' : '')}>
-                <input
-                  type="radio"
-                  name="agy-route"
-                  value={value}
-                  checked={selected}
-                  onChange={() => { void persist({ route: value }) }}
-                />
-                <span className="dsh-agy-option-text">
-                  <span className="dsh-agy-option-name">{t(label)}</span>
-                  <span className="dsh-agy-section-desc">{t(desc)}</span>
-                </span>
-                {selected && value === 'gateway' ? (
-                  <span className={'dsh-agy-pill ' + (probe?.ok === false ? 'is-error' : 'is-success')}>{hostOf(settings.baseUrl)}</span>
-                ) : null}
-              </label>
-            )
-          })}
+          <div className="dsh-agy-option-list">
+            {([
+              ['direct', 'routeDirect', 'routeDirectDesc'],
+              ['gateway', 'routeBridge', 'routeGatewayDesc'],
+              ['agy', 'routeAgy', 'routeAgyDesc'],
+            ] as const).map(([value, label, desc]) => {
+              const selected = value === route
+              return (
+                <label key={value} className={'dsh-agy-option ' + (selected ? 'is-active' : '')}>
+                  <input
+                    type="radio"
+                    name="agy-route"
+                    value={value}
+                    checked={selected}
+                    onChange={() => { void persist({ route: value }) }}
+                  />
+                  <span className="dsh-agy-option-text">
+                    <span className="dsh-agy-option-name">{t(label)}</span>
+                    <span className="dsh-agy-option-desc">{t(desc)}</span>
+                  </span>
+                  {selected && value === 'gateway' ? (
+                    <span className={'dsh-agy-pill ' + (probe?.ok === false ? 'is-error' : 'is-success')}>{hostOf(settings.baseUrl)}</span>
+                  ) : <span />}
+                </label>
+              )
+            })}
+          </div>
         </fieldset>
         <div className="dsh-agy-health">
           <HealthTile
