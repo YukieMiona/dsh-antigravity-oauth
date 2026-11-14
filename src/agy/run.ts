@@ -181,35 +181,83 @@ export async function runAgy(options: AgyRunOptions): Promise<AgyResult> {
   throw new AgyError('agy finished without a result', 'failed')
 }
 
+export interface AgyQuota {
+  /** Fraction of the weekly limit left for Gemini models, 0..1. */
+  weekly?: number
+  /** Fraction of the five-hour limit left for Gemini models, 0..1. */
+  fiveHour?: number
+  weeklyReset?: string
+  fiveHourReset?: string
+}
+
 export interface AgyStatus {
   installed: boolean
   signedIn: boolean
   models: string[]
   error?: string
+  version?: string
+  quota?: AgyQuota
 }
 
-/** `agy models` needs a signed-in CLI but runs no agent, so it is a cheap health check. */
-export function checkAgy(binary: string, timeoutMs = 30_000): Promise<AgyStatus> {
+function capture(binary: string, args: string[], timeoutMs: number): Promise<{ stdout: string, stderr: string, error?: NodeJS.ErrnoException }> {
   return new Promise(resolve => {
-    const child = spawn(binary, ['models'], { stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'] })
     let stdout = ''
     let stderr = ''
     const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs)
     child.stdout.on('data', chunk => { stdout += String(chunk) })
     child.stderr.on('data', chunk => { stderr += String(chunk) })
-    child.on('error', error => {
-      clearTimeout(timer)
-      const missing = (error as NodeJS.ErrnoException).code === 'ENOENT'
-      resolve({ installed: !missing, signedIn: false, models: [], error: missing ? `not found at ${binary}` : error.message })
-    })
-    child.on('close', () => {
-      clearTimeout(timer)
-      const text = `${stdout}\n${stderr}`
-      const models = stdout.split('\n')
-        .map(line => line.split('\t')[0]?.trim() ?? '')
-        .filter(id => /^[a-z0-9][a-z0-9.\-]+$/.test(id))
-      if (/sign in/i.test(text) && models.length === 0) return resolve({ installed: true, signedIn: false, models: [], error: 'not signed in' })
-      resolve({ installed: true, signedIn: models.length > 0, models, ...models.length > 0 ? {} : { error: usefulStderr(stderr) || 'no models listed' } })
-    })
+    child.on('error', error => { clearTimeout(timer); resolve({ stdout, stderr, error }) })
+    child.on('close', () => { clearTimeout(timer); resolve({ stdout, stderr }) })
   })
+}
+
+/** Parse `agy -p /usage --output-format stream-json`: remaining quota of the Gemini model group. */
+export function parseAgyQuota(stdout: string): AgyQuota | undefined {
+  for (const line of stdout.split('\n')) {
+    const trimmed = line.trim()
+    if (!trimmed.startsWith('{')) continue
+    let event: any
+    try { event = JSON.parse(trimmed) } catch { continue }
+    if (event?.event !== 'command_result' || event.command?.name !== 'usage') continue
+    const groups: any[] = Array.isArray(event.command.data?.groups) ? event.command.data.groups : []
+    const group = groups.find(g => /gemini/i.test(String(g?.name))) ?? groups[0]
+    const quota: AgyQuota = {}
+    for (const bucket of Array.isArray(group?.buckets) ? group.buckets : []) {
+      const left = Number(bucket?.remaining_fraction)
+      if (!Number.isFinite(left)) continue
+      if (bucket.window === 'weekly') { quota.weekly = left; if (typeof bucket.reset_time === 'string') quota.weeklyReset = bucket.reset_time }
+      if (bucket.window === '5h') { quota.fiveHour = left; if (typeof bucket.reset_time === 'string') quota.fiveHourReset = bucket.reset_time }
+    }
+    return Object.keys(quota).length > 0 ? quota : undefined
+  }
+  return undefined
+}
+
+/**
+ * Health of the official CLI without spending quota: `agy models` needs a signed-in CLI, and
+ * `/usage` reports what is left. The steps run one after another because each agy start is heavy.
+ */
+export async function checkAgy(binary: string, timeoutMs = 30_000): Promise<AgyStatus> {
+  const listed = await capture(binary, ['models'], timeoutMs)
+  if (listed.error !== undefined) {
+    const missing = listed.error.code === 'ENOENT'
+    return { installed: !missing, signedIn: false, models: [], error: missing ? `not found at ${binary}` : listed.error.message }
+  }
+  const models = listed.stdout.split('\n')
+    .map(line => line.split('\t')[0]?.trim() ?? '')
+    .filter(id => /^[a-z0-9][a-z0-9.\-]+$/.test(id))
+  if (models.length === 0) {
+    const notSignedIn = /sign in/i.test(`${listed.stdout}\n${listed.stderr}`)
+    return { installed: true, signedIn: false, models: [], error: notSignedIn ? 'not signed in' : usefulStderr(listed.stderr) || 'no models listed' }
+  }
+  const version = /^(\d+\.\d+\.\d+)\s*$/m.exec((await capture(binary, ['--version'], 10_000)).stdout)?.[1]
+  const quota = parseAgyQuota((await capture(binary, ['-p', '/usage', '--output-format', 'stream-json'], timeoutMs)).stdout)
+  return {
+    installed: true,
+    signedIn: true,
+    models,
+    ...version === undefined ? {} : { version },
+    ...quota === undefined ? {} : { quota },
+  }
 }

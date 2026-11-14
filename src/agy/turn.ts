@@ -1,7 +1,7 @@
 import { dirname, join } from 'node:path'
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
 import { AGY_WORKSPACE_DIRNAME } from '../ids.ts'
-import { buildConversation, buildTemplateBody, parseAnswer, ToolCallFilter } from './prompt.ts'
+import { buildTemplateBody, CONVERSATION_BUDGET_BYTES, parseAnswer, splitConversation, TEMPLATE_BUDGET_BYTES, ToolCallFilter } from './prompt.ts'
 import { streamAgy, type AgyResult, type AgyUsage } from './run.ts'
 import { ensureTemplate } from './template.ts'
 
@@ -20,6 +20,12 @@ export interface AgyTurnOptions {
   onActivity?: () => void
 }
 
+/**
+ * Context window DSH should plan for on this route. One request carries about 620 KB (100 KB in
+ * the user message plus a 520 KB template), so DSH has to compact before the model's own limit.
+ */
+export const AGY_CONTEXT_WINDOW_TOKENS = 131_072
+
 /** Plugin-owned directory next to the auth file; agy runs in it and reads agent templates from it. */
 export function agyWorkspace(authFilename: string): string {
   return join(dirname(authFilename), AGY_WORKSPACE_DIRNAME)
@@ -31,7 +37,14 @@ export function agyWorkspace(authFilename: string): string {
  */
 export async function* agyTurn(options: AgyTurnOptions): AsyncGenerator<AgyTurnEvent> {
   const { body, tools } = buildTemplateBody(options.request)
-  const agent = await ensureTemplate(options.workspace, body)
+  const conversation = splitConversation(
+    options.request.messages,
+    CONVERSATION_BUDGET_BYTES,
+    Math.max(0, TEMPLATE_BUDGET_BYTES - Buffer.byteLength(body)),
+  )
+  const agent = await ensureTemplate(options.workspace, conversation.earlier.length === 0
+    ? body
+    : `${body}\n\n# Earlier conversation (oldest first)\n\n${conversation.earlier}\n\n(End of the earlier conversation. The latest turns arrive in the user message.)`)
   const filter = new ToolCallFilter()
   let streamed = ''
   let result: AgyResult | undefined
@@ -41,7 +54,7 @@ export async function* agyTurn(options: AgyTurnOptions): AsyncGenerator<AgyTurnE
     model: options.model,
     ...options.effort === undefined ? {} : { effort: options.effort },
     agent,
-    prompt: buildConversation(options.request.messages),
+    prompt: conversation.recent,
     ...options.signal === undefined ? {} : { signal: options.signal },
     ...options.onActivity === undefined ? {} : { onActivity: options.onActivity },
   })) {

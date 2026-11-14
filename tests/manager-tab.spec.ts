@@ -21,9 +21,9 @@ describe('ManagerTab', () => {
       enabledModels: ['gemini-3.8-flash', 'gemini-3.7-flash'],
       save: vi.fn(async () => ({ route: 'gateway' as const, enabled: true, agyPath: '/root/.local/bin/agy', baseUrl: 'http://127.0.0.1:8045/v1', hasApiKey: true, apiKeyHint: '…4e5f' })),
       test: vi.fn(async () => ({
-        ok: true, latencyMs: 42, gatewayUp: true, coreUp: true,
+        ok: true, latencyMs: 42, gatewayUp: true,
         models: ['gemini-3.8-flash-low', 'gemini-3.8-flash-medium', 'gemini-3.8-flash-high'],
-        agy: { installed: true, signedIn: true, models: ['gemini-3.8-flash-low', 'claude-sonnet-4-6'] },
+        agy: { installed: true, signedIn: true, models: ['gemini-3.8-flash-low', 'claude-sonnet-4-6'], version: '1.5.9', quota: { weekly: 0.979, fiveHour: 0.99 } },
       })),
       ...props,
     }
@@ -54,10 +54,17 @@ describe('ManagerTab', () => {
   })
   it('offers the official CLI route and shows its sign-in state', async () => {
     const { host, props } = await mount({})
-    expect(host.textContent).toContain(t('agySignedIn', { count: 2 }))
+    expect(host.textContent).toContain(`${t('agySignedIn', { count: 2 })} · v1.5.9 · ${t('agyQuota', { weekly: 98, fiveHour: 99 })}`)
+    expect(host.textContent).not.toContain('release line')
     const agy = host.querySelector<HTMLInputElement>('input[name="agy-route"][value="agy"]')!
     expect(agy.closest('label')?.textContent).toContain(en.routeAgy)
     await act(async () => { agy.click() })
     expect(props.save).toHaveBeenLastCalledWith({ route: 'agy' })
+  })
+  it('flags an agy version outside the tested release line', async () => {
+    const { host } = await mount({
+      test: vi.fn(async () => ({ ok: false, latencyMs: 0, models: [], gatewayUp: false, agy: { installed: true, signedIn: true, models: ['gemini-3.8-flash-low'], version: '1.6.0' } })),
+    })
+    expect(host.textContent).toContain(t('agyUntested', { version: '1.6.0', tested: '1.5' }))
   })
 })

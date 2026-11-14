@@ -426,7 +426,14 @@ export class AntigravityApiServer {
         yield { type: 'functionCall', id: `call_${randomUUID()}`, name: call.name, args: JSON.parse(call.arguments) as Record<string, unknown> }
       }
       if (event.usage !== undefined) {
-        yield { type: 'usage', usage: { inputTokens: event.usage.input_tokens ?? 0, outputTokens: event.usage.output_tokens ?? 0 } }
+        yield {
+          type: 'usage',
+          usage: {
+            inputTokens: event.usage.input_tokens ?? 0,
+            outputTokens: event.usage.output_tokens ?? 0,
+            ...event.usage.thinking_tokens ? { reasoningTokens: event.usage.thinking_tokens } : {},
+          },
+        }
       }
       yield { type: 'finish', reason: 'STOP' }
     }
@@ -434,6 +441,10 @@ export class AntigravityApiServer {
 
   /** Gateway route: forward the OpenAI request as it is and relay the gateway's answer. */
   private async proxyToGateway(req: IncomingMessage, res: ServerResponse, settings: ManagerSettings, body: unknown): Promise<void> {
+    if (settings.baseUrl.length === 0) {
+      sendError(res, 503, 'No gateway URL is set in Antigravity settings.', 'server_error', 'gateway_not_configured')
+      return
+    }
     const abort = new AbortController()
     req.on('close', () => abort.abort())
     try {
@@ -649,7 +660,7 @@ export class AntigravityApiServer {
               index: 0,
               message: {
                 role: 'assistant',
-                content,
+                content: content.trimEnd(),
                 ...(reasoningContent.length > 0 ? { reasoning_content: reasoningContent } : {}),
                 ...(toolCalls.length > 0 ? { tool_calls: toolCalls } : {}),
               },
@@ -660,6 +671,7 @@ export class AntigravityApiServer {
             prompt_tokens: lastUsage?.inputTokens || 0,
             completion_tokens: lastUsage?.outputTokens || 0,
             total_tokens: (lastUsage?.inputTokens || 0) + (lastUsage?.outputTokens || 0),
+            ...(lastUsage?.reasoningTokens ? { completion_tokens_details: { reasoning_tokens: lastUsage.reasoningTokens } } : {}),
           },
         })
       }

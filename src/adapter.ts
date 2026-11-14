@@ -56,7 +56,7 @@ import { streamBridge, toBridgeMessages, toBridgeTools, type BridgeRequest } fro
 import type { ManagerSettings } from './manager/store.ts'
 import { usageOf } from './agy/prompt.ts'
 import { AgyError } from './agy/run.ts'
-import { agyTurn, agyWorkspace } from './agy/turn.ts'
+import { AGY_CONTEXT_WINDOW_TOKENS, agyTurn, agyWorkspace } from './agy/turn.ts'
 import { randomUUID } from 'node:crypto'
 import type {
   AntigravityLease,
@@ -545,9 +545,14 @@ export class AntigravityAdapter extends LlmAdapter {
         }
       } catch {}
     }
-    const effectiveContext = spec !== undefined
+    let effectiveContext = spec !== undefined
       ? (contextWindow !== undefined ? Math.max(1, Math.min(contextWindow, spec.contextWindow)) : spec.contextWindow)
       : undefined
+    // The Official CLI carries about 620 KB per request, so DSH must compact before that.
+    const routeSettings = await this.session.manager?.read().catch(() => undefined)
+    if (routeSettings?.route === 'agy' && effectiveContext !== undefined) {
+      effectiveContext = Math.min(effectiveContext, AGY_CONTEXT_WINDOW_TOKENS)
+    }
     // Omit toolUpdate. On 0.2.0-rc.2, as on 0.1.7-rc.2, that means every request
     // still carries the complete current tool list, which this adapter forwards as declarations.
     return {
@@ -674,6 +679,9 @@ export class AntigravityAdapter extends LlmAdapter {
     targetModel: string,
     settings: ManagerSettings,
   ): AsyncIterable<StreamChunk> {
+    if (settings.baseUrl.length === 0) {
+      throw new LlmError('No gateway URL is set. Enter one in Settings → Antigravity → Route, or pick another route.', 'TRANSPORT')
+    }
     this.assertImageBudget(options)
     const effort = effortOf(options)
     const messages = await toBridgeMessages(options, {

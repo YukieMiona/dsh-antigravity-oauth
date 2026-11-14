@@ -4,6 +4,11 @@ This file records completed features, fixes, and process milestones in `YukieMio
 
 ## Unreleased
 
+- agy: older turns that do not fit the 100 KB user message now go into the agent template (verified whole at 600 KB), so about 620 KB travels per request; on this route the plugin reports a 128K-token context window so DSH compacts before anything is dropped.
+- agy: the Route tab shows the CLI version and the Gemini quota left (weekly and five-hour), and warns when the version is outside the tested 1.5.x line.
+- Gateway: no default URL any more (the old default pointed at a removed local manager); an unset URL is reported as such instead of a connection error. The unused native-core probe is removed.
+- API server: non-streaming answers no longer end with a stray line break; reasoning tokens are reported in `completion_tokens_details`.
+- README: document the three request routes (en, zh).
 - API server follows the selected route: Official CLI (shared `agy/turn.ts` with the DSH adapter), Gateway (request relayed with the wire model id), or Direct. Streaming tool calls now carry distinct indexes and a `tool_calls` finish reason.
 - UI: the native core tile and note are removed; the standalone `language_server` service is no longer used.
 - UI: the Request route and Account switching strategy choices use the same list style as Enabled Models; descriptions no longer push the radio onto its own line, and each strategy explains what it does.

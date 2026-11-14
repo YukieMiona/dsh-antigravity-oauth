@@ -353,7 +353,7 @@ interface ManagerSettings {
   route: RouteKind;
   /** Legacy mirror of `route === 'gateway'`, kept so older settings files and callers still work. */
   enabled: boolean;
-  /** OpenAI-style base URL ending in `/v1`. */
+  /** OpenAI-style base URL ending in `/v1`; empty until the user sets one. */
   baseUrl: string;
   apiKey: string;
   /** Path of the official Antigravity CLI binary used by the `agy` route. */

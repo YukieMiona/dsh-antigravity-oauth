@@ -42,7 +42,7 @@ describe('AntigravityManagerStore', () => {
   it('defaults to off with no key, and never ships a key in source defaults', async () => {
     dir = await mkdtemp(join(tmpdir(), 'agy-mgr-'))
     const store = new AntigravityManagerStore(join(dir, 'm.json'))
-    expect(await store.read()).toMatchObject({ route: 'direct', enabled: false, baseUrl: 'http://127.0.0.1:8045/v1', apiKey: '' })
+    expect(await store.read()).toMatchObject({ route: 'direct', enabled: false, baseUrl: '', apiKey: '' })
   })
 
   it('merges patches: omitted key is kept, empty key clears, file is private', async () => {
@@ -178,27 +178,38 @@ describe('streamBridge', () => {
 })
 
 describe('probeBridge', () => {
-  it('reports models, latency and both health checks', async () => {
+  it('reports models, latency and gateway health', async () => {
     const fetchImpl = vi.fn(async (url: string) => url.endsWith('/models')
       ? new Response(JSON.stringify({ data: [{ id: 'gemini-3.8-flash-low' }, { id: 'x' }] }))
       : url.endsWith('/health') ? new Response('{"status":"ok"}') : new Response('', { status: 401 }))
-    const result = await probeBridge(settings, { fetchImpl: fetchImpl as unknown as typeof fetch, coreUrl: 'http://core' })
-    expect(result).toMatchObject({ ok: true, models: ['gemini-3.8-flash-low', 'x'], gatewayUp: true, coreUp: true })
+    const result = await probeBridge(settings, { fetchImpl: fetchImpl as unknown as typeof fetch })
+    expect(result).toMatchObject({ ok: true, models: ['gemini-3.8-flash-low', 'x'], gatewayUp: true })
   })
 
-  it('names a bad key and a down core without throwing', async () => {
-    const fetchImpl = vi.fn(async (url: string) => {
-      if (url.startsWith('http://core')) throw new TypeError('ECONNREFUSED')
-      return url.endsWith('/models') ? new Response('', { status: 401 }) : new Response('ok')
-    })
-    const result = await probeBridge(settings, { fetchImpl: fetchImpl as unknown as typeof fetch, coreUrl: 'http://core' })
-    expect(result).toMatchObject({ ok: false, gatewayUp: true, coreUp: false })
+  it('names a bad key without throwing, and does not probe when no URL is set', async () => {
+    const fetchImpl = vi.fn(async (url: string) => url.endsWith('/models') ? new Response('', { status: 401 }) : new Response('ok'))
+    const result = await probeBridge(settings, { fetchImpl: fetchImpl as unknown as typeof fetch })
+    expect(result).toMatchObject({ ok: false, gatewayUp: true })
     expect(result.error).toContain('API key')
+    fetchImpl.mockClear()
+    expect(await probeBridge({ baseUrl: '', apiKey: '' }, { fetchImpl: fetchImpl as unknown as typeof fetch })).toMatchObject({ ok: false, gatewayUp: false, error: 'no gateway URL set' })
+    expect(fetchImpl).not.toHaveBeenCalled()
   })
 })
 
 describe('AntigravityAdapter bridge routing', () => {
   afterEach(() => vi.unstubAllGlobals())
+
+  it('refuses the gateway route without a URL, and reports a smaller context window on the agy route', async () => {
+    const base = { thoughtSignatures: new Map(), getAdvancedSettings: async () => ({ modelContextWindow: 1_048_576, defaultReasoningEffort: 'medium' }) }
+    const gateway = createAntigravityAdapter({ ...base, manager: { read: async () => ({ ...settings, baseUrl: '' }) } } as never, { nativeTools: true, nativeSearch: true })
+    await expect(collect(gateway.stream({ provider: 'agy-google-antigravity', model: 'gemini-3.8-flash', messages: [msg('user', [{ type: 'text', text: 'hi' }])] } as unknown as GenerateOptions)))
+      .rejects.toMatchObject({ code: 'TRANSPORT' })
+    const agy = createAntigravityAdapter({ ...base, manager: { read: async () => ({ ...settings, route: 'agy', enabled: false }) } } as never, { nativeTools: true, nativeSearch: true })
+    expect((await agy.resolveModel('agy-google-antigravity', 'gemini-3.8-flash')).context?.contextWindow).toBe(131_072)
+    const direct = createAntigravityAdapter({ ...base, manager: { read: async () => ({ ...settings, route: 'direct', enabled: false }) } } as never, { nativeTools: true, nativeSearch: true })
+    expect((await direct.resolveModel('agy-google-antigravity', 'gemini-3.8-flash')).context?.contextWindow).toBe(1_048_576)
+  })
 
   it('sends requests to the gateway with the effort wire id and never acquires a direct account', async () => {
     const fetchImpl = vi.fn(async () => sse({ choices: [{ delta: { content: 'bridged' }, finish_reason: 'stop' }] }))

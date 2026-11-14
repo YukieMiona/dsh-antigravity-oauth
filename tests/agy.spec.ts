@@ -8,9 +8,10 @@ import {
   buildTemplateBody,
   clipMiddle,
   parseAnswer,
+  splitConversation,
   ToolCallFilter,
 } from '../src/agy/prompt.ts'
-import { AGY_DENY_ALL_SETTINGS, AgyError, agyArgs, checkAgy, runAgy, streamAgy } from '../src/agy/run.ts'
+import { AGY_DENY_ALL_SETTINGS, AgyError, agyArgs, checkAgy, parseAgyQuota, runAgy, streamAgy } from '../src/agy/run.ts'
 import { ensureTemplate, templateDir, templateName } from '../src/agy/template.ts'
 
 const tool = { name: 'get_weather', description: 'Weather for a city', parameters: { type: 'object', properties: { city: { type: 'string' } } } }
@@ -56,6 +57,17 @@ describe('buildConversation', () => {
     expect(Buffer.byteLength(text)).toBeLessThan(1_000)
     expect(text).toContain('bytes omitted')
     expect(text).toContain('TAIL')
+  })
+
+  it('moves older turns to the template part before omitting anything', () => {
+    const turn = (n: number) => msg('user', [{ type: 'text', text: `turn ${n} ` + 'x'.repeat(380) }])
+    const parts = splitConversation([turn(1), turn(2), turn(3), turn(4)] as never, 500, 900)
+    expect(parts.recent).toContain('turn 4')
+    expect(parts.recent).toContain('Earlier turns of this conversation are in your instructions')
+    expect(parts.earlier).toContain('turn 3')
+    expect(parts.earlier).toContain('turn 2')
+    expect(parts.earlier.startsWith('[1 oldest turn(s) omitted')).toBe(true)
+    expect(parts.earlier).not.toContain('turn 1 ')
   })
 
   it('clipMiddle keeps head and tail', () => {
@@ -162,6 +174,23 @@ process.stdin.on('end', () => {
     // The turn lock is released after an abort, so the next run still starts.
     const ok = await fakeAgy(`process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'ok' } })))`)
     await expect(runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'm', prompt: 'x' })).resolves.toMatchObject({ response: 'ok' })
+  })
+
+  it('checkAgy adds the version and the Gemini quota when the CLI reports them', async () => {
+    const usage = { event: 'command_result', command: { name: 'usage', data: { groups: [
+      { name: 'Claude and GPT models', buckets: [{ window: 'weekly', remaining_fraction: 0.5 }] },
+      { name: 'Gemini Models', buckets: [{ window: 'weekly', remaining_fraction: 0.98, reset_time: '2026-11-21T03:16:14Z' }, { window: '5h', remaining_fraction: 0.99 }] },
+    ] } } }
+    const binary = await fakeAgy(`
+const a = process.argv.slice(2)
+if (a[0] === '--version') console.log('1.5.9')
+else if (a[0] === 'models') console.log('gemini-3.8-flash-low\\tGemini 3.8 Flash (Low)')
+else console.log(${JSON.stringify(JSON.stringify(usage))})`)
+    expect(await checkAgy(binary)).toEqual({
+      installed: true, signedIn: true, models: ['gemini-3.8-flash-low'], version: '1.5.9',
+      quota: { weekly: 0.98, weeklyReset: '2026-11-21T03:16:14Z', fiveHour: 0.99 },
+    })
+    expect(parseAgyQuota('not json')).toBeUndefined()
   })
 
   it('checkAgy reads the model list and detects a missing sign-in', async () => {
