@@ -970,6 +970,12 @@ export const SETTINGS_CSS = `
   overflow-wrap: anywhere;
 }
 .dsh-agy-option:has(input:disabled) { cursor: not-allowed; opacity: .6; }
+.dsh-agy-option { align-items: start; }
+.dsh-agy-option > input { margin-top: 2px; }
+.dsh-agy-option-desc { font-size: 11px; line-height: 16px; color: var(--dsw-alias-label-secondary, GrayText); overflow-wrap: anywhere; }
+/* Radio and its text stay on one row; only the text wraps. */
+.dsh-agy-radio-card { flex-wrap: nowrap; }
+.dsh-agy-radio-card > :not(input) { flex: 1 1 auto; min-width: 0; }
 .dsh-agy-radio-card input[type="radio"] { margin: 0; accent-color: var(--dsw-alias-button-primary-fill, Highlight); }
 .dsh-agy-segmented-btn input[type="radio"] { position: absolute; opacity: 0; width: 1px; height: 1px; pointer-events: none; }
 .dsh-agy-segmented-btn { position: relative; }

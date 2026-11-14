@@ -4,6 +4,7 @@ This file records completed features, fixes, and process milestones in `YukieMio
 
 ## Unreleased
 
+- UI: the Request route and Account switching strategy choices use the same list style as Enabled Models; descriptions no longer push the radio onto its own line, and each strategy explains what it does.
 - UI: on the Gateway and Official CLI routes, the header no longer shows a direct account and the Accounts tab drops the active check mark, with a note that those accounts are unused on that route.
 - Accounts: when the active account is banned, the active role moves to a healthy account.
 - agy: the template now states plainly that DSH's tools are available and only the backend's own built-ins are off.

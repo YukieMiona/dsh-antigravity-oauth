@@ -125,13 +125,18 @@ export function AdvancedTab(props: AdvancedTabProps) {
             <span className="dsh-agy-section-title">{t('switchingStrategyTitle')}</span>
             <span className="dsh-agy-section-desc">{t('strategyDesc')}</span>
           </legend>
-          {(['failover_429', 'proactive_threshold', 'round_robin', 'manual'] as const).map((strategy, index) => (
-            <label key={strategy} className={'dsh-agy-radio-card ' + (advancedStrategy === strategy ? 'is-active' : '')}>
-              <input type="radio" name="agy-strategy" value={strategy} checked={advancedStrategy === strategy}
-                onChange={() => setAdvancedStrategy(strategy)} />
-              <span className="dsh-agy-choice-label">{t((['strategyFailover', 'strategyProactive', 'strategyRoundRobin', 'strategyManual'] as const)[index])}</span>
-            </label>
-          ))}
+          <div className="dsh-agy-option-list">
+            {(['failover_429', 'proactive_threshold', 'round_robin', 'manual'] as const).map((strategy, index) => (
+              <label key={strategy} className={'dsh-agy-option ' + (advancedStrategy === strategy ? 'is-active' : '')}>
+                <input type="radio" name="agy-strategy" value={strategy} checked={advancedStrategy === strategy}
+                  onChange={() => setAdvancedStrategy(strategy)} />
+                <span className="dsh-agy-option-text">
+                  <span className="dsh-agy-option-name">{t((['strategyFailover', 'strategyProactive', 'strategyRoundRobin', 'strategyManual'] as const)[index])}</span>
+                  <span className="dsh-agy-option-desc">{t((['strategyFailoverDesc', 'strategyProactiveDesc', 'strategyRoundRobinDesc', 'strategyManualDesc'] as const)[index])}</span>
+                </span>
+              </label>
+            ))}
+          </div>
         </fieldset>
         {advancedStrategy === 'proactive_threshold' ? (
           <label className="dsh-agy-field">
