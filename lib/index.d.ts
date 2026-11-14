@@ -534,7 +534,9 @@ declare class AntigravityAdapter extends LlmAdapter {
   private streamViaBridge;
   /**
    * Official CLI route: hand the request to Google's own `agy` binary, signed in as the user.
-   * agy answers once (no token streaming); its own tools are denied, and DSH runs any tool calls.
+   * DSH's system prompt and tools live in a generated agent template that removes agy's built-in
+   * tools; the conversation travels on stdin; answer text streams as it is written; tool calls come
+   * back as tagged blocks that are validated against the offered tools before DSH runs them.
    */
   private streamViaAgy;
   private tryFailoverLease;
