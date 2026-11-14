@@ -580,6 +580,9 @@ export class AntigravityAdapter extends LlmAdapter {
       : options.model
 
     const bridge = await this.session.manager?.read()
+    // One line per request, so the journal shows which route served each chat.
+    console.info(`[dsh-antigravity-oauth] route=${bridge?.enabled === true ? 'gateway' : 'direct'} model=${targetModel}`
+      + ` effort=${effortOf(options)}${options.purpose === undefined ? '' : ` purpose=${options.purpose}`}`)
     if (bridge?.enabled === true) {
       yield* this.streamViaBridge(options, targetModel, bridge)
       return

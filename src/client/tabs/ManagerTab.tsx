@@ -17,6 +17,10 @@ export interface ManagerTabProps {
 
 type Feedback = { ok: boolean, msg: string } | null
 
+function hostOf(url: string): string {
+  try { return new URL(url).host } catch { return url }
+}
+
 function HealthTile({ name, up, detail }: { name: string, up?: boolean, detail: string }) {
   const dot = up === undefined ? '' : up ? 'is-signed-in' : 'is-error'
   return (
@@ -92,23 +96,36 @@ export function ManagerTab({ t, settings, enabledModels, save, test }: ManagerTa
   return (
     <div className="dsh-agy-stack">
       <div className="dsh-agy-card">
-        <div className="dsh-agy-status-strip">
-          <div className="dsh-agy-status-main">
-            <span className={'dsh-agy-dot ' + (enabled ? (probe?.ok === false ? 'is-error' : 'is-signed-in') : '')} />
-            <span className="dsh-agy-status-label">{enabled ? t('bridgeStatusOn') : t('bridgeStatusOff')}</span>
-            {enabled ? <span className="dsh-agy-status-meta dsh-agy-mono">{settings.baseUrl}</span> : null}
-          </div>
-          <label className="dsh-agy-switch">
-            <input
-              type="checkbox"
-              checked={enabled}
-              disabled={busy}
-              onChange={e => { void persist({ enabled: e.target.checked }) }}
-            />
-            <span>{t('bridgeEnable')}</span>
-          </label>
-        </div>
-        <p className="dsh-agy-hint">{t('bridgeEnableHint')}</p>
+        <fieldset className="dsh-agy-fieldset" disabled={busy}>
+          <legend className="dsh-agy-section-text">
+            <span className="dsh-agy-section-title">{t('routeTitle')}</span>
+            <span className="dsh-agy-section-desc">{t('routeDesc')}</span>
+          </legend>
+          {([
+            ['direct', 'routeDirect', 'routeDirectDesc'],
+            ['gateway', 'routeBridge', 'routeGatewayDesc'],
+          ] as const).map(([value, label, desc]) => {
+            const selected = (value === 'gateway') === enabled
+            return (
+              <label key={value} className={'dsh-agy-radio-card ' + (selected ? 'is-active' : '')}>
+                <input
+                  type="radio"
+                  name="agy-route"
+                  value={value}
+                  checked={selected}
+                  onChange={() => { void persist({ enabled: value === 'gateway' }) }}
+                />
+                <span className="dsh-agy-option-text">
+                  <span className="dsh-agy-option-name">{t(label)}</span>
+                  <span className="dsh-agy-section-desc">{t(desc)}</span>
+                </span>
+                {selected && value === 'gateway' ? (
+                  <span className={'dsh-agy-pill ' + (probe?.ok === false ? 'is-error' : 'is-success')}>{hostOf(settings.baseUrl)}</span>
+                ) : null}
+              </label>
+            )
+          })}
+        </fieldset>
         <div className="dsh-agy-health">
           <HealthTile
             name={t('bridgeGateway')}
@@ -125,6 +142,7 @@ export function ManagerTab({ t, settings, enabledModels, save, test }: ManagerTa
             detail={probe === undefined ? t('bridgeNotTested') : `${probe.coreUp ? t('bridgeUp') : t('bridgeDown')} · 127.0.0.1:18046`}
           />
         </div>
+        <p className="dsh-agy-hint">{t('coreNote')}</p>
         {missing.length > 0 ? (
           <p className="dsh-agy-callout is-warn" role="status">{t('bridgeModelsMissing', { models: missing.join(', ') })}</p>
         ) : null}
