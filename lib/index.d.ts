@@ -169,6 +169,8 @@ type AccountSummary = {
   ready: boolean;
   limited: boolean;
   dead: boolean;
+  /** Google disabled the account for a Terms of Service violation; it is never selected. */
+  banned?: boolean;
   hasArgon?: boolean;
 };
 type QuotaBucket = {
@@ -223,10 +225,12 @@ interface AdvancedSettings {
   proactiveThreshold: number;
   enabledModels?: PublicModelId[];
 }
+/** `bannedAt`: when Google disabled this account for a ToS violation. Token refreshes still succeed, so it must persist. */
 type StoredAccount = AntigravityGrant & {
   id: string;
   addedAt?: string;
   hasArgon?: boolean;
+  bannedAt?: string;
 };
 declare function antigravityAuthPath(dshHome?: string): string;
 declare class AntigravityCredentialStore {
@@ -326,6 +330,11 @@ declare class AntigravityApiServer {
   private getEffectiveEnabledModels;
   private authenticate;
   private handleRequest;
+  /**
+   * Pull the first upstream event before any response header is sent, so a banned or rate-limited
+   * account can still be swapped for another one. After the first event, the stream is committed.
+   */
+  private openWithFailover;
   private handleChatCompletions;
 }
 //#endregion
@@ -435,6 +444,11 @@ declare class AntigravitySession {
   hasReadyAccount(): Promise<boolean>;
   noteRateLimited(accountId: string): void;
   noteAuthRejected(accountId: string): void;
+  /**
+   * Google disabled this account (`TOS_VIOLATION`). Persist it: token refresh keeps working for a
+   * banned account, so a runtime flag alone would be cleared and the account picked again.
+   */
+  noteBanned(accountId: string): Promise<void>;
   snapshot(): Promise<AntigravityStatus>;
   private summarizeAccounts;
   private precheckAccount;

@@ -160,4 +160,55 @@ describe('AntigravityApiServer', () => {
     expect(streamText).toContain('Hello from mock Gemini!')
     expect(streamText).toContain('data: [DONE]')
   })
+  it('accepts effort-suffixed ids and fails over from a banned account before any header is sent', async () => {
+    const testPort = 19146
+    const testKey = 'sk-agy-test-secret-5678'
+    await store.save({ enabled: true, host: '127.0.0.1', port: testPort, apiKey: testKey })
+    const chatBodies: { account: string, input: ChatGenerateInput }[] = []
+    const ccaFor = (account: string) => ({
+      async *chat(_oauth: unknown, input: ChatGenerateInput): AsyncIterable<CcaEvent> {
+        chatBodies.push({ account, input })
+        if (account === 'banned') throw new Error('CCA 403: {"status":"PERMISSION_DENIED","reason":"TOS_VIOLATION"}')
+        yield { type: 'text', text: 'ok from ' + account }
+        yield { type: 'finish', reason: 'STOP' }
+      },
+    })
+    const banned: string[] = []
+    let next = 'banned'
+    const fakeSession = {
+      getAdvancedSettings: async () => ({ enabledModels: ['gemini-3.8-flash'], defaultReasoningEffort: 'medium' }),
+      acquire: async () => {
+        const account = next
+        next = 'healthy'
+        return { oauth: { access: 'tok', projectId: 'p1' }, accountId: account, cca: ccaFor(account) }
+      },
+      noteBanned: async (id: string) => { banned.push(id) },
+      noteRateLimited: () => {},
+    } as unknown as AntigravitySession
+
+    server = new AntigravityApiServer(fakeSession, store)
+    await server.start()
+    const res = await fetch(`http://127.0.0.1:${testPort}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${testKey}` },
+      body: JSON.stringify({ model: 'gemini-3.8-flash-low', stream: true, messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    expect(res.status).toBe(200)
+    expect(await res.text()).toContain('ok from healthy')
+    expect(banned).toEqual(['banned'])
+    expect(chatBodies.map(b => b.account)).toEqual(['banned', 'healthy'])
+    expect(chatBodies[1]!.input.model).toBe('gemini-3.8-flash-low')
+
+    const unknown = await fetch(`http://127.0.0.1:${testPort}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${testKey}` },
+      body: JSON.stringify({ model: 'gemini-3.7-flash-low', messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    expect(unknown.status).toBe(400)
+  })
+
+  it('only accepts IP literals or localhost as the bind host', async () => {
+    expect((await store.save({ host: '172.17.0.1' })).host).toBe('172.17.0.1')
+    expect((await store.save({ host: 'evil.example.com' })).host).toBe('127.0.0.1')
+  })
 })

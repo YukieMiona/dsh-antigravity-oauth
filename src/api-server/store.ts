@@ -1,4 +1,5 @@
 import { randomBytes } from 'node:crypto'
+import { isIP } from 'node:net'
 import { readFile } from 'node:fs/promises'
 import { join, resolve } from 'node:path'
 import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
@@ -22,9 +23,9 @@ export function sanitizeApiServerSettings(raw: unknown): ApiServerSettings {
   }
   const data = raw as Record<string, unknown>
   const enabled = Boolean(data.enabled)
-  const host = typeof data.host === 'string' && data.host.trim().length > 0
-    ? data.host.trim()
-    : DEFAULT_API_SERVER_HOST
+  // An IP literal or localhost only: a hostname here would make the bind address depend on DNS.
+  const rawHost = typeof data.host === 'string' ? data.host.trim() : ''
+  const host = rawHost === 'localhost' || isIP(rawHost) !== 0 ? rawHost : DEFAULT_API_SERVER_HOST
   const rawPort = Number(data.port)
   const port = Number.isInteger(rawPort) && rawPort >= 1024 && rawPort <= 65535
     ? rawPort

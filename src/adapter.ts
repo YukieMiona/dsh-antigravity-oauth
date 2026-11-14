@@ -51,6 +51,7 @@ import {
   withSearchContinueGuidance,
 } from './search-turn.ts'
 import type { AntigravitySession } from './session.ts'
+import { isAccountBannedError } from './ban.ts'
 import { streamBridge, toBridgeMessages, toBridgeTools, type BridgeRequest } from './manager/bridge.ts'
 import type { ManagerSettings } from './manager/store.ts'
 import type {
@@ -780,9 +781,10 @@ export class AntigravityAdapter extends LlmAdapter {
         let message = error instanceof Error
           ? (error.cause instanceof Error ? `${error.message}: ${error.cause.message}` : error.message)
           : String(error)
-        const isArgonModelError = targetModel === 'gemini-4-argon'
+        // A ban is also a 403 PERMISSION_DENIED; it must not read as "this account lacks Argon".
+        const isAccountBanned = isAccountBannedError(message)
+        const isArgonModelError = targetModel === 'gemini-4-argon' && !isAccountBanned
           && /\b403\b|\b404\b|MODEL_NOT_FOUND|PERMISSION_DENIED/i.test(message)
-        const isAccountBanned = /\bACCOUNT_DISABLED\b|\bUSER_SUSPENDED\b|\bACCOUNT_SUSPENDED\b|\baccount_forbidden\b/i.test(message)
         const isCapacityError = /\b503\b|UNAVAILABLE|capacity exhausted|temporarily unavailable/i.test(message)
         const isBadImageError = /\b400\b|INVALID_ARGUMENT|image.*(?:fail|corrupt|unsupported|invalid)|IMAGE_PROCESSING_FAILED/i.test(message)
         const code = /\b401\b|\b403\b/.test(message)
@@ -793,12 +795,13 @@ export class AntigravityAdapter extends LlmAdapter {
               ? 'SERVER'
               : 'TRANSPORT'
 
-        if (code === 'RATE_LIMIT') {
+        if (isAccountBanned) {
+          if (typeof this.session.noteBanned === 'function') await this.session.noteBanned(currentLease.accountId)
+          else this.session.noteAuthRejected?.(currentLease.accountId)
+        } else if (code === 'RATE_LIMIT') {
           this.session.noteRateLimited?.(currentLease.accountId)
         } else if (isArgonModelError) {
           this.session.noteArgonRejected?.(currentLease.accountId)
-        } else if (code === 'AUTH' && isAccountBanned) {
-          this.session.noteAuthRejected?.(currentLease.accountId)
         }
 
         const canFailover = !emittedAnyChunk && state.index === 0 && state.text.length === 0 && state.thought.length === 0
@@ -840,7 +843,8 @@ export class AntigravityAdapter extends LlmAdapter {
             triedAccountIds,
             code,
             isArgonModelError,
-            isCapacityError,
+            // A banned account will never answer; move on exactly as for exhausted capacity.
+            isCapacityError || isAccountBanned,
           )
           if (nextLease !== undefined) {
             resetEmitState(state)

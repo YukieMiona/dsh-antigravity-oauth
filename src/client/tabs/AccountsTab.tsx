@@ -233,9 +233,11 @@ export function AccountsTab(props: AccountsTabProps) {
                         {account.limited ? (
                           <span className="dsh-agy-status-badge is-error" title={t('accountLimited')} role={compactView ? 'img' : undefined} aria-label={compactView ? t('accountLimited') : undefined}>{compactView ? '!' : t('accountLimited')}</span>
                         ) : null}
-                        {account.dead ? (
-                          <span className="dsh-agy-status-badge is-error" title={t('accountNeedsRelogin')} role={compactView ? 'img' : undefined} aria-label={compactView ? t('accountNeedsRelogin') : undefined}>{compactView ? '×' : t('accountNeedsRelogin')}</span>
-                        ) : null}
+                        {account.dead ? (() => {
+                          // A ToS ban is not fixed by signing in again, so it gets its own label.
+                          const label = t(account.banned === true ? 'accountBanned' : 'accountNeedsRelogin')
+                          return <span className="dsh-agy-status-badge is-error" title={label} role={compactView ? 'img' : undefined} aria-label={compactView ? label : undefined}>{compactView ? '×' : label}</span>
+                        })() : null}
                       </div>
 
                       <div className="dsh-agy-account-action">
