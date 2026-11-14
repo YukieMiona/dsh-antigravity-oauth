@@ -54,8 +54,9 @@ import type { AntigravitySession } from './session.ts'
 import { isAccountBannedError } from './ban.ts'
 import { streamBridge, toBridgeMessages, toBridgeTools, type BridgeRequest } from './manager/bridge.ts'
 import type { ManagerSettings } from './manager/store.ts'
-import { agyResultChunks, agySchema, buildAgyPrompt } from './agy/prompt.ts'
-import { AgyError, runAgy } from './agy/run.ts'
+import { buildConversation, buildTemplateBody, parseAnswer, ToolCallFilter, usageOf } from './agy/prompt.ts'
+import { AgyError, streamAgy, type AgyResult } from './agy/run.ts'
+import { ensureTemplate } from './agy/template.ts'
 import { randomUUID } from 'node:crypto'
 import { dirname, join } from 'node:path'
 import type {
@@ -707,7 +708,9 @@ export class AntigravityAdapter extends LlmAdapter {
 
   /**
    * Official CLI route: hand the request to Google's own `agy` binary, signed in as the user.
-   * agy answers once (no token streaming); its own tools are denied, and DSH runs any tool calls.
+   * DSH's system prompt and tools live in a generated agent template that removes agy's built-in
+   * tools; the conversation travels on stdin; answer text streams as it is written; tool calls come
+   * back as tagged blocks that are validated against the offered tools before DSH runs them.
    */
   private async *streamViaAgy(
     options: GenerateOptions,
@@ -715,20 +718,70 @@ export class AntigravityAdapter extends LlmAdapter {
     settings: ManagerSettings,
   ): AsyncIterable<StreamChunk> {
     const effort = effortOf(options)
-    const { prompt, tools } = buildAgyPrompt(options)
-    const cwd = join(dirname(String(this.session.store?.filename)), AGY_WORKSPACE_DIRNAME)
+    const workspace = join(dirname(String(this.session.store?.filename)), AGY_WORKSPACE_DIRNAME)
+    const { body, tools } = buildTemplateBody(options)
+    const toolNames = new Set(tools.map(tool => tool.name))
     const watchdog = new IdleWatchdog(this.idleTimeoutFor(effort, false), options.signal)
+    const filter = new ToolCallFilter()
+    let streamed = ''
+    let textOpen = false
     try {
-      const result = await runAgy({
+      const agent = await ensureTemplate(workspace, body)
+      let result: AgyResult | undefined
+      for await (const event of streamAgy({
         binary: settings.agyPath,
-        cwd,
-        model: routeChatModel(targetModel, effort),
-        prompt,
-        ...agySchema(tools) === undefined ? {} : { schema: agySchema(tools)! },
+        cwd: workspace,
+        model: targetModel,
+        effort,
+        agent,
+        prompt: buildConversation(options.messages),
         signal: watchdog.signal,
         onActivity: () => watchdog.touch(),
-      })
-      yield* agyResultChunks(result, options.model, () => `agy_${randomUUID()}`)
+      })) {
+        if (event.type === 'result') { result = event.result; break }
+        const visible = filter.feed(event.text)
+        if (visible.length === 0) continue
+        if (!textOpen) { yield { type: 'block-start', index: 0, blockType: 'text' }; textOpen = true }
+        streamed += visible
+        yield { type: 'text-delta', index: 0, text: visible }
+      }
+      const tailText = filter.end()
+      if (tailText.length > 0) {
+        if (!textOpen) { yield { type: 'block-start', index: 0, blockType: 'text' }; textOpen = true }
+        streamed += tailText
+        yield { type: 'text-delta', index: 0, text: tailText }
+      }
+      const parsed = parseAnswer(result?.response ?? streamed, toolNames)
+      if (parsed.rejected.length > 0) console.warn(`[dsh-antigravity-oauth] agy: ignored ${parsed.rejected.join(', ')}`)
+      // A result without streamed deltas still carries the full answer.
+      if (!textOpen && parsed.text.length > 0) {
+        yield { type: 'block-start', index: 0, blockType: 'text' }
+        yield { type: 'text-delta', index: 0, text: parsed.text }
+        streamed = parsed.text
+        textOpen = true
+      }
+      let index = 0
+      if (textOpen) {
+        yield { type: 'block-end', index: 0, block: { type: 'text', text: streamed.trimEnd() } }
+        index = 1
+      }
+      for (const call of parsed.calls) {
+        const id = ToolCallId(`agy_${randomUUID()}`)
+        yield { type: 'block-start', index, blockType: 'tool-call' }
+        yield { type: 'tool-call-delta', index, id, name: call.name, argumentsDelta: call.arguments }
+        yield { type: 'block-end', index, block: { type: 'tool-call', id, name: call.name, arguments: call.arguments } }
+        index += 1
+      }
+      const usage = usageOf(result?.usage)
+      if (usage !== undefined) yield { type: 'usage', usage }
+      if (parsed.calls.length > 0) {
+        yield { type: 'finish', reason: { kind: 'tool-calls' } }
+      } else if (index === 0) {
+        const why = parsed.rejected.length > 0 ? ` (${parsed.rejected.join(', ')})` : ''
+        yield { type: 'finish', reason: { kind: 'error', failure: { message: `model "${options.model}" returned an empty answer through agy${why}`, code: 'EMPTY_RESPONSE' } } }
+      } else {
+        yield { type: 'finish', reason: { kind: 'stop' } }
+      }
     } catch (error) {
       if (watchdog.timedOut) throw new LlmError(IDLE_TIMEOUT_MESSAGE, 'TIMEOUT', { cause: error })
       if (error instanceof AgyError && error.kind === 'aborted') throw error

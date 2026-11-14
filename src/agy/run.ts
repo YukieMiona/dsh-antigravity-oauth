@@ -2,8 +2,8 @@ import { spawn } from 'node:child_process'
 import { mkdir } from 'node:fs/promises'
 
 /**
- * Deny every action class the CLI knows, so `agy` only ever answers in text. DSH runs the tools.
- * Verified 2026-11-14 against agy 1.5.9: `read_file` and `run_command` both end in a permission error.
+ * Defence in depth: the agent template (see template.ts) already removes agy's built-in tools,
+ * and these rules deny every action class in case a template is ever missing.
  */
 export const AGY_DENY_ALL_SETTINGS = JSON.stringify({
   permissions: {
@@ -22,21 +22,24 @@ export interface AgyUsage {
 export interface AgyResult {
   status: string
   response: string
-  structured?: unknown
   usage?: AgyUsage
 }
 
+export type AgyEvent =
+  | { type: 'text', text: string }
+  | { type: 'result', result: AgyResult }
+
 export interface AgyRunOptions {
   binary: string
-  /** Empty directory owned by the plugin; agy treats it as the workspace. */
+  /** Plugin-owned directory; agy treats it as the workspace and finds agent templates under it. */
   cwd: string
+  /** Base model id, e.g. `gemini-3.8-flash`; effort goes in `effort`. */
   model: string
+  effort?: 'low' | 'medium' | 'high'
+  /** Agent template name (see template.ts). */
+  agent?: string
   prompt: string
-  /** JSON schema for the final answer; omitted for plain-text calls. */
-  schema?: object
   signal?: AbortSignal
-  /** Called for each streamed text fragment (only meaningful without a schema). */
-  onText?: (text: string) => void
   /** Called on every stdout line, so an idle watchdog can restart. */
   onActivity?: () => void
 }
@@ -48,13 +51,16 @@ export class AgyError extends Error {
   }
 }
 
-// Each agy process peaks around 230 MB, so requests queue instead of running side by side.
-let running: Promise<unknown> = Promise.resolve()
+// Each agy process peaks around 230 MB, so runs take turns instead of running side by side.
+let tail: Promise<void> = Promise.resolve()
 
-function queued<T>(task: () => Promise<T>): Promise<T> {
-  const next = running.then(task, task)
-  running = next.catch(() => undefined)
-  return next
+async function acquireTurn(): Promise<() => void> {
+  let release!: () => void
+  const mine = new Promise<void>(resolve => { release = resolve })
+  const previous = tail
+  tail = previous.then(() => mine)
+  await previous
+  return release
 }
 
 /** stderr carries glog noise ("logging before google.Init"); keep only lines a user can act on. */
@@ -67,85 +73,112 @@ function usefulStderr(stderr: string): string {
     .slice(0, 600)
 }
 
-function runOnce(options: AgyRunOptions): Promise<AgyResult> {
-  return new Promise((resolve, reject) => {
-    if (options.signal?.aborted) return reject(new AgyError('aborted', 'aborted'))
-    const args = [
-      '--input-format', 'stream-json',
-      '--output-format', 'stream-json',
-      '--model', options.model,
-      '--sandbox',
-      '--settings', AGY_DENY_ALL_SETTINGS,
-      ...options.schema === undefined ? [] : ['--json-schema', JSON.stringify(options.schema)],
-      // `-p` takes the next argument as its prompt, so it goes last with an empty prompt;
-      // the real prompt arrives on stdin.
-      '-p', '',
-    ]
-    const child = spawn(options.binary, args, { cwd: options.cwd, stdio: ['pipe', 'pipe', 'pipe'] })
-    let stdout = ''
-    let stderr = ''
-    let result: AgyResult | undefined
-    const onAbort = (): void => { child.kill('SIGTERM') }
-    options.signal?.addEventListener('abort', onAbort, { once: true })
-
-    child.on('error', error => {
-      options.signal?.removeEventListener('abort', onAbort)
-      const missing = (error as NodeJS.ErrnoException).code === 'ENOENT'
-      reject(new AgyError(
-        missing ? `Antigravity CLI not found at ${options.binary}` : `Could not start agy: ${error.message}`,
-        missing ? 'not-installed' : 'failed',
-      ))
-    })
-    child.stderr.on('data', chunk => { stderr += String(chunk) })
-    child.stdout.on('data', chunk => {
-      stdout += String(chunk)
-      let newline: number
-      while ((newline = stdout.indexOf('\n')) >= 0) {
-        const line = stdout.slice(0, newline).trim()
-        stdout = stdout.slice(newline + 1)
-        if (line.length === 0) continue
-        options.onActivity?.()
-        let event: Record<string, any>
-        try { event = JSON.parse(line) as Record<string, any> } catch { continue }
-        const step = event.step_update
-        if (step?.step_type === 'agent_response' && typeof step.text_delta === 'string' && step.text_delta.length > 0) {
-          options.onText?.(step.text_delta)
-        }
-        if (event.event === 'result' && event.result) {
-          const r = event.result
-          result = {
-            status: String(r.status ?? ''),
-            response: typeof r.response === 'string' ? r.response : '',
-            ...r.structured_output === undefined ? {} : { structured: r.structured_output },
-            ...r.usage === undefined ? {} : { usage: r.usage as AgyUsage },
-          }
-        }
-      }
-    })
-    child.on('close', code => {
-      options.signal?.removeEventListener('abort', onAbort)
-      if (options.signal?.aborted) return reject(new AgyError('aborted', 'aborted'))
-      const detail = usefulStderr(stderr)
-      if (/not authenticated|sign in/i.test(detail) && result?.status !== 'SUCCESS') {
-        return reject(new AgyError('The Antigravity CLI is not signed in. Run `agy` once in a terminal to sign in.', 'not-signed-in'))
-      }
-      if (result === undefined) {
-        return reject(new AgyError(`agy exited with code ${code ?? 'null'} without a result${detail ? `: ${detail}` : ''}`, 'failed'))
-      }
-      if (result.status !== 'SUCCESS') {
-        return reject(new AgyError(`agy returned ${result.status}${detail ? `: ${detail}` : ''}`, 'failed'))
-      }
-      resolve(result)
-    })
-
-    child.stdin.on('error', () => { /* the close handler reports the real failure */ })
-    child.stdin.end(JSON.stringify({ event: 'user', message: { content: options.prompt } }) + '\n')
-  })
+export function agyArgs(options: Pick<AgyRunOptions, 'model' | 'effort' | 'agent'>): string[] {
+  return [
+    '--input-format', 'stream-json',
+    '--output-format', 'stream-json',
+    '--model', options.model,
+    ...options.effort === undefined ? [] : ['--effort', options.effort],
+    ...options.agent === undefined ? [] : ['--agent', options.agent],
+    '--sandbox',
+    '--settings', AGY_DENY_ALL_SETTINGS,
+    // `-p` takes the next argument as its prompt, so it goes last with an empty prompt;
+    // the real prompt arrives on stdin.
+    '-p', '',
+  ]
 }
 
-export async function runAgy(options: AgyRunOptions): Promise<AgyResult> {
+/**
+ * Run one agy turn and yield answer text as it streams, then the final result.
+ * The prompt travels on stdin, so its size is not bound by the argument-length limit.
+ */
+export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEvent> {
+  if (options.signal?.aborted) throw new AgyError('aborted', 'aborted')
   await mkdir(options.cwd, { recursive: true, mode: 0o700 })
-  return queued(() => runOnce(options))
+  const release = await acquireTurn()
+  const child = spawn(options.binary, agyArgs(options), { cwd: options.cwd, stdio: ['pipe', 'pipe', 'pipe'] })
+  const queue: AgyEvent[] = []
+  let wake: (() => void) | undefined
+  let finished: { error?: Error } | undefined
+  let stdout = ''
+  let stderr = ''
+  let result: AgyResult | undefined
+  const notify = (): void => { wake?.(); wake = undefined }
+  const finish = (error?: Error): void => {
+    if (finished !== undefined) return
+    finished = error === undefined ? {} : { error }
+    notify()
+  }
+  const onAbort = (): void => { child.kill('SIGTERM') }
+  options.signal?.addEventListener('abort', onAbort, { once: true })
+
+  child.on('error', error => {
+    const missing = (error as NodeJS.ErrnoException).code === 'ENOENT'
+    finish(new AgyError(
+      missing ? `Antigravity CLI not found at ${options.binary}` : `Could not start agy: ${error.message}`,
+      missing ? 'not-installed' : 'failed',
+    ))
+  })
+  child.stderr.on('data', chunk => { stderr += String(chunk) })
+  child.stdout.on('data', chunk => {
+    stdout += String(chunk)
+    let newline: number
+    while ((newline = stdout.indexOf('\n')) >= 0) {
+      const line = stdout.slice(0, newline).trim()
+      stdout = stdout.slice(newline + 1)
+      if (line.length === 0) continue
+      options.onActivity?.()
+      let event: Record<string, any>
+      try { event = JSON.parse(line) as Record<string, any> } catch { continue }
+      const step = event.step_update
+      if (step?.step_type === 'agent_response' && typeof step.text_delta === 'string' && step.text_delta.length > 0) {
+        queue.push({ type: 'text', text: step.text_delta })
+        notify()
+      }
+      if (event.event === 'result' && event.result) {
+        const r = event.result
+        result = {
+          status: String(r.status ?? ''),
+          response: typeof r.response === 'string' ? r.response : '',
+          ...r.usage === undefined ? {} : { usage: r.usage as AgyUsage },
+        }
+      }
+    }
+  })
+  child.on('close', code => {
+    if (options.signal?.aborted) return finish(new AgyError('aborted', 'aborted'))
+    const detail = usefulStderr(stderr)
+    if (/not authenticated|sign in|not logged in/i.test(detail) && result?.status !== 'SUCCESS') {
+      return finish(new AgyError('The Antigravity CLI is not signed in. Run `agy` once in a terminal to sign in.', 'not-signed-in'))
+    }
+    if (result === undefined) return finish(new AgyError(`agy exited with code ${code ?? 'null'} without a result${detail ? `: ${detail}` : ''}`, 'failed'))
+    if (result.status !== 'SUCCESS') return finish(new AgyError(`agy returned ${result.status}${detail ? `: ${detail}` : ''}`, 'failed'))
+    queue.push({ type: 'result', result })
+    finish()
+  })
+  child.stdin.on('error', () => { /* the close handler reports the real failure */ })
+  child.stdin.end(JSON.stringify({ event: 'user', message: { content: options.prompt } }) + '\n')
+
+  try {
+    while (true) {
+      if (queue.length > 0) { yield queue.shift()!; continue }
+      if (finished !== undefined) {
+        if (finished.error !== undefined) throw finished.error
+        return
+      }
+      await new Promise<void>(resolve => { wake = resolve })
+    }
+  } finally {
+    options.signal?.removeEventListener('abort', onAbort)
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
+    release()
+  }
+}
+
+/** Collect a whole run; used where streaming is not needed. */
+export async function runAgy(options: AgyRunOptions): Promise<AgyResult> {
+  for await (const event of streamAgy(options)) if (event.type === 'result') return event.result
+  throw new AgyError('agy finished without a result', 'failed')
 }
 
 export interface AgyStatus {

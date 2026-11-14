@@ -4,6 +4,8 @@ This file records completed features, fixes, and process milestones in `YukieMio
 
 ## Unreleased
 
+- agy route speed and truncation fix: DSH's system prompt and tools now go into a generated agent template with `excludeDefaultComponents: true` (removes agy's ~60 built-in tools and default instructions: 9,488 → 415 overhead tokens), the user message carries only the conversation within a 100 KB budget (agy cut longer messages, losing the latest turn), answer text streams as written, tool calls use a validated `<tool_call>` text contract instead of `--json-schema`, and effort goes to `--effort`. Measured on a 47k-token request: 8 s per turn, down from ~105 s.
+
 - Route: add **Official CLI** (`agy`). Each request is sent to Google's own Antigravity CLI, signed in as the user, as one transcript on stdin; a JSON schema returns either an answer or DSH tool calls. agy's own tools are denied by policy (`permissions.deny` for every action class, `--sandbox`), one agy process runs at a time (~230 MB each), and the Route tab shows its sign-in state. Settings gain `route` (`direct` | `gateway` | `agy`) and `agyPath`; older files with `enabled` still load as before.
 
 - Bans: recognise Google's `403 TOS_VIOLATION` as a disabled account, persist it as `bannedAt` (token refresh no longer clears it), skip it in every account picker, fail over before output, and label it "Disabled by Google (ToS)".
