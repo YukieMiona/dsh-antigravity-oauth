@@ -150,13 +150,7 @@ export function ManagerTab({ t, settings, enabledModels, save, test }: ManagerTa
                 ? t('agySignedIn', { count: agy.models.length })
                 : agy.installed ? t('agyNotSignedIn') : t('agyNotInstalled')}
           />
-          <HealthTile
-            name={t('bridgeCore')}
-            up={probe?.coreUp}
-            detail={probe === undefined ? t('bridgeNotTested') : `${probe.coreUp ? t('bridgeUp') : t('bridgeDown')} · 127.0.0.1:18046`}
-          />
         </div>
-        <p className="dsh-agy-hint">{t('coreNote')}</p>
         {missing.length > 0 ? (
           <p className="dsh-agy-callout is-warn" role="status">{t('bridgeModelsMissing', { models: missing.join(', ') })}</p>
         ) : null}

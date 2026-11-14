@@ -2,6 +2,9 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { randomUUID } from 'node:crypto'
 import { isPublicModelId, isReasoningEffort, publicModel, routeChatModel, thinkingLevelFor } from '../models.ts'
 import { isAccountBannedError } from '../ban.ts'
+import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
+import { agyTurn, agyWorkspace } from '../agy/turn.ts'
+import { chatCompletionsUrl, type ManagerSettings } from '../manager/store.ts'
 import type { AntigravitySession } from '../session.ts'
 import type {
   ChatGenerateInput,
@@ -46,6 +49,52 @@ async function readBodyJson(req: IncomingMessage): Promise<any> {
   if (chunks.length === 0) return {}
   const raw = Buffer.concat(chunks).toString('utf-8')
   return JSON.parse(raw)
+}
+
+function openAiText(content: unknown): string {
+  if (typeof content === 'string') return content
+  if (!Array.isArray(content)) return content === null || content === undefined ? '' : JSON.stringify(content)
+  return content.map((part: any) => part?.type === 'text' && typeof part.text === 'string'
+    ? part.text
+    : part?.type === 'image_url' ? '[image omitted: images are not sent through the agy route]' : '').filter(Boolean).join('\n')
+}
+
+/** Reshape an OpenAI chat request into the fields agy/turn.ts reads. */
+export function openAiToRequest(body: any): Pick<GenerateOptions, 'messages' | 'system' | 'tools'> {
+  const system: string[] = []
+  const messages: unknown[] = []
+  for (const msg of Array.isArray(body?.messages) ? body.messages : []) {
+    if (!msg || typeof msg !== 'object') continue
+    if (msg.role === 'system' || msg.role === 'developer') {
+      const text = openAiText(msg.content).trim()
+      if (text.length > 0) system.push(text)
+    } else if (msg.role === 'user') {
+      messages.push({ role: 'user', content: [{ type: 'text', text: openAiText(msg.content) }] })
+    } else if (msg.role === 'assistant') {
+      const content: unknown[] = []
+      const text = openAiText(msg.content)
+      if (text.length > 0) content.push({ type: 'text', text })
+      for (const call of Array.isArray(msg.tool_calls) ? msg.tool_calls : []) {
+        const args = call?.function?.arguments
+        content.push({ type: 'tool-call', id: String(call?.id ?? ''), name: String(call?.function?.name ?? ''), arguments: typeof args === 'string' ? args : JSON.stringify(args ?? {}) })
+      }
+      messages.push({ role: 'assistant', content })
+    } else if (msg.role === 'tool') {
+      messages.push({ role: 'tool', toolCallId: String(msg.tool_call_id ?? ''), content: [{ type: 'text', text: openAiText(msg.content) }] })
+    }
+  }
+  const tools = (Array.isArray(body?.tools) ? body.tools : [])
+    .filter((tool: any) => tool?.type === 'function' && typeof tool.function?.name === 'string')
+    .map((tool: any) => ({
+      name: tool.function.name as string,
+      description: typeof tool.function.description === 'string' ? tool.function.description : '',
+      parameters: (tool.function.parameters ?? { type: 'object' }) as Record<string, unknown>,
+    }))
+  return {
+    messages: messages as GenerateOptions['messages'],
+    ...system.length > 0 ? { system: system.join('\n\n') } : {},
+    ...tools.length > 0 ? { tools } : {},
+  }
 }
 
 function parseOpenAiMessages(rawMessages: any[]): { system?: string, contents: GeminiContent[] } {
@@ -355,6 +404,58 @@ export class AntigravityApiServer {
     }
   }
 
+  /** Official CLI route, mapped onto the event shape the response writers already consume. */
+  private async *agyEvents(
+    binary: string,
+    model: PublicModelId,
+    effort: ReasoningEffort,
+    body: any,
+    signal: AbortSignal,
+  ): AsyncIterable<any> {
+    for await (const event of agyTurn({
+      binary,
+      workspace: agyWorkspace(String(this.session.store?.filename)),
+      model,
+      effort,
+      request: openAiToRequest(body),
+      signal,
+    })) {
+      if (event.type === 'text') { yield { type: 'text', text: event.text }; continue }
+      if (event.rejected.length > 0) console.warn(`[dsh-antigravity-oauth] api-server agy: ignored ${event.rejected.join(', ')}`)
+      for (const call of event.calls) {
+        yield { type: 'functionCall', id: `call_${randomUUID()}`, name: call.name, args: JSON.parse(call.arguments) as Record<string, unknown> }
+      }
+      if (event.usage !== undefined) {
+        yield { type: 'usage', usage: { inputTokens: event.usage.input_tokens ?? 0, outputTokens: event.usage.output_tokens ?? 0 } }
+      }
+      yield { type: 'finish', reason: 'STOP' }
+    }
+  }
+
+  /** Gateway route: forward the OpenAI request as it is and relay the gateway's answer. */
+  private async proxyToGateway(req: IncomingMessage, res: ServerResponse, settings: ManagerSettings, body: unknown): Promise<void> {
+    const abort = new AbortController()
+    req.on('close', () => abort.abort())
+    try {
+      const upstream = await fetch(chatCompletionsUrl(settings.baseUrl), {
+        method: 'POST',
+        headers: { 'content-type': 'application/json', ...settings.apiKey ? { authorization: `Bearer ${settings.apiKey}` } : {} },
+        body: JSON.stringify(body),
+        signal: abort.signal,
+      })
+      res.writeHead(upstream.status, {
+        'Content-Type': upstream.headers.get('content-type') ?? 'application/json; charset=utf-8',
+        'Cache-Control': 'no-cache, no-transform',
+        'Access-Control-Allow-Origin': '*',
+      })
+      if (upstream.body !== null) for await (const chunk of upstream.body) res.write(chunk)
+      res.end()
+    } catch (err: unknown) {
+      if (!res.headersSent) sendError(res, 502, `Gateway unreachable at ${settings.baseUrl}: ${(err as Error).message}`, 'upstream_error')
+      else res.end()
+    }
+  }
+
   private async handleChatCompletions(req: IncomingMessage, res: ServerResponse): Promise<void> {
     let body: any
     try {
@@ -409,15 +510,25 @@ export class AntigravityApiServer {
       ...(thinkingLevel ? { thinkingLevel } : {}),
     }
 
+    // Follow the route chosen in Settings, so other apps use the same path as DSH chats.
+    const routeSettings = await this.session.manager?.read().catch(() => undefined)
+    const route = routeSettings?.route ?? 'direct'
+    console.info(`[dsh-antigravity-oauth] api-server route=${route} model=${publicId} effort=${effort}`)
+    if (routeSettings !== undefined && route === 'gateway') {
+      await this.proxyToGateway(req, res, routeSettings, { ...body, model: wireModel })
+      return
+    }
+    const viaAgy = routeSettings !== undefined && route === 'agy'
+
     let lease: any
     try {
-      lease = await this.session.acquire({ model: publicId })
+      if (!viaAgy) lease = await this.session.acquire({ model: publicId })
     } catch (err: unknown) {
       sendError(res, 503, `Failed to acquire Antigravity account: ${(err as Error).message}`, 'server_error', 'account_acquire_failed')
       return
     }
 
-    if (!lease) {
+    if (!viaAgy && !lease) {
       sendError(res, 503, 'No available Antigravity account. Please sign in via DSH settings.', 'server_error', 'no_available_account')
       return
     }
@@ -432,7 +543,9 @@ export class AntigravityApiServer {
     const createdTime = Math.floor(Date.now() / 1000)
 
     try {
-      const ccaStream = await this.openWithFailover(publicId, input, lease, abortController.signal)
+      const ccaStream = viaAgy
+        ? this.agyEvents(routeSettings.agyPath, publicId, effort, body, abortController.signal)
+        : await this.openWithFailover(publicId, input, lease, abortController.signal)
 
       if (isStream) {
         res.writeHead(200, {
@@ -450,6 +563,7 @@ export class AntigravityApiServer {
           choices: [{ index: 0, delta: { role: 'assistant' }, finish_reason: null }],
         })}\n\n`)
 
+        let toolIndex = 0
         for await (const event of ccaStream) {
           if (event.type === 'thought') {
             res.write(`data: ${JSON.stringify({
@@ -477,7 +591,7 @@ export class AntigravityApiServer {
                 index: 0,
                 delta: {
                   tool_calls: [{
-                    index: 0,
+                    index: toolIndex++,
                     id: event.id || `call_${Date.now()}`,
                     type: 'function',
                     function: {
@@ -495,7 +609,7 @@ export class AntigravityApiServer {
               object: 'chat.completion.chunk',
               created: createdTime,
               model: modelName,
-              choices: [{ index: 0, delta: {}, finish_reason: 'stop' }],
+              choices: [{ index: 0, delta: {}, finish_reason: toolIndex > 0 ? 'tool_calls' : 'stop' }],
             })}\n\n`)
           }
         }

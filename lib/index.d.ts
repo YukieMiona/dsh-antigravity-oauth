@@ -335,6 +335,10 @@ declare class AntigravityApiServer {
    * account can still be swapped for another one. After the first event, the stream is committed.
    */
   private openWithFailover;
+  /** Official CLI route, mapped onto the event shape the response writers already consume. */
+  private agyEvents;
+  /** Gateway route: forward the OpenAI request as it is and relay the gateway's answer. */
+  private proxyToGateway;
   private handleChatCompletions;
 }
 //#endregion
@@ -533,10 +537,8 @@ declare class AntigravityAdapter extends LlmAdapter {
    */
   private streamViaBridge;
   /**
-   * Official CLI route: hand the request to Google's own `agy` binary, signed in as the user.
-   * DSH's system prompt and tools live in a generated agent template that removes agy's built-in
-   * tools; the conversation travels on stdin; answer text streams as it is written; tool calls come
-   * back as tagged blocks that are validated against the offered tools before DSH runs them.
+   * Official CLI route: hand the request to Google's own `agy` binary, signed in as the user
+   * (see agy/turn.ts). Text streams as it is written; DSH runs the validated tool calls.
    */
   private streamViaAgy;
   private tryFailoverLease;
