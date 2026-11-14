@@ -26,6 +26,16 @@ describe('syncAuthenticatedRoute', () => {
     }))).rejects.toThrow('duplicate')
   })
 
+  it('mounts the provider route while the bridge is on, even with no ready account', async () => {
+    let routes: string[] | undefined
+    const bridged = {
+      hasReadyAccount: async () => false,
+      manager: { read: async () => ({ enabled: true, baseUrl: 'http://127.0.0.1:8045/v1', apiKey: '' }) },
+    } as unknown as AntigravitySession
+    await syncAuthenticatedRoute(bridged, handle(((next: string[]) => { routes = next }) as () => void))
+    expect(routes).toEqual(['agy-google-antigravity'])
+  })
+
   it('mounts or unmounts WEB2API_ROUTE dynamically based on enabled setting', async () => {
     let replacedRoutes: string[] | undefined
     const mockWeb2ApiHandle = {

@@ -189,7 +189,8 @@ export class AntigravitySession {
     this.network = new AntigravityNetwork(store.filename + '.network.json')
     this.web2api = new AntigravityWeb2ApiStore(store.filename + '.web2api.json')
     this.apiServerStore = new AntigravityApiServerStore(store.filename + '.api-server.json')
-    this.manager = new AntigravityManagerStore(join(dirname(store.filename), MANAGER_FILENAME))
+    // Next to the auth file. String() keeps minimal test stores (no filename) constructible.
+    this.manager = new AntigravityManagerStore(join(dirname(String(store.filename)), MANAGER_FILENAME))
     this.fetchImpl = fetchImpl ?? this.network.fetch
     this.thoughtSignatures = new ThoughtSignatureStore(store.filename + '.signatures.json')
     this.apiServer = new AntigravityApiServer(this, this.apiServerStore)
