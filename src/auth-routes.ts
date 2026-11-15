@@ -7,6 +7,7 @@ import {
   API_SERVER_PATH,
   ACCOUNT_REMOVE_PATH,
   ACCOUNT_SWITCH_PATH,
+  ACCOUNT_SET_ENABLED_PATH,
   ACCOUNT_TOGGLE_ARGON_PATH,
   AUTH_COMPLETE_PATH,
   AUTH_LOGIN_PATH,
@@ -220,6 +221,23 @@ export function registerAntigravityAuthRoutes(
             await session.removeAccount(id)
             await notify()
             json(res, 200, { ok: true, account: await session.snapshot() })
+          } catch (error) { json(res, 400, { error: safeMessage(error) }) }
+        },
+      }),
+      ctx.webServer.register({
+        kind: 'exact',
+        path: ACCOUNT_SET_ENABLED_PATH,
+        handler: async (req, res) => {
+          if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+          if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
+          try {
+            const body = await readJson(req) as Record<string, unknown>
+            if (typeof body.id !== 'string' || body.id.length === 0 || typeof body.enabled !== 'boolean') {
+              throw new Error('expected { "id": "...", "enabled": true | false }')
+            }
+            const account = await session.setAccountEnabled(body.id, body.enabled)
+            await notify()
+            json(res, 200, { ok: true, account })
           } catch (error) { json(res, 400, { error: safeMessage(error) }) }
         },
       }),

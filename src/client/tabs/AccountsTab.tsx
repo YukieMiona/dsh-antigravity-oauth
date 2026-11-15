@@ -21,6 +21,8 @@ export interface AccountsTabProps {
   filteredAccounts: AccountSummary[]
   switchAccount: (account: AccountSummary) => void
   removeAccount: (id: string) => void
+  /** Absent in hosts that do not offer the off switch. */
+  setAccountEnabled?: (id: string, enabled: boolean) => void
   recover: (action: 'retry' | 'cancel') => void | Promise<void>
 }
 
@@ -94,6 +96,7 @@ export function AccountsTab(props: AccountsTabProps) {
     filteredAccounts,
     switchAccount,
     removeAccount,
+    setAccountEnabled,
     recover,
   } = props
 
@@ -181,6 +184,7 @@ export function AccountsTab(props: AccountsTabProps) {
             ) : (
               filteredAccounts.map(account => {
                 const isActive = account.id === activeAccountId
+                const isOff = account.disabled === true
                 const isSwitching = account.id === switchingId
                 const summary = quotas[account.id]
                 const metrics = getAccountQuotaMetrics(summary, language)
@@ -200,7 +204,7 @@ export function AccountsTab(props: AccountsTabProps) {
                 return (
                   <div
                     key={account.id}
-                    className={'dsh-agy-account ' + (isActive ? 'is-active ' : '') + (compactView ? 'is-compact' : '')}
+                    className={'dsh-agy-account ' + (isActive ? 'is-active ' : '') + (isOff ? 'is-off ' : '') + (compactView ? 'is-compact' : '')}
                   >
                     {/* Header: Identity Button on Left, Action Slot on Right */}
                     <div className="dsh-agy-account-header">
@@ -211,9 +215,9 @@ export function AccountsTab(props: AccountsTabProps) {
                           title={account.email ?? account.id}
                           aria-label={isActive ? t('currentAccountAria', { email: identity }) : identity}
                           aria-pressed={isActive}
-                          disabled={busy || Boolean(switchingId) || isActive}
+                          disabled={busy || Boolean(switchingId) || isActive || isOff}
                           onClick={() => {
-                            if (!busy && !switchingId && !isActive) switchAccount(account)
+                            if (!busy && !switchingId && !isActive && !isOff) switchAccount(account)
                           }}
                         >
                           <span className="dsh-agy-account-email-text">{account.email ?? account.id}</span>
@@ -230,6 +234,9 @@ export function AccountsTab(props: AccountsTabProps) {
                         {isSwitching ? (
                           <span className="dsh-agy-status-badge is-switching" title={t('working')} role={compactView ? 'img' : undefined} aria-label={compactView ? t('working') : undefined}>{compactView ? '…' : t('working')}</span>
                         ) : null}
+                        {isOff ? (
+                          <span className="dsh-agy-status-badge" title={t('accountOffHint')} role={compactView ? 'img' : undefined} aria-label={compactView ? t('accountOff') : undefined}>{compactView ? '–' : t('accountOff')}</span>
+                        ) : null}
                         {account.limited ? (
                           <span className="dsh-agy-status-badge is-error" title={t('accountLimited')} role={compactView ? 'img' : undefined} aria-label={compactView ? t('accountLimited') : undefined}>{compactView ? '!' : t('accountLimited')}</span>
                         ) : null}
@@ -241,6 +248,18 @@ export function AccountsTab(props: AccountsTabProps) {
                       </div>
 
                       <div className="dsh-agy-account-action">
+                        {setAccountEnabled !== undefined ? (
+                          <label className="dsh-agy-switch" title={t(isOff ? 'accountTurnOn' : 'accountTurnOff')}>
+                            <input
+                              type="checkbox"
+                              role="switch"
+                              checked={!isOff}
+                              disabled={busy || Boolean(switchingId)}
+                              aria-label={t('accountEnabledAria', { email: identity })}
+                              onChange={event => setAccountEnabled(account.id, event.target.checked)}
+                            />
+                          </label>
+                        ) : null}
                         {!isActive ? (
                           <RemoveAccountAction
                             disabled={busy || Boolean(switchingId)}
@@ -250,13 +269,16 @@ export function AccountsTab(props: AccountsTabProps) {
                               if (!busy && !switchingId) removeAccount(account.id)
                             }}
                           />
+                        ) : setAccountEnabled !== undefined ? (
+                          // Keeps the switches of all rows in one column.
+                          <span style={{ width: '28px', flex: '0 0 28px' }} aria-hidden="true" />
                         ) : null}
                       </div>
                     </div>
 
-                    {pending || unavailable ? (
+                    {isOff || pending || unavailable ? (
                       <div className="dsh-agy-account-quota-state">
-                        {t(pending ? 'quotaPending' : 'quotaUnavailable')}
+                        {t(isOff ? 'accountOffHint' : pending ? 'quotaPending' : 'quotaUnavailable')}
                       </div>
                     ) : null}
                     <div className="dsh-agy-account-metrics">
@@ -268,7 +290,7 @@ export function AccountsTab(props: AccountsTabProps) {
                         const meter = {
                           role: 'progressbar',
                           'aria-label': value === undefined
-                            ? t(pending ? 'meterPendingAria' : 'meterUnknownAria', { period })
+                            ? t(pending && !isOff ? 'meterPendingAria' : 'meterUnknownAria', { period })
                             : t('meterAria', { period, pct: value }),
                           'aria-valuenow': value,
                           'aria-valuemin': value !== undefined ? 0 : undefined,

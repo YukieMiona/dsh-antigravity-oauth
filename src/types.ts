@@ -121,6 +121,8 @@ export type AccountSummary = {
   dead: boolean
   /** Google disabled the account for a Terms of Service violation; it is never selected. */
   banned?: boolean
+  /** The user turned the account off: never selected, and no request is made for it. */
+  disabled?: boolean
   hasArgon?: boolean
 }
 

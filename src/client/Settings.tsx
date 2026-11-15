@@ -8,6 +8,7 @@ const COMPLETE_PATH = '/plugins/dsh-antigravity-oauth/auth/complete'
 const LOGOUT_PATH = '/plugins/dsh-antigravity-oauth/auth/logout'
 const SWITCH_PATH = '/plugins/dsh-antigravity-oauth/auth/accounts/switch'
 const REMOVE_PATH = '/plugins/dsh-antigravity-oauth/auth/accounts/remove'
+const SET_ENABLED_PATH = '/plugins/dsh-antigravity-oauth/auth/accounts/set-enabled'
 const QUOTAS_PATH = '/plugins/dsh-antigravity-oauth/auth/accounts/quotas'
 const ADVANCED_PATH = '/plugins/dsh-antigravity-oauth/advanced'
 const NETWORK_PATH = '/plugins/dsh-antigravity-oauth/network'
@@ -497,6 +498,22 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
     }
   }
 
+  const setAccountEnabled = async (id: string, enabled: boolean) => {
+    if (busy || switchingId || accountAction.current) return
+    accountAction.current = true
+    setBusy(true)
+    try {
+      const res = await jsonRequest<{ account?: AntigravityStatus }>(SET_ENABLED_PATH, 'POST', { id, enabled })
+      if (res.account) setStatus(res.account)
+      void refresh()
+    } catch (caught: unknown) {
+      setError(caught instanceof Error ? caught.message : t('requestFailed'))
+    } finally {
+      accountAction.current = false
+      setBusy(false)
+    }
+  }
+
   const recover = async (action: 'cancel' | 'retry') => {
     if (busy || switchingId || accountAction.current) return
     accountAction.current = true
@@ -540,7 +557,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
   }, [accounts, searchQuery, sortBy, quotas, activeAccountId])
 
   const signing = status?.status === 'signing-in'
-  const readyCount = useMemo(() => accounts.filter(a => a.ready && !a.dead && !a.limited).length, [accounts])
+  const readyCount = useMemo(() => accounts.filter(a => a.ready && !a.dead && !a.limited && a.disabled !== true).length, [accounts])
   const routeKind = bridgeSettings?.route ?? (bridgeSettings?.enabled === true ? 'gateway' : 'direct')
   const bridgeOn = routeKind !== 'direct'
   const tabs: { id: ActiveTab, label: string, on?: boolean }[] = [
@@ -674,6 +691,7 @@ export function AntigravitySettings({ t }: AntigravitySettingsProps) {
             filteredAccounts={filteredAccounts}
             switchAccount={switchAccount}
             removeAccount={removeAccount}
+            setAccountEnabled={setAccountEnabled}
             recover={recover}
           />
 

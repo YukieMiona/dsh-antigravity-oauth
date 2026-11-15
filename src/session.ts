@@ -224,7 +224,7 @@ export class AntigravitySession {
       if (requireExplicit && account.hasArgon !== true) return false
       if (excluded?.has(account.id)) return false
       const runtime = this.runtimes.get(account.id)
-      if (runtime?.dead || account.bannedAt !== undefined) return false
+      if (runtime?.dead || account.bannedAt !== undefined || account.disabled === true) return false
       if (runtime?.argonIneligible) return false
       if (runtime?.limitedUntil !== undefined && runtime.limitedUntil > now) return false
       return true
@@ -311,7 +311,7 @@ export class AntigravitySession {
       // If all Argon-capable accounts are in cooldown or previously rejected, still try the first
       // ready Argon-marked account before giving up so stream() surfaces the real HTTP error rather than MISSING_CREDENTIAL.
       const all = await this.store.list()
-      const explicitArgon = all.filter(a => a.projectId !== undefined && a.hasArgon === true)
+      const explicitArgon = all.filter(a => a.projectId !== undefined && a.hasArgon === true && a.bannedAt === undefined && a.disabled !== true)
       for (const candidate of explicitArgon) {
         if (excluded.has(candidate.id)) continue
         const lease = await this.acquireForAccount(candidate.id)
@@ -325,7 +325,7 @@ export class AntigravitySession {
     const readyAccounts = all.filter(account => {
       if (account.projectId === undefined) return false
       const runtime = this.runtimes.get(account.id)
-      if (runtime?.dead || account.bannedAt !== undefined) return false
+      if (runtime?.dead || account.bannedAt !== undefined || account.disabled === true) return false
       if (runtime?.limitedUntil !== undefined && runtime.limitedUntil > now) return false
       return true
     })
@@ -352,6 +352,7 @@ export class AntigravitySession {
   }
 
   async acquireForAccount(accountId: string): Promise<AntigravityLease | undefined> {
+    if ((await this.store.get(accountId).catch(() => undefined))?.disabled === true) return undefined
     const grant = await this.refreshGrantForAccount(accountId)
     if (grant === undefined || grant.projectId === undefined) return undefined
     const runtime = this.runtimeFor(accountId)
@@ -376,7 +377,7 @@ export class AntigravitySession {
     // Filter out dead or rate-limited accounts
     const available = ready.filter(account => {
       const runtime = this.runtimes.get(account.id)
-      if (runtime?.dead || account.bannedAt !== undefined) return false
+      if (runtime?.dead || account.bannedAt !== undefined || account.disabled === true) return false
       if (runtime?.limitedUntil !== undefined && runtime.limitedUntil > now) return false
       return true
     })
@@ -412,7 +413,7 @@ export class AntigravitySession {
       if (account.id === excludeAccountId) return false
       if (account.projectId === undefined) return false
       const runtime = this.runtimes.get(account.id)
-      if (runtime?.dead === true || account.bannedAt !== undefined) return false
+      if (runtime?.dead === true || account.bannedAt !== undefined || account.disabled === true) return false
       if (runtime?.limitedUntil !== undefined && runtime.limitedUntil > now) return false
       return true
     })
@@ -420,7 +421,7 @@ export class AntigravitySession {
 
   async hasReadyAccount(): Promise<boolean> {
     const accounts = await this.store.list()
-    return accounts.some(account => account.projectId !== undefined && account.bannedAt === undefined)
+    return accounts.some(account => account.projectId !== undefined && account.bannedAt === undefined && account.disabled !== true)
   }
 
   noteRateLimited(accountId: string): void {
@@ -485,6 +486,7 @@ export class AntigravitySession {
     const now = Date.now()
     for (const account of all) {
       if (account.id === active?.id) continue
+      if (account.disabled === true) continue
       if (account.expires >= now - OAUTH_REFRESH_SOON_MS) continue
       if ((this.precheckAt.get(account.id) ?? 0) > now - PRECHECK_INTERVAL_MS) continue
       this.precheckAt.set(account.id, now)
@@ -505,6 +507,7 @@ export class AntigravitySession {
         limited: runtime?.limitedUntil !== undefined && runtime.limitedUntil > now,
         dead: runtime?.dead === true || account.bannedAt !== undefined,
         ...account.bannedAt === undefined ? {} : { banned: true },
+        ...account.disabled === true ? { disabled: true } : {},
         ...account.hasArgon === undefined ? {} : { hasArgon: account.hasArgon },
       }
     })
@@ -564,7 +567,29 @@ export class AntigravitySession {
   }
 
   async switchAccount(accountId: string): Promise<AntigravityStatus> {
+    if ((await this.store.get(accountId).catch(() => undefined))?.disabled === true) {
+      throw new Error('This account is turned off. Turn it on before you select it.')
+    }
     await this.store.setActive(accountId)
+    return this.snapshot()
+  }
+
+  /**
+   * The user's off switch for one account. An account that is off is never selected, and the
+   * plugin makes no request for it (no model call, no quota check, no token refresh).
+   */
+  async setAccountEnabled(accountId: string, enabled: boolean): Promise<AntigravityStatus> {
+    await this.store.update(accountId, { disabled: !enabled })
+    this.cachedQuotas = undefined
+    if (!enabled) {
+      // The current role moves to an account that can still be used, if there is one.
+      const active = await this.store.active().catch(() => undefined)
+      if (active?.id === accountId) {
+        const next = await this.findBestAccount({ excludeId: accountId }).catch(() => undefined)
+          ?? await this.findFailoverAccount(accountId).catch(() => undefined)
+        if (next !== undefined) await this.store.setActive(next.id)
+      }
+    }
     return this.snapshot()
   }
 
@@ -870,7 +895,7 @@ export class AntigravitySession {
     if (options?.force !== true && this.cachedQuotas && Date.now() - this.cachedQuotas.timestamp < 60_000) {
       return this.cachedQuotas.data
     }
-    const accounts = await this.store.list()
+    const accounts = (await this.store.list()).filter(account => account.disabled !== true)
     const result: Record<string, AccountQuotaSummary> = {}
     await Promise.all(accounts.map(async account => {
       try {

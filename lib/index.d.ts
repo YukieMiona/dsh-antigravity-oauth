@@ -171,6 +171,8 @@ type AccountSummary = {
   dead: boolean;
   /** Google disabled the account for a Terms of Service violation; it is never selected. */
   banned?: boolean;
+  /** The user turned the account off: never selected, and no request is made for it. */
+  disabled?: boolean;
   hasArgon?: boolean;
 };
 type QuotaBucket = {
@@ -225,12 +227,16 @@ interface AdvancedSettings {
   proactiveThreshold: number;
   enabledModels?: PublicModelId[];
 }
-/** `bannedAt`: when Google disabled this account for a ToS violation. Token refreshes still succeed, so it must persist. */
+/**
+ * `bannedAt`: when Google disabled this account for a ToS violation. Token refreshes still succeed, so it must persist.
+ * `disabled`: the user turned the account off; the plugin sends nothing to Google for it.
+ */
 type StoredAccount = AntigravityGrant & {
   id: string;
   addedAt?: string;
   hasArgon?: boolean;
   bannedAt?: string;
+  disabled?: boolean;
 };
 declare function antigravityAuthPath(dshHome?: string): string;
 declare class AntigravityCredentialStore {
@@ -467,6 +473,11 @@ declare class AntigravitySession {
   private refreshGrant;
   private refreshGrantForAccount;
   switchAccount(accountId: string): Promise<AntigravityStatus>;
+  /**
+   * The user's off switch for one account. An account that is off is never selected, and the
+   * plugin makes no request for it (no model call, no quota check, no token refresh).
+   */
+  setAccountEnabled(accountId: string, enabled: boolean): Promise<AntigravityStatus>;
   removeAccount(accountId: string): Promise<AntigravityStatus>;
   signIn(): Promise<{
     url: string;

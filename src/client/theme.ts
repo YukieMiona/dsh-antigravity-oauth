@@ -439,11 +439,15 @@ export const SETTINGS_CSS = `
   display: flex;
   align-items: center;
   justify-content: flex-end;
-  width: 28px;
+  gap: 6px;
   min-width: 28px;
   height: 28px;
   flex-shrink: 0;
 }
+.dsh-agy-account-action .dsh-agy-switch { gap: 0; }
+/* An account that is off keeps its controls at full strength; only its identity and quota fade. */
+.dsh-agy-account.is-off .dsh-agy-account-mail,
+.dsh-agy-account.is-off .dsh-agy-account-metrics { opacity: .5; }
 .dsh-agy-btn-icon {
   display: inline-flex;
   align-items: center;
