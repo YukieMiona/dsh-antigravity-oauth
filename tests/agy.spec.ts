@@ -11,7 +11,7 @@ import {
   splitConversation,
   ToolCallFilter,
 } from '../src/agy/prompt.ts'
-import { AgyError, agyArgs, agySettings, checkAgy, parseAgyQuota, runAgy, streamAgy } from '../src/agy/run.ts'
+import { AgyError, agyArgs, agyEnv, agySettings, checkAgy, parseAgyQuota, runAgy, streamAgy } from '../src/agy/run.ts'
 import { agyTurn } from '../src/agy/turn.ts'
 import { ensureTemplate, templateDir, templateName } from '../src/agy/template.ts'
 
@@ -287,6 +287,20 @@ process.stdin.on('end', () => {
     await expect(turn('image/png')).rejects.toMatchObject({ kind: 'image-unread' })
     await expect(turn('image/tiff')).rejects.toMatchObject({ kind: 'image-rejected' })
     expect(await readdir(join(dir, 'ws', 'requests'))).toEqual([])
+  })
+
+  it('turns off agy\'s background self-update for every process it starts', async () => {
+    expect(agyEnv({ PATH: '/bin' })).toEqual({ PATH: '/bin', AGY_CLI_DISABLE_AUTO_UPDATE: 'true' })
+    const binary = await fakeAgy(`
+const fs = require('node:fs')
+fs.appendFileSync(${JSON.stringify(join(dir, 'env.txt'))}, (process.env.AGY_CLI_DISABLE_AUTO_UPDATE ?? 'unset') + '\\n')
+if (process.argv[2] === 'models') console.log('gemini-3.8-flash-low\\tGemini 3.8 Flash (Low)')
+else { process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'ok' } }))) }`)
+    await runAgy({ binary, cwd: join(dir, 'ws'), model: 'm', prompt: 'x' })
+    await checkAgy(binary)
+    const seen = (await readFile(join(dir, 'env.txt'), 'utf8')).trim().split('\n')
+    expect(seen.length).toBeGreaterThanOrEqual(2)
+    expect(new Set(seen)).toEqual(new Set(['true']))
   })
 
   it('checkAgy adds the version and the Gemini quota when the CLI reports them', async () => {
