@@ -352,7 +352,8 @@ export class AntigravitySession {
   }
 
   async acquireForAccount(accountId: string): Promise<AntigravityLease | undefined> {
-    if ((await this.store.get(accountId).catch(() => undefined))?.disabled === true) return undefined
+    // Test doubles of the store may not implement `get`.
+    if (typeof this.store.get === 'function' && (await this.store.get(accountId).catch(() => undefined))?.disabled === true) return undefined
     const grant = await this.refreshGrantForAccount(accountId)
     if (grant === undefined || grant.projectId === undefined) return undefined
     const runtime = this.runtimeFor(accountId)

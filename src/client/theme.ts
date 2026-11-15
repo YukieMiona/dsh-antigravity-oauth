@@ -440,14 +440,16 @@ export const SETTINGS_CSS = `
   align-items: center;
   justify-content: flex-end;
   gap: 6px;
+  width: 28px;
   min-width: 28px;
   height: 28px;
   flex-shrink: 0;
 }
+/* With the off switch: switch (30px) + gap + remove slot (28px). */
+.dsh-agy-account-action.has-switch { width: 64px; min-width: 64px; }
 .dsh-agy-account-action .dsh-agy-switch { gap: 0; }
 /* An account that is off keeps its controls at full strength; only its identity and quota fade. */
-.dsh-agy-account.is-off .dsh-agy-account-mail,
-.dsh-agy-account.is-off .dsh-agy-account-metrics { opacity: .5; }
+.dsh-agy-account.is-off :is(.dsh-agy-account-mail, .dsh-agy-account-metrics) { opacity: .5; }
 .dsh-agy-btn-icon {
   display: inline-flex;
   align-items: center;

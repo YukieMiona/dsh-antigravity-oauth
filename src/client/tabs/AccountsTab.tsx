@@ -247,7 +247,7 @@ export function AccountsTab(props: AccountsTabProps) {
                         })() : null}
                       </div>
 
-                      <div className="dsh-agy-account-action">
+                      <div className={'dsh-agy-account-action' + (setAccountEnabled !== undefined ? ' has-switch' : '')}>
                         {setAccountEnabled !== undefined ? (
                           <label className="dsh-agy-switch" title={t(isOff ? 'accountTurnOn' : 'accountTurnOff')}>
                             <input
