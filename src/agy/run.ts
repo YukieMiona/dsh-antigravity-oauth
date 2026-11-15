@@ -5,6 +5,17 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 /**
+ * Environment for every agy process the plugin starts. agy otherwise checks for a new release every
+ * 15 minutes and starts a background updater process, which can replace the binary between two
+ * requests. The variable is built into agy 1.5.9 (`auto_updater.go`: "Auto-update disabled via
+ * environment variable"); only the value `true` works, `1` does not (verified 2026-11-15). Run
+ * `agy update` to update by hand. Interactive `agy` runs still update themselves.
+ */
+export function agyEnv(base: NodeJS.ProcessEnv = process.env): NodeJS.ProcessEnv {
+  return { ...base, AGY_CLI_DISABLE_AUTO_UPDATE: 'true' }
+}
+
+/**
  * Session-only agy settings. Every action class is denied, and the trusted workspace is narrowed
  * to the run's own folder: agy otherwise treats a trusted ancestor (for example the home folder
  * the user signed in from) as readable. An image request drops the `read_file` denial so the file
@@ -214,7 +225,7 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
       notify()
     }
 
-    child = spawn(options.binary, agyArgs(options, logFile), { cwd: options.cwd, stdio: ['pipe', 'pipe', 'pipe'] })
+    child = spawn(options.binary, agyArgs(options, logFile), { cwd: options.cwd, env: agyEnv(), stdio: ['pipe', 'pipe', 'pipe'] })
     const running = child
     options.signal?.addEventListener('abort', onAbort, { once: true })
 
@@ -341,7 +352,7 @@ export interface AgyStatus {
 
 function capture(binary: string, args: string[], timeoutMs: number): Promise<{ stdout: string, stderr: string, error?: NodeJS.ErrnoException }> {
   return new Promise(resolve => {
-    const child = spawn(binary, args, { stdio: ['ignore', 'pipe', 'pipe'] })
+    const child = spawn(binary, args, { env: agyEnv(), stdio: ['ignore', 'pipe', 'pipe'] })
     let stdout = ''
     let stderr = ''
     const timer = setTimeout(() => child.kill('SIGTERM'), timeoutMs)
