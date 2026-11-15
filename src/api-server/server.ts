@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto'
 import { isPublicModelId, isReasoningEffort, publicModel, routeChatModel, thinkingLevelFor } from '../models.ts'
 import { isAccountBannedError } from '../ban.ts'
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
-import { AgyError } from '../agy/run.ts'
+import { lastAgyReading } from '../agy/quota-watch.ts'
+import { AgyError, CAPACITY_COOLDOWN_MS } from '../agy/run.ts'
 import { agyTurn, agyWorkspace, type AgyImage } from '../agy/turn.ts'
 import { chatCompletionsUrl, type ManagerSettings } from '../manager/store.ts'
 import type { AntigravitySession } from '../session.ts'
@@ -26,7 +27,8 @@ function sendJson(res: ServerResponse, status: number, data: unknown): void {
   res.end(JSON.stringify(data))
 }
 
-function sendError(res: ServerResponse, status: number, message: string, type = 'invalid_request_error', code?: string): void {
+function sendError(res: ServerResponse, status: number, message: string, type = 'invalid_request_error', code?: string, retryAfter?: number): void {
+  if (retryAfter !== undefined && retryAfter > 0) res.setHeader('Retry-After', String(Math.ceil(retryAfter)))
   sendJson(res, status, {
     error: {
       message,
@@ -124,7 +126,7 @@ export const AGY_QUEUE_TIMEOUT_MS = 20_000
 /** Refused model calls after which the Official CLI route gives up (agy alone would retry for two minutes). */
 export const AGY_MAX_UPSTREAM_ATTEMPTS = 3
 
-export interface HttpFailure { status: number, message: string, type: string, code?: string }
+export interface HttpFailure { status: number, message: string, type: string, code?: string, /** Seconds for a `Retry-After` header. */ retryAfter?: number }
 
 /** The HTTP answer for a failed completion: a client must be able to tell "try later" from "do not retry". */
 export function httpFailureOf(error: unknown, timedOut = false): HttpFailure {
@@ -132,8 +134,8 @@ export function httpFailureOf(error: unknown, timedOut = false): HttpFailure {
   if (timedOut) return { status: 504, message: `No answer started within ${FIRST_EVENT_DEADLINE_MS / 1000} s.`, type: 'server_error', code: 'upstream_timeout' }
   if (error instanceof AgyError) {
     switch (error.kind) {
-      case 'capacity': return { status: 503, message, type: 'server_error', code: 'model_capacity_exhausted' }
-      case 'busy': return { status: 503, message, type: 'server_error', code: 'server_busy' }
+      case 'capacity': return { status: 503, message, type: 'server_error', code: 'model_capacity_exhausted', retryAfter: CAPACITY_COOLDOWN_MS / 1000 }
+      case 'busy': return { status: 503, message, type: 'server_error', code: 'server_busy', retryAfter: 5 }
       case 'not-installed':
       case 'not-signed-in': return { status: 503, message, type: 'server_error', code: 'agy_unavailable' }
       case 'image-rejected': return { status: 400, message, type: 'invalid_request_error', code: 'image_input_not_supported' }
@@ -274,6 +276,9 @@ function parseOpenAiTools(rawTools: any[] | undefined): FunctionToolDeclaration[
   return declarations
 }
 
+const HOUR_MS = 60 * 60_000
+const DAY_MS = 24 * HOUR_MS
+
 export class AntigravityApiServer {
   private server: Server | null = null
   private status: ApiServerStatus = {
@@ -287,8 +292,34 @@ export class AntigravityApiServer {
     private readonly store: AntigravityApiServerStore,
   ) {}
 
+  /** Start times of accepted chat requests in the last 24 hours, oldest first. */
+  private accepted: number[] = []
+
   getStatus(): ApiServerStatus {
-    return { ...this.status }
+    const now = Date.now()
+    this.accepted = this.accepted.filter(at => at > now - DAY_MS)
+    return {
+      ...this.status,
+      requestsLastHour: this.accepted.filter(at => at > now - HOUR_MS).length,
+      requestsLastDay: this.accepted.length,
+    }
+  }
+
+  /**
+   * Count one chat request against the limits. Returns the seconds to wait when a limit is
+   * reached; a refused request is not counted.
+   */
+  private admit(settings: ApiServerSettings, now = Date.now()): { window: 'hour' | 'day', retryAfter: number } | undefined {
+    this.accepted = this.accepted.filter(at => at > now - DAY_MS)
+    const lastHour = this.accepted.filter(at => at > now - HOUR_MS)
+    if (settings.hourlyLimit > 0 && lastHour.length >= settings.hourlyLimit) {
+      return { window: 'hour', retryAfter: Math.max(1, Math.ceil((lastHour[0]! + HOUR_MS - now) / 1000)) }
+    }
+    if (settings.dailyLimit > 0 && this.accepted.length >= settings.dailyLimit) {
+      return { window: 'day', retryAfter: Math.max(1, Math.ceil((this.accepted[0]! + DAY_MS - now) / 1000)) }
+    }
+    this.accepted.push(now)
+    return undefined
   }
 
   async start(): Promise<ApiServerStatus> {
@@ -399,6 +430,8 @@ export class AntigravityApiServer {
         status: 'ok',
         version: 'dsh-antigravity-oauth-api-server',
         models,
+        // Quota of the Official CLI account, once the route has been used; `low` asks clients to slow down.
+        ...lastAgyReading() === undefined ? {} : { agyStatus: lastAgyReading() },
       })
       return
     }
@@ -424,7 +457,7 @@ export class AntigravityApiServer {
     }
 
     if (req.method === 'POST' && pathname === '/v1/chat/completions') {
-      await this.handleChatCompletions(req, res)
+      await this.handleChatCompletions(req, res, settings)
       return
     }
 
@@ -542,7 +575,7 @@ export class AntigravityApiServer {
     }
   }
 
-  private async handleChatCompletions(req: IncomingMessage, res: ServerResponse): Promise<void> {
+  private async handleChatCompletions(req: IncomingMessage, res: ServerResponse, settings: ApiServerSettings): Promise<void> {
     let body: any
     try {
       body = await readBodyJson(req)
@@ -571,6 +604,13 @@ export class AntigravityApiServer {
 
     if (!Array.isArray(body.messages) || body.messages.length === 0) {
       sendError(res, 400, 'Missing or empty "messages" parameter.')
+      return
+    }
+
+    const refused = this.admit(settings)
+    if (refused !== undefined) {
+      const limit = refused.window === 'hour' ? `${settings.hourlyLimit} requests per hour` : `${settings.dailyLimit} requests per day`
+      sendError(res, 429, `This endpoint accepts ${limit} (set on the API Server tab). Try again in ${refused.retryAfter} s.`, 'rate_limit_error', 'rate_limit_exceeded', refused.retryAfter)
       return
     }
 
@@ -770,7 +810,7 @@ export class AntigravityApiServer {
       const failure = httpFailureOf(err, timedOut)
       console.warn(`[dsh-antigravity-oauth] api-server route=${route} failed after ${Date.now() - startedAt} ms: ${failure.status} ${failure.code ?? failure.type}: ${failure.message.slice(0, 300)}`)
       if (!res.headersSent) {
-        sendError(res, failure.status, failure.message, failure.type, failure.code)
+        sendError(res, failure.status, failure.message, failure.type, failure.code, failure.retryAfter)
       } else {
         // The stream is already open: say why it stops instead of ending it silently.
         if (isStream) res.write(`data: ${JSON.stringify({ error: { message: failure.message, type: failure.type, ...failure.code ? { code: failure.code } : {} } })}\n\n`)

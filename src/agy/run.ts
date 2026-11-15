@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
+import { readFileSync } from 'node:fs'
 import { mkdir, open, unlink } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { freemem, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 /**
@@ -104,39 +105,99 @@ export class AgyError extends Error {
   }
 }
 
-// Each agy process peaks around 230 MB, so runs take turns instead of running side by side.
-let tail: Promise<void> = Promise.resolve()
+/**
+ * Each agy process peaks around 230 MB. A second process runs beside the first only while the
+ * host has memory to spare: this host is small, and the kernel's OOM killer would pick the
+ * biggest process, which is DSH itself.
+ */
+export const AGY_MAX_PARALLEL = 2
+export const AGY_SECOND_SLOT_MIN_AVAILABLE_BYTES = 700 * 1024 * 1024
+let running = 0
+const waiting: Array<() => void> = []
+
+/** Memory the kernel can give to a new process (`MemAvailable`), in bytes. */
+function availableMemory(): number {
+  try {
+    const match = /^MemAvailable:\s+(\d+) kB$/m.exec(readFileSync('/proc/meminfo', 'utf8'))
+    if (match !== null) return Number(match[1]) * 1024
+  } catch { /* not Linux */ }
+  return freemem()
+}
+let memoryProbe: () => number = availableMemory
+
+/** For tests: replace the memory probe; call without an argument to restore it. */
+export function setMemoryProbe(probe?: () => number): void {
+  memoryProbe = probe ?? availableMemory
+}
+
+function canStart(): boolean {
+  if (running === 0) return true
+  return running < AGY_MAX_PARALLEL && memoryProbe() >= AGY_SECOND_SLOT_MIN_AVAILABLE_BYTES
+}
+
+/** Start waiting requests while slots (and memory) allow, oldest first. */
+function pump(): void {
+  while (waiting.length > 0 && canStart()) {
+    running += 1
+    waiting.shift()!()
+  }
+}
 
 async function acquireTurn(signal?: AbortSignal, timeoutMs?: number): Promise<() => void> {
-  let release!: () => void
-  const mine = new Promise<void>(resolve => { release = resolve })
-  const previous = tail
-  tail = previous.then(() => mine)
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let onAbort: (() => void) | undefined
-  try {
+  if (signal?.aborted) throw new AgyError('aborted', 'aborted')
+  if (waiting.length === 0 && canStart()) {
+    running += 1
+  } else {
     await new Promise<void>((resolve, reject) => {
-      void previous.then(resolve)
-      if (signal !== undefined) {
-        if (signal.aborted) return reject(new AgyError('aborted', 'aborted'))
-        onAbort = () => reject(new AgyError('aborted', 'aborted'))
-        signal.addEventListener('abort', onAbort, { once: true })
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const leave = (error: AgyError): void => {
+        const at = waiting.indexOf(grant)
+        if (at < 0) return
+        waiting.splice(at, 1)
+        cleanup()
+        reject(error)
       }
+      const onAbort = (): void => leave(new AgyError('aborted', 'aborted'))
+      const cleanup = (): void => {
+        clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
+      }
+      const grant = (): void => { cleanup(); resolve() }
+      waiting.push(grant)
+      signal?.addEventListener('abort', onAbort, { once: true })
       if (timeoutMs !== undefined) {
-        timer = setTimeout(() => reject(new AgyError(
-          `the Antigravity CLI is busy with another request (waited ${Math.round(timeoutMs / 1000)} s)`, 'busy',
+        timer = setTimeout(() => leave(new AgyError(
+          `the Antigravity CLI is busy with other requests (waited ${Math.round(timeoutMs / 1000)} s)`, 'busy',
         )), timeoutMs)
       }
     })
-  } catch (error) {
-    // Leave the line without blocking it: hand the turn on as soon as it would have arrived.
-    void previous.then(release)
-    throw error
-  } finally {
-    clearTimeout(timer)
-    if (onAbort !== undefined) signal?.removeEventListener('abort', onAbort)
   }
-  return release
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    running -= 1
+    pump()
+  }
+}
+
+/**
+ * After Google refuses a model for lack of capacity, further requests for it fail at once for a
+ * short time instead of each spending several attempts to learn the same thing.
+ */
+export const CAPACITY_COOLDOWN_MS = 45_000
+const capacityUntil = new Map<string, number>()
+const capacityKey = (options: Pick<AgyRunOptions, 'model' | 'effort'>): string => `${options.model}/${options.effort ?? ''}`
+
+/** Seconds until a model that Google refused for capacity is tried again; 0 when it is not held back. */
+export function capacityRetryAfter(options: Pick<AgyRunOptions, 'model' | 'effort'>, now = Date.now()): number {
+  const until = capacityUntil.get(capacityKey(options)) ?? 0
+  return until > now ? Math.ceil((until - now) / 1000) : 0
+}
+
+/** For tests: forget every capacity refusal. */
+export function resetCapacityCooldown(): void {
+  capacityUntil.clear()
 }
 
 /** stderr carries glog noise ("logging before google.Init"); keep only lines a user can act on. */
@@ -201,6 +262,10 @@ async function readFrom(file: string, offset: number): Promise<{ text: string, o
  */
 export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEvent> {
   if (options.signal?.aborted) throw new AgyError('aborted', 'aborted')
+  const holdOff = capacityRetryAfter(options)
+  if (holdOff > 0) {
+    throw new AgyError(`Google had no capacity for ${options.model} a moment ago; the next attempt is in ${holdOff} s`, 'capacity')
+  }
   await mkdir(options.cwd, { recursive: true, mode: 0o700 })
   const release = await acquireTurn(options.signal, options.queueTimeoutMs)
   // Outside the workspace, so agy's own file watcher does not react to its log.
@@ -209,6 +274,8 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
   let poll: ReturnType<typeof setInterval> | undefined
   const onAbort = (): void => { child?.kill('SIGTERM') }
   try {
+    // The signal may have fired while this request waited for its turn.
+    if (options.signal?.aborted) throw new AgyError('aborted', 'aborted')
     const queue: AgyEvent[] = []
     let wake: (() => void) | undefined
     let finished: { error?: Error } | undefined
@@ -312,7 +379,11 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
     while (true) {
       if (queue.length > 0) { yield queue.shift()!; continue }
       if (finished !== undefined) {
+        if (finished.error instanceof AgyError && finished.error.kind === 'capacity') {
+          capacityUntil.set(capacityKey(options), Date.now() + CAPACITY_COOLDOWN_MS)
+        }
         if (finished.error !== undefined) throw finished.error
+        capacityUntil.delete(capacityKey(options))
         return
       }
       await new Promise<void>(resolve => { wake = resolve })
@@ -350,7 +421,7 @@ export interface AgyStatus {
   quota?: AgyQuota
 }
 
-function capture(binary: string, args: string[], timeoutMs: number): Promise<{ stdout: string, stderr: string, error?: NodeJS.ErrnoException }> {
+export function capture(binary: string, args: string[], timeoutMs: number): Promise<{ stdout: string, stderr: string, error?: NodeJS.ErrnoException }> {
   return new Promise(resolve => {
     const child = spawn(binary, args, { env: agyEnv(), stdio: ['ignore', 'pipe', 'pipe'] })
     let stdout = ''

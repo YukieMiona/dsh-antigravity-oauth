@@ -11,7 +11,8 @@ import {
   splitConversation,
   ToolCallFilter,
 } from '../src/agy/prompt.ts'
-import { AgyError, agyArgs, agyEnv, agySettings, checkAgy, parseAgyQuota, runAgy, streamAgy } from '../src/agy/run.ts'
+import { AgyError, agyArgs, agyEnv, agySettings, checkAgy, parseAgyQuota, resetCapacityCooldown, runAgy, setMemoryProbe, streamAgy } from '../src/agy/run.ts'
+import { checkAgyWatch, isQuotaLow, resetAgyWatch } from '../src/agy/quota-watch.ts'
 import { agyTurn } from '../src/agy/turn.ts'
 import { ensureTemplate, templateDir, templateName } from '../src/agy/template.ts'
 
@@ -125,7 +126,12 @@ describe('agent templates', () => {
 describe('agy runner against a fake binary', () => {
   let dir: string
   beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'agy-fake-')) })
-  afterEach(async () => { await rm(dir, { recursive: true, force: true }) })
+  afterEach(async () => {
+    resetCapacityCooldown()
+    resetAgyWatch()
+    setMemoryProbe()
+    await rm(dir, { recursive: true, force: true })
+  })
 
   async function fakeAgy(body: string, name = 'agy'): Promise<string> {
     const path = join(dir, name)
@@ -216,6 +222,8 @@ process.stdin.on('end', () => {
   })
 
   it('does not wait in the queue for ever: busy after the queue time limit, and an abort leaves the queue', async () => {
+    // Little free memory: one run at a time.
+    setMemoryProbe(() => 0)
     const slow = await fakeAgy(`process.stdin.resume(); setTimeout(() => console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'slow' } })), 1500)`, 'agy-slow')
     const ok = await fakeAgy(`process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'ok' } })))`)
     const first = runAgy({ binary: slow, cwd: join(dir, 'ws'), model: 'm', prompt: 'x' })
@@ -228,6 +236,61 @@ process.stdin.on('end', () => {
     await expect(first).resolves.toMatchObject({ response: 'slow' })
     // Requests that left the queue do not block the ones behind them.
     await expect(runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'm', prompt: 'x', queueTimeoutMs: 2_000 })).resolves.toMatchObject({ response: 'ok' })
+  })
+
+  it('runs a second agy beside the first only while the host has memory to spare', async () => {
+    const marker = (name: string) => `
+const fs = require('node:fs')
+process.stdin.resume()
+process.stdin.on('end', () => {
+  fs.appendFileSync(${JSON.stringify(join(dir, 'order.log'))}, 'start ${name}\\n')
+  setTimeout(() => {
+    fs.appendFileSync(${JSON.stringify(join(dir, 'order.log'))}, 'end ${name}\\n')
+    console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: '${name}' } }))
+  }, 400)
+})`
+    const a = await fakeAgy(marker('a'), 'agy-a')
+    const b = await fakeAgy(marker('b'), 'agy-b')
+    const both = async () => {
+      await rm(join(dir, 'order.log'), { force: true })
+      await Promise.all([
+        runAgy({ binary: a, cwd: join(dir, 'ws'), model: 'm', prompt: 'x' }),
+        runAgy({ binary: b, cwd: join(dir, 'ws'), model: 'm', prompt: 'x' }),
+      ])
+      return (await readFile(join(dir, 'order.log'), 'utf8')).trim().split('\n')
+    }
+    setMemoryProbe(() => 2 * 1024 ** 3)
+    expect((await both()).slice(0, 2).sort()).toEqual(['start a', 'start b'])
+    setMemoryProbe(() => 100 * 1024 ** 2)
+    expect(await both()).toEqual(['start a', 'end a', 'start b', 'end b'])
+  })
+
+  it('holds a model back for a short time after Google had no capacity for it', async () => {
+    const noCapacity = await fakeAgy(RETRYING.replace('REASON', 'UNAVAILABLE (code 503): No capacity available'), 'agy-busy')
+    await expect(runAgy({ binary: noCapacity, cwd: join(dir, 'ws'), model: 'm', effort: 'low', prompt: 'x', maxUpstreamAttempts: 2 })).rejects.toMatchObject({ kind: 'capacity' })
+    const spawned = join(dir, 'spawned')
+    const ok = await fakeAgy(`require('node:fs').writeFileSync(${JSON.stringify(spawned)}, 'yes'); process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'ok' } })))`)
+    await expect(runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'm', effort: 'low', prompt: 'x' })).rejects.toMatchObject({ kind: 'capacity', message: expect.stringContaining('next attempt in') })
+    await expect(readFile(spawned, 'utf8')).rejects.toThrow()
+    // Another effort is another model on Google's side, so it is not held back.
+    await expect(runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'm', effort: 'high', prompt: 'x' })).resolves.toMatchObject({ response: 'ok' })
+    resetCapacityCooldown()
+    await expect(runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'm', effort: 'low', prompt: 'x' })).resolves.toMatchObject({ response: 'ok' })
+  })
+
+  it('watches quota and version, and flags a low quota', async () => {
+    expect(isQuotaLow({ weekly: 0.5, fiveHour: 0.1 })).toBe(true)
+    expect(isQuotaLow({ weekly: 0.1 })).toBe(true)
+    expect(isQuotaLow({ weekly: 0.5, fiveHour: 0.5 })).toBe(false)
+    const usage = { event: 'command_result', command: { name: 'usage', data: { groups: [
+      { name: 'Gemini Models', buckets: [{ window: 'weekly', remaining_fraction: 0.1 }, { window: '5h', remaining_fraction: 0.9 }] },
+    ] } } }
+    const binary = await fakeAgy(`
+const a = process.argv.slice(2)
+if (a[0] === '--version') console.log('1.6.0')
+else console.log(${JSON.stringify(JSON.stringify(usage))})`)
+    const reading = await checkAgyWatch(binary)
+    expect(reading).toMatchObject({ weekly: 0.1, fiveHour: 0.9, low: true, version: '1.6.0' })
   })
 
   const VIEWER = (open: boolean) => `

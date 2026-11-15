@@ -34,7 +34,12 @@ export function sanitizeApiServerSettings(raw: unknown): ApiServerSettings {
     ? data.apiKey.trim()
     : generateApiKey()
 
-  return { enabled, host, port, apiKey }
+  const limit = (value: unknown): number => {
+    const n = Number(value)
+    return Number.isInteger(n) && n > 0 && n <= 1_000_000 ? n : 0
+  }
+
+  return { enabled, host, port, apiKey, hourlyLimit: limit(data.hourlyLimit), dailyLimit: limit(data.dailyLimit) }
 }
 
 export class AntigravityApiServerStore {

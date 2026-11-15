@@ -306,12 +306,19 @@ interface ApiServerSettings {
   host: string;
   port: number;
   apiKey: string;
+  /** Most chat requests accepted in any 60 minutes; 0 = no limit. */
+  hourlyLimit: number;
+  /** Most chat requests accepted in any 24 hours; 0 = no limit. */
+  dailyLimit: number;
 }
 interface ApiServerStatus {
   running: boolean;
   host: string;
   port: number;
   error?: string;
+  /** Chat requests accepted in the last 60 minutes and 24 hours (since the plugin started). */
+  requestsLastHour?: number;
+  requestsLastDay?: number;
 }
 //#endregion
 //#region src/api-server/store.d.ts
@@ -329,7 +336,14 @@ declare class AntigravityApiServer {
   private server;
   private status;
   constructor(session: AntigravitySession, store: AntigravityApiServerStore);
+  /** Start times of accepted chat requests in the last 24 hours, oldest first. */
+  private accepted;
   getStatus(): ApiServerStatus;
+  /**
+   * Count one chat request against the limits. Returns the seconds to wait when a limit is
+   * reached; a refused request is not counted.
+   */
+  private admit;
   start(): Promise<ApiServerStatus>;
   private listen;
   stop(): Promise<void>;

@@ -25,6 +25,8 @@ export function ApiServerTab(props: ApiServerTabProps) {
   const [host, setHost] = useState(settings.host)
   const [port, setPort] = useState(settings.port)
   const [apiKey, setApiKey] = useState(settings.apiKey)
+  const [hourlyLimit, setHourlyLimit] = useState(settings.hourlyLimit ?? 0)
+  const [dailyLimit, setDailyLimit] = useState(settings.dailyLimit ?? 0)
   const [copiedUrl, setCopiedUrl] = useState(false)
   const [copiedKey, setCopiedKey] = useState(false)
   const [copiedCurl, setCopiedCurl] = useState(false)
@@ -47,6 +49,8 @@ export function ApiServerTab(props: ApiServerTabProps) {
       host: overrides?.host !== undefined ? overrides.host : host,
       port: overrides?.port !== undefined ? overrides.port : port,
       apiKey: overrides?.apiKey !== undefined ? overrides.apiKey : apiKey,
+      hourlyLimit: overrides?.hourlyLimit !== undefined ? overrides.hourlyLimit : hourlyLimit,
+      dailyLimit: overrides?.dailyLimit !== undefined ? overrides.dailyLimit : dailyLimit,
     })
   }
 
@@ -84,6 +88,14 @@ export function ApiServerTab(props: ApiServerTabProps) {
           </button>
         </div>
         <p className="dsh-agy-hint">{t('apiServerDesc')}</p>
+        {status.running && status.requestsLastDay !== undefined ? (
+          <p className="dsh-agy-hint">{t('apiServerUsage', {
+            hour: status.requestsLastHour ?? 0,
+            day: status.requestsLastDay,
+            hourLimit: settings.hourlyLimit > 0 ? ` / ${settings.hourlyLimit}` : '',
+            dayLimit: settings.dailyLimit > 0 ? ` / ${settings.dailyLimit}` : '',
+          })}</p>
+        ) : null}
         {status.error ? <p className="dsh-agy-error">{status.error}</p> : null}
       </div>
 
@@ -174,6 +186,32 @@ export function ApiServerTab(props: ApiServerTabProps) {
             />
           </label>
         </div>
+
+        <div className="dsh-agy-field-grid">
+          <label className="dsh-agy-field">
+            <span className="dsh-agy-control-label">{t('apiServerHourlyLimit')}</span>
+            <input
+              type="number"
+              className="dsh-agy-input dsh-agy-mono"
+              value={hourlyLimit}
+              disabled={saving}
+              min={0}
+              onChange={e => setHourlyLimit(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+            />
+          </label>
+          <label className="dsh-agy-field">
+            <span className="dsh-agy-control-label">{t('apiServerDailyLimit')}</span>
+            <input
+              type="number"
+              className="dsh-agy-input dsh-agy-mono"
+              value={dailyLimit}
+              disabled={saving}
+              min={0}
+              onChange={e => setDailyLimit(Math.max(0, Math.floor(Number(e.target.value) || 0)))}
+            />
+          </label>
+        </div>
+        <p className="dsh-agy-hint">{t('apiServerLimitHint')}</p>
 
         <div className="dsh-agy-actions">
           <button

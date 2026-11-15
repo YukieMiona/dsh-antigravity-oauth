@@ -14,6 +14,7 @@ import {
   type ImageBlock,
 } from './prompt.ts'
 import { AgyError, streamAgy, type AgyResult, type AgyUsage } from './run.ts'
+import { noteAgyUse } from './quota-watch.ts'
 import { ensureTemplate } from './template.ts'
 
 export type AgyTurnEvent =
@@ -123,6 +124,7 @@ async function stageImages(options: AgyTurnOptions): Promise<StagedImages> {
  * visible text as it streams, then one `done` event with the validated tool calls and usage.
  */
 export async function* agyTurn(options: AgyTurnOptions): AsyncGenerator<AgyTurnEvent> {
+  noteAgyUse(options.binary)
   const images = await stageImages(options)
   try {
     const withImages = images.dir !== undefined

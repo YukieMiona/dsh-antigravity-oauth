@@ -5,6 +5,8 @@ This file records completed features, fixes, and process milestones in `YukieMio
 ## Unreleased
 
 - Official CLI: the plugin turns off `agy`'s background self-update for the processes it starts (`AGY_CLI_DISABLE_AUTO_UPDATE=true`, built into `agy` 1.5.9). The version no longer changes between two requests, and no updater process starts every 15 minutes. Run `agy update` to update.
+- Official CLI: a second `agy` process may run beside the first while the host has at least 700 MB available; a model that Google refused for capacity is held back for 45 seconds; the plugin reads the `agy` quota and version every 30 minutes while the route is in use and logs a low quota or a self-update.
+- API server: optional limits for chat requests per hour and per day (HTTP 429 with `Retry-After`), request counters on the API Server tab, `Retry-After` on 503 answers, and the last `agy` reading in `/health`.
 - Official CLI: a request fails fast. The plugin reads `agy`'s run log and stops after a few refused model calls (for example Google's `503 No capacity`) instead of waiting about two minutes for `agy`'s silent retries; a request leaves the queue when its client disconnects or after a time limit.
 - Official CLI: images are sent. Each image is written to a folder of that request, `agy`'s file viewer may read that folder only, and the folder is deleted afterwards. An answer is discarded when `agy` did not open the image.
 - Accounts: every account has an off switch. An account that is off is never selected (chats, failover, rotation, API server), and the plugin sends nothing to Google for it: no model call, no quota check, no token refresh. Turning off the current account moves the current role to another usable account.
