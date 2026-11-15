@@ -11,7 +11,8 @@ import {
   splitConversation,
   ToolCallFilter,
 } from '../src/agy/prompt.ts'
-import { AGY_DENY_ALL_SETTINGS, AgyError, agyArgs, checkAgy, parseAgyQuota, runAgy, streamAgy } from '../src/agy/run.ts'
+import { AgyError, agyArgs, agySettings, checkAgy, parseAgyQuota, runAgy, streamAgy } from '../src/agy/run.ts'
+import { agyTurn } from '../src/agy/turn.ts'
 import { ensureTemplate, templateDir, templateName } from '../src/agy/template.ts'
 
 const tool = { name: 'get_weather', description: 'Weather for a city', parameters: { type: 'object', properties: { city: { type: 'string' } } } }
@@ -126,16 +127,25 @@ describe('agy runner against a fake binary', () => {
   beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'agy-fake-')) })
   afterEach(async () => { await rm(dir, { recursive: true, force: true }) })
 
-  async function fakeAgy(body: string): Promise<string> {
-    const path = join(dir, 'agy')
+  async function fakeAgy(body: string, name = 'agy'): Promise<string> {
+    const path = join(dir, name)
     await writeFile(path, `#!/usr/bin/env node\n${body}\n`)
     await chmod(path, 0o755)
     return path
   }
 
   it('builds locked-down arguments with agent and effort, prompt last', () => {
-    const args = agyArgs({ model: 'gemini-3.8-flash', effort: 'low', agent: 'dsh-agy-x' })
-    expect(args).toContain(AGY_DENY_ALL_SETTINGS)
+    const args = agyArgs({ cwd: '/ws', model: 'gemini-3.8-flash', effort: 'low', agent: 'dsh-agy-x' }, '/tmp/run.log')
+    expect(args).toContain(agySettings('/ws'))
+    expect(args.slice(args.indexOf('--log-file'), args.indexOf('--log-file') + 2)).toEqual(['--log-file', '/tmp/run.log'])
+    const closed = JSON.parse(agySettings('/ws'))
+    expect(closed.trustedWorkspaces).toEqual(['/ws'])
+    expect(closed.toolPermission).toBe('strict')
+    expect(closed.permissions.deny).toContain('read_file(*)')
+    // An image request may read inside its own folder, and nothing else changes.
+    const viewing = JSON.parse(agySettings('/ws/requests/r1', true))
+    expect(viewing.trustedWorkspaces).toEqual(['/ws/requests/r1'])
+    expect(viewing.permissions.deny).toEqual(['command(*)', 'write_file(*)', 'read_url(*)', 'execute_url(*)', 'mcp(*)'])
     expect(args).toContain('--sandbox')
     expect(args.slice(args.indexOf('--effort'), args.indexOf('--effort') + 2)).toEqual(['--effort', 'low'])
     expect(args.slice(args.indexOf('--agent'), args.indexOf('--agent') + 2)).toEqual(['--agent', 'dsh-agy-x'])
@@ -157,7 +167,7 @@ process.stdin.on('end', () => {
     expect(events).toEqual([
       { type: 'text', text: 'Hel' },
       { type: 'text', text: 'lo' },
-      { type: 'result', result: { status: 'SUCCESS', response: 'Hello', usage: { input_tokens: 5 } } },
+      { type: 'result', result: { status: 'SUCCESS', response: 'Hello', usage: { input_tokens: 5 }, readsDone: 0 } },
     ])
     expect(JSON.parse(await readFile(join(dir, 'ws', 'seen.json'), 'utf8'))).toEqual({ event: 'user', message: { content: 'hello' } })
   })
@@ -174,6 +184,109 @@ process.stdin.on('end', () => {
     // The turn lock is released after an abort, so the next run still starts.
     const ok = await fakeAgy(`process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'ok' } })))`)
     await expect(runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'm', prompt: 'x' })).resolves.toMatchObject({ response: 'ok' })
+  })
+
+  const RETRYING = `
+const fs = require('node:fs')
+const log = process.argv[process.argv.indexOf('--log-file') + 1]
+process.stdin.resume()
+let n = 0
+setInterval(() => { n += 1; fs.appendFileSync(log, 'E1115 run.go:316] Run: attempt ' + n + ' failed (REASON), retrying in 1.5s\\n') }, 40)`
+
+  it('gives up when Google keeps refusing the model call, instead of waiting out agy\'s retries', async () => {
+    const noCapacity = await fakeAgy(RETRYING.replace('REASON', 'UNAVAILABLE (code 503): No capacity available for model gemini-3.8-flash-low on the server'))
+    const started = Date.now()
+    await expect(runAgy({ binary: noCapacity, cwd: join(dir, 'ws'), model: 'gemini-3.8-flash', prompt: 'x', maxUpstreamAttempts: 3 }))
+      .rejects.toMatchObject({ kind: 'capacity', message: expect.stringContaining('no capacity for gemini-3.8-flash') })
+    expect(Date.now() - started).toBeLessThan(5_000)
+    const limited = await fakeAgy(RETRYING.replace('REASON', 'RESOURCE_EXHAUSTED (code 429): quota'))
+    await expect(runAgy({ binary: limited, cwd: join(dir, 'ws'), model: 'm', prompt: 'x', maxUpstreamAttempts: 2 })).rejects.toMatchObject({ kind: 'upstream' })
+  })
+
+  it('reports the refusal from the log when agy itself gives up', async () => {
+    const binary = await fakeAgy(`
+const fs = require('node:fs')
+process.stdin.resume()
+process.stdin.on('end', () => {
+  fs.appendFileSync(process.argv[process.argv.indexOf('--log-file') + 1], 'Run: attempt 8 failed (UNAVAILABLE (code 503): No capacity available), retrying in 30s\\n')
+  console.log(JSON.stringify({ event: 'result', result: { status: 'ERROR', response: '' } }))
+  process.exit(1)
+})`)
+    await expect(runAgy({ binary, cwd: join(dir, 'ws'), model: 'm', prompt: 'x' })).rejects.toMatchObject({ kind: 'capacity' })
+  })
+
+  it('does not wait in the queue for ever: busy after the queue time limit, and an abort leaves the queue', async () => {
+    const slow = await fakeAgy(`process.stdin.resume(); setTimeout(() => console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'slow' } })), 1500)`, 'agy-slow')
+    const ok = await fakeAgy(`process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'ok' } })))`)
+    const first = runAgy({ binary: slow, cwd: join(dir, 'ws'), model: 'm', prompt: 'x' })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    await expect(runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'm', prompt: 'x', queueTimeoutMs: 100 })).rejects.toMatchObject({ kind: 'busy' })
+    const controller = new AbortController()
+    const waiting = runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'm', prompt: 'x', signal: controller.signal })
+    setTimeout(() => controller.abort(), 50)
+    await expect(waiting).rejects.toMatchObject({ kind: 'aborted' })
+    await expect(first).resolves.toMatchObject({ response: 'slow' })
+    // Requests that left the queue do not block the ones behind them.
+    await expect(runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'm', prompt: 'x', queueTimeoutMs: 2_000 })).resolves.toMatchObject({ response: 'ok' })
+  })
+
+  const VIEWER = (open: boolean) => `
+const fs = require('node:fs')
+let input = ''
+process.stdin.on('data', c => { input += c })
+process.stdin.on('end', () => {
+  const content = JSON.parse(input).message.content
+  const files = [...content.matchAll(/\\[Image file: ([^\\]]+)\\]/g)].map(m => m[1])
+  const agent = process.argv[process.argv.indexOf('--agent') + 1]
+  const template = fs.readFileSync(process.cwd() + '/.agents/agents/' + agent + '.md', 'utf8')
+  const report = { cwd: process.cwd(), files, sizes: files.map(f => fs.statSync(f).size), viewer: /tools:\\n  - view_file/.test(template), settings: JSON.parse(process.argv[process.argv.indexOf('--settings') + 1]) }
+  ${open ? `for (const f of files) console.log(JSON.stringify({ event: 'step_update', step_update: { step_type: 'tool', tool_name: 'read_file', state: 'DONE' } }))` : ''}
+  console.log(JSON.stringify({ event: 'step_update', step_update: { step_type: 'agent_response', text_delta: JSON.stringify(report) } }))
+  console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: JSON.stringify(report) } }))
+})`
+
+  it('carries an image as a file in a folder of the request, and removes the folder afterwards', async () => {
+    const binary = await fakeAgy(VIEWER(true))
+    const image = { type: 'image', attachment: { name: 'cat.png' } }
+    const old = { type: 'image', attachment: { name: 'old.png' } }
+    const events = []
+    for await (const e of agyTurn({
+      binary,
+      workspace: join(dir, 'ws'),
+      model: 'm',
+      request: { messages: [
+        msg('user', [old]),
+        msg('assistant', [{ type: 'text', text: 'ok' }]),
+        msg('user', [{ type: 'text', text: 'What is this?' }, image]),
+      ] } as never,
+      loadImage: async block => block === image ? { mimeType: 'image/png', data: Buffer.from('PNGDATA') } : '[Historical image: old.png]',
+    })) events.push(e)
+    const done = events.at(-1) as { type: 'done', text: string }
+    const report = JSON.parse(done.text) as { cwd: string, files: string[], sizes: number[], viewer: boolean, settings: any }
+    expect(report.files).toEqual([join(report.cwd, 'image-1.png')])
+    expect(report.sizes).toEqual([7])
+    expect(report.viewer).toBe(true)
+    expect(report.cwd.startsWith(join(dir, 'ws', 'requests'))).toBe(true)
+    expect(report.settings.trustedWorkspaces).toEqual([report.cwd])
+    expect(report.settings.permissions.deny).not.toContain('read_file(*)')
+    expect(await readdir(join(dir, 'ws', 'requests'))).toEqual([])
+  })
+
+  it('discards an answer about an image that agy never opened, and refuses unsupported images', async () => {
+    const binary = await fakeAgy(VIEWER(false))
+    const image = { type: 'image', attachment: { name: 'cat.png' } }
+    const turn = (mimeType: string) => (async () => {
+      const events = []
+      for await (const e of agyTurn({
+        binary, workspace: join(dir, 'ws'), model: 'm',
+        request: { messages: [msg('user', [{ type: 'text', text: 'What is this?' }, image])] } as never,
+        loadImage: async () => ({ mimeType, data: Buffer.from('PNGDATA') }),
+      })) events.push(e)
+      return events
+    })()
+    await expect(turn('image/png')).rejects.toMatchObject({ kind: 'image-unread' })
+    await expect(turn('image/tiff')).rejects.toMatchObject({ kind: 'image-rejected' })
+    expect(await readdir(join(dir, 'ws', 'requests'))).toEqual([])
   })
 
   it('checkAgy adds the version and the Gemini quota when the CLI reports them', async () => {
