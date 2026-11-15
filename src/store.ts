@@ -290,8 +290,10 @@ export class AntigravityCredentialStore {
         || account.refresh === clean.refresh)
       let added: StoredAccount
       if (existing !== undefined) {
+        // Signing in again to an account is a request to use it, so it is turned back on.
+        const { disabled: _wasOff, ...kept } = existing
         const merged = {
-          ...existing,
+          ...kept,
           ...clean,
           id: existing.id,
           ...existing.addedAt === undefined ? {} : { addedAt: existing.addedAt },

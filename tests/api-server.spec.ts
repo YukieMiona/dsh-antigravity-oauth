@@ -4,6 +4,7 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AntigravityApiServer, AntigravityApiServerStore } from '../src/api-server/index.ts'
+import { resetCapacityCooldown } from '../src/agy/run.ts'
 import type { AntigravitySession } from '../src/session.ts'
 import type { CcaEvent, ChatGenerateInput } from '../src/types.ts'
 
@@ -279,7 +280,7 @@ process.stdin.on('end', () => {
     return
   }
   const file = /\\[Image file: ([^\\]]+)\\]/.exec(content)
-  if (file && content.includes('look')) console.log(JSON.stringify({ event: 'step_update', step_update: { step_type: 'tool', tool_name: 'read_file', state: 'DONE' } }))
+  if (file && content.includes('look')) console.log(JSON.stringify({ event: 'step_update', step_update: { step_type: 'tool', tool_name: 'read_file', state: 'DONE', tool_info: { name: 'read_file', parameters: { Path: file[1] } } } }))
   console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: file ? 'bytes=' + fs.statSync(file[1]).size : 'no image' } }))
 })
 `)
@@ -305,6 +306,9 @@ process.stdin.on('end', () => {
     expect(busy.status).toBe(503)
     expect((await busy.json() as any).error.code).toBe('model_capacity_exhausted')
     expect(Date.now() - started).toBeLessThan(5_000)
+    expect(busy.headers.get('retry-after')).toBe('45')
+    // The model is held back for a short time; the rest of this test needs it.
+    resetCapacityCooldown()
 
     const seen = await post([{ type: 'text', text: 'look at this' }, image(dataUrl)])
     expect(seen.status).toBe(200)
@@ -317,6 +321,54 @@ process.stdin.on('end', () => {
     const remote = await post([{ type: 'text', text: 'look at this' }, image('https://example.com/cat.png')])
     expect(remote.status).toBe(400)
     expect((await remote.json() as any).error.code).toBe('image_input_not_supported')
+
+    // An image that was answered already does not travel again, so an old remote image does not block.
+    const history = await fetch(`http://127.0.0.1:${testPort}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${testKey}` },
+      body: JSON.stringify({ model: 'gemini-3.8-flash-low', messages: [
+        { role: 'user', content: [{ type: 'text', text: 'old' }, image('https://example.com/cat.png')] },
+        { role: 'assistant', content: 'A cat.' },
+        { role: 'user', content: [{ type: 'text', text: 'look at this one' }, image(dataUrl)] },
+      ] }),
+    })
+    expect(history.status).toBe(200)
+    expect((await history.json() as any).choices[0].message.content).toBe('bytes=5')
+  })
+
+  it('answers 429 with Retry-After above the hourly limit, and counts requests', async () => {
+    const testPort = 19151
+    const testKey = 'sk-agy-test-secret-limit'
+    await store.save({ enabled: true, host: '127.0.0.1', port: testPort, apiKey: testKey, hourlyLimit: 2, dailyLimit: 0 })
+    expect((await store.read()).hourlyLimit).toBe(2)
+    expect((await store.save({ hourlyLimit: -3, dailyLimit: 'x' })).dailyLimit).toBe(0)
+    await store.save({ enabled: true, host: '127.0.0.1', port: testPort, apiKey: testKey, hourlyLimit: 2, dailyLimit: 0 })
+    const agyPath = join(tempDir, 'agy')
+    await writeFile(agyPath, `#!/usr/bin/env node
+process.stdin.resume()
+process.stdin.on('end', () => console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'ok' } })))
+`)
+    await chmod(agyPath, 0o755)
+    const fakeSession = {
+      store: { filename: join(tempDir, 'auth.json') },
+      manager: { read: async () => ({ route: 'agy', enabled: false, baseUrl: '', apiKey: '', agyPath }) },
+      getAdvancedSettings: async () => ({ enabledModels: ['gemini-3.8-flash'], defaultReasoningEffort: 'medium' }),
+      acquire: async () => undefined,
+    } as unknown as AntigravitySession
+    server = new AntigravityApiServer(fakeSession, store)
+    await server.start()
+    const post = () => fetch(`http://127.0.0.1:${testPort}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${testKey}` },
+      body: JSON.stringify({ model: 'gemini-3.8-flash-low', messages: [{ role: 'user', content: 'hi' }] }),
+    })
+    expect((await post()).status).toBe(200)
+    expect((await post()).status).toBe(200)
+    const limited = await post()
+    expect(limited.status).toBe(429)
+    expect((await limited.json() as any).error.code).toBe('rate_limit_exceeded')
+    expect(Number(limited.headers.get('retry-after'))).toBeGreaterThan(3_000)
+    expect(server.getStatus()).toMatchObject({ requestsLastHour: 2, requestsLastDay: 2 })
   })
 
   it('follows the Gateway route by relaying the request with the wire model id', async () => {

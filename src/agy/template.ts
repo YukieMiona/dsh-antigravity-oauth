@@ -1,4 +1,4 @@
-import { createHash } from 'node:crypto'
+import { createHash, randomUUID } from 'node:crypto'
 import { mkdir, readdir, rename, stat, unlink, writeFile } from 'node:fs/promises'
 import { join } from 'node:path'
 
@@ -57,7 +57,8 @@ export async function ensureTemplate(workspace: string, body: string, viewFiles 
     return name
   } catch { /* write it below */ }
   await mkdir(dir, { recursive: true, mode: 0o700 })
-  const tmp = `${file}.${process.pid}.tmp`
+  // Unique per write: two runs of one conversation can write the same template at the same time.
+  const tmp = `${file}.${process.pid}.${randomUUID()}.tmp`
   await writeFile(tmp, frontMatter(name, viewFiles) + body + '\n', { mode: 0o600 })
   await rename(tmp, file)
   await pruneTemplates(dir).catch(() => undefined)

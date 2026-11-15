@@ -1,7 +1,8 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
-import { mkdir, open, unlink } from 'node:fs/promises'
-import { tmpdir } from 'node:os'
+import { readFileSync } from 'node:fs'
+import { chmod, mkdir, open, readdir, stat, unlink } from 'node:fs/promises'
+import { freemem, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 /**
@@ -49,8 +50,10 @@ export interface AgyResult {
   status: string
   response: string
   usage?: AgyUsage
-  /** File-viewer steps that completed; an image request needs at least one. */
+  /** File-viewer steps that completed. */
   readsDone: number
+  /** Paths the file viewer opened; an image request needs each of its new images here. */
+  filesRead: string[]
 }
 
 export type AgyEvent =
@@ -104,39 +107,99 @@ export class AgyError extends Error {
   }
 }
 
-// Each agy process peaks around 230 MB, so runs take turns instead of running side by side.
-let tail: Promise<void> = Promise.resolve()
+/**
+ * Each agy process peaks around 230 MB. A second process runs beside the first only while the
+ * host has memory to spare: this host is small, and the kernel's OOM killer would pick the
+ * biggest process, which is DSH itself.
+ */
+export const AGY_MAX_PARALLEL = 2
+export const AGY_SECOND_SLOT_MIN_AVAILABLE_BYTES = 700 * 1024 * 1024
+let running = 0
+const waiting: Array<() => void> = []
+
+/** Memory the kernel can give to a new process (`MemAvailable`), in bytes. */
+function availableMemory(): number {
+  try {
+    const match = /^MemAvailable:\s+(\d+) kB$/m.exec(readFileSync('/proc/meminfo', 'utf8'))
+    if (match !== null) return Number(match[1]) * 1024
+  } catch { /* not Linux */ }
+  return freemem()
+}
+let memoryProbe: () => number = availableMemory
+
+/** For tests: replace the memory probe; call without an argument to restore it. */
+export function setMemoryProbe(probe?: () => number): void {
+  memoryProbe = probe ?? availableMemory
+}
+
+function canStart(): boolean {
+  if (running === 0) return true
+  return running < AGY_MAX_PARALLEL && memoryProbe() >= AGY_SECOND_SLOT_MIN_AVAILABLE_BYTES
+}
+
+/** Start waiting requests while slots (and memory) allow, oldest first. */
+function pump(): void {
+  while (waiting.length > 0 && canStart()) {
+    running += 1
+    waiting.shift()!()
+  }
+}
 
 async function acquireTurn(signal?: AbortSignal, timeoutMs?: number): Promise<() => void> {
-  let release!: () => void
-  const mine = new Promise<void>(resolve => { release = resolve })
-  const previous = tail
-  tail = previous.then(() => mine)
-  let timer: ReturnType<typeof setTimeout> | undefined
-  let onAbort: (() => void) | undefined
-  try {
+  if (signal?.aborted) throw new AgyError('aborted', 'aborted')
+  if (waiting.length === 0 && canStart()) {
+    running += 1
+  } else {
     await new Promise<void>((resolve, reject) => {
-      void previous.then(resolve)
-      if (signal !== undefined) {
-        if (signal.aborted) return reject(new AgyError('aborted', 'aborted'))
-        onAbort = () => reject(new AgyError('aborted', 'aborted'))
-        signal.addEventListener('abort', onAbort, { once: true })
+      let timer: ReturnType<typeof setTimeout> | undefined
+      const leave = (error: AgyError): void => {
+        const at = waiting.indexOf(grant)
+        if (at < 0) return
+        waiting.splice(at, 1)
+        cleanup()
+        reject(error)
       }
+      const onAbort = (): void => leave(new AgyError('aborted', 'aborted'))
+      const cleanup = (): void => {
+        clearTimeout(timer)
+        signal?.removeEventListener('abort', onAbort)
+      }
+      const grant = (): void => { cleanup(); resolve() }
+      waiting.push(grant)
+      signal?.addEventListener('abort', onAbort, { once: true })
       if (timeoutMs !== undefined) {
-        timer = setTimeout(() => reject(new AgyError(
-          `the Antigravity CLI is busy with another request (waited ${Math.round(timeoutMs / 1000)} s)`, 'busy',
+        timer = setTimeout(() => leave(new AgyError(
+          `the Antigravity CLI is busy with other requests (waited ${Math.round(timeoutMs / 1000)} s)`, 'busy',
         )), timeoutMs)
       }
     })
-  } catch (error) {
-    // Leave the line without blocking it: hand the turn on as soon as it would have arrived.
-    void previous.then(release)
-    throw error
-  } finally {
-    clearTimeout(timer)
-    if (onAbort !== undefined) signal?.removeEventListener('abort', onAbort)
   }
-  return release
+  let released = false
+  return () => {
+    if (released) return
+    released = true
+    running -= 1
+    pump()
+  }
+}
+
+/**
+ * After Google refuses a model for lack of capacity, further requests for it fail at once for a
+ * short time instead of each spending several attempts to learn the same thing.
+ */
+export const CAPACITY_COOLDOWN_MS = 45_000
+const capacityUntil = new Map<string, number>()
+const capacityKey = (options: Pick<AgyRunOptions, 'model' | 'effort'>): string => `${options.model}/${options.effort ?? ''}`
+
+/** Seconds until a model that Google refused for capacity is tried again; 0 when it is not held back. */
+export function capacityRetryAfter(options: Pick<AgyRunOptions, 'model' | 'effort'>, now = Date.now()): number {
+  const until = capacityUntil.get(capacityKey(options)) ?? 0
+  return until > now ? Math.ceil((until - now) / 1000) : 0
+}
+
+/** For tests: forget every capacity refusal. */
+export function resetCapacityCooldown(): void {
+  capacityUntil.clear()
 }
 
 /** stderr carries glog noise ("logging before google.Init"); keep only lines a user can act on. */
@@ -201,14 +264,21 @@ async function readFrom(file: string, offset: number): Promise<{ text: string, o
  */
 export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEvent> {
   if (options.signal?.aborted) throw new AgyError('aborted', 'aborted')
+  const holdOff = capacityRetryAfter(options)
+  if (holdOff > 0) {
+    throw new AgyError(`Google had no capacity for ${options.model} a moment ago; the next attempt is in ${holdOff} s`, 'capacity')
+  }
   await mkdir(options.cwd, { recursive: true, mode: 0o700 })
   const release = await acquireTurn(options.signal, options.queueTimeoutMs)
-  // Outside the workspace, so agy's own file watcher does not react to its log.
-  const logFile = join(tmpdir(), `dsh-agy-run-${randomUUID()}.log`)
   let child: ReturnType<typeof spawn> | undefined
   let poll: ReturnType<typeof setInterval> | undefined
-  const onAbort = (): void => { child?.kill('SIGTERM') }
+  let logFile: string | undefined
+  const onAbort = (): void => { if (child !== undefined) stopChild(child) }
   try {
+    // The signal may have fired while this request waited for its turn.
+    if (options.signal?.aborted) throw new AgyError('aborted', 'aborted')
+    logFile = join(await agyLogDir(), `run-${randomUUID()}.log`)
+    const log = logFile
     const queue: AgyEvent[] = []
     let wake: (() => void) | undefined
     let finished: { error?: Error } | undefined
@@ -216,6 +286,9 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
     let stderr = ''
     let result: AgyResult | undefined
     let readsDone = 0
+    const filesRead = new Set<string>()
+    // Any model output means a model call succeeded, so an earlier refusal did not end the run.
+    let sawModelOutput = false
     let lastRefusal: string | undefined
     let gaveUp: AgyError | undefined
     const notify = (): void => { wake?.(); wake = undefined }
@@ -225,30 +298,26 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
       notify()
     }
 
-    child = spawn(options.binary, agyArgs(options, logFile), { cwd: options.cwd, env: agyEnv(), stdio: ['pipe', 'pipe', 'pipe'] })
+    child = spawn(options.binary, agyArgs(options, log), { cwd: options.cwd, env: agyEnv(), stdio: ['pipe', 'pipe', 'pipe'] })
     const running = child
     options.signal?.addEventListener('abort', onAbort, { once: true })
 
     // agy reports refused model calls only in its log, so follow it while the run is quiet.
+    // Reads are chained, so the final read after exit waits for one that is in progress.
     let logOffset = 0
-    let reading = false
-    const followLog = async (): Promise<void> => {
-      if (reading) return
-      reading = true
-      try {
-        const chunk = await readFrom(logFile, logOffset)
-        logOffset = chunk.offset
-        for (const match of chunk.text.matchAll(RETRY_LINE)) {
-          lastRefusal = match[2]!
-          if (gaveUp === undefined && options.maxUpstreamAttempts !== undefined && Number(match[1]) >= options.maxUpstreamAttempts) {
-            gaveUp = upstreamError(lastRefusal, options.model)
-            running.kill('SIGTERM')
-          }
+    let logChain: Promise<void> = Promise.resolve()
+    const readLog = async (): Promise<void> => {
+      const chunk = await readFrom(log, logOffset)
+      logOffset = chunk.offset
+      for (const match of chunk.text.matchAll(RETRY_LINE)) {
+        lastRefusal = match[2]!
+        if (gaveUp === undefined && options.maxUpstreamAttempts !== undefined && Number(match[1]) >= options.maxUpstreamAttempts) {
+          gaveUp = upstreamError(lastRefusal, options.model)
+          stopChild(running)
         }
-      } finally {
-        reading = false
       }
     }
+    const followLog = (): Promise<void> => (logChain = logChain.then(readLog, readLog))
     poll = setInterval(() => { void followLog() }, 700)
 
     running.on('error', error => {
@@ -271,10 +340,19 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
         try { event = JSON.parse(line) as Record<string, any> } catch { continue }
         const step = event.step_update
         if (step?.step_type === 'agent_response' && typeof step.text_delta === 'string' && step.text_delta.length > 0) {
+          sawModelOutput = true
           queue.push({ type: 'text', text: step.text_delta })
           notify()
         }
-        if (step?.step_type === 'tool' && step.state === 'DONE' && /^(read_file|view_file)$/.test(String(step.tool_name))) readsDone += 1
+        if (step?.step_type === 'tool') {
+          sawModelOutput = true
+          if (step.state === 'DONE' && /^(read_file|view_file)$/.test(String(step.tool_name))) {
+            readsDone += 1
+            const parameters = step.tool_info?.parameters ?? {}
+            const path = parameters.Path ?? parameters.path ?? parameters.AbsolutePath ?? parameters.absolute_path
+            if (typeof path === 'string') filesRead.add(path)
+          }
+        }
         if (event.event === 'result' && event.result) {
           const r = event.result
           result = {
@@ -282,6 +360,7 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
             response: typeof r.response === 'string' ? r.response : '',
             ...r.usage === undefined ? {} : { usage: r.usage as AgyUsage },
             readsDone,
+            filesRead: [...filesRead],
           }
         }
       }
@@ -297,13 +376,15 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
         }
         if (result?.status === 'SUCCESS') {
           result.readsDone = readsDone
+          result.filesRead = [...filesRead]
           queue.push({ type: 'result', result })
           return finish()
         }
-        // agy gave up by itself after its own retries; its log holds the reason.
-        if (lastRefusal !== undefined) return finish(upstreamError(lastRefusal, options.model))
-        if (result === undefined) return finish(new AgyError(`agy exited with code ${code ?? 'null'} without a result${detail ? `: ${detail}` : ''}`, 'failed'))
-        finish(new AgyError(`agy returned ${result.status}${detail ? `: ${detail}` : ''}`, 'failed'))
+        // agy gave up by itself after its own retries, before any model call succeeded.
+        if (lastRefusal !== undefined && !sawModelOutput) return finish(upstreamError(lastRefusal, options.model))
+        const refusal = lastRefusal === undefined ? '' : ` (earlier refusal: ${lastRefusal.slice(0, 200)})`
+        if (result === undefined) return finish(new AgyError(`agy exited with code ${code ?? 'null'} without a result${detail ? `: ${detail}` : ''}${refusal}`, 'failed'))
+        finish(new AgyError(`agy returned ${result.status}${detail ? `: ${detail}` : ''}${refusal}`, 'failed'))
       })()
     })
     running.stdin!.on('error', () => { /* the close handler reports the real failure */ })
@@ -312,7 +393,11 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
     while (true) {
       if (queue.length > 0) { yield queue.shift()!; continue }
       if (finished !== undefined) {
+        if (finished.error instanceof AgyError && finished.error.kind === 'capacity') {
+          capacityUntil.set(capacityKey(options), Date.now() + CAPACITY_COOLDOWN_MS)
+        }
         if (finished.error !== undefined) throw finished.error
+        capacityUntil.delete(capacityKey(options))
         return
       }
       await new Promise<void>(resolve => { wake = resolve })
@@ -320,10 +405,58 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
   } finally {
     clearInterval(poll)
     options.signal?.removeEventListener('abort', onAbort)
-    if (child !== undefined && child.exitCode === null && child.signalCode === null) child.kill('SIGTERM')
-    void unlink(logFile).catch(() => undefined)
-    release()
+    const log = logFile
+    const cleanUp = (): void => {
+      if (log !== undefined) void unlink(log).catch(() => undefined)
+      release()
+    }
+    // The slot is free only once the process is gone, so two never overlap on a closed stream.
+    if (child !== undefined && child.pid !== undefined && child.exitCode === null && child.signalCode === null) {
+      let done = false
+      const once = (): void => { if (!done) { done = true; cleanUp() } }
+      child.once('close', once)
+      // Never hold the slot for ever, even if 'close' does not come after the kill.
+      setTimeout(once, AGY_KILL_GRACE_MS + 2_000).unref()
+      stopChild(child)
+    } else {
+      cleanUp()
+    }
   }
+}
+
+/** Ask agy to stop; kill it if it is still there after a grace period. */
+export const AGY_KILL_GRACE_MS = 5_000
+function stopChild(child: ReturnType<typeof spawn>): void {
+  if (child.exitCode !== null || child.signalCode !== null) return
+  child.kill('SIGTERM')
+  const timer = setTimeout(() => {
+    if (child.exitCode === null && child.signalCode === null) child.kill('SIGKILL')
+  }, AGY_KILL_GRACE_MS)
+  timer.unref()
+  child.once('close', () => clearTimeout(timer))
+}
+
+const LOG_MAX_AGE_MS = 60 * 60_000
+let logDirReady: Promise<string> | undefined
+
+/**
+ * Private folder for agy run logs (they can quote request details): mode 0700, outside every
+ * folder agy may read. Logs left by a killed process are removed after an hour.
+ */
+function agyLogDir(): Promise<string> {
+  logDirReady ??= (async () => {
+    const dir = join(tmpdir(), `dsh-agy-logs-${process.getuid?.() ?? 'user'}`)
+    await mkdir(dir, { recursive: true, mode: 0o700 })
+    await chmod(dir, 0o700)
+    const now = Date.now()
+    for (const name of await readdir(dir).catch(() => [] as string[])) {
+      const file = join(dir, name)
+      const info = await stat(file).catch(() => undefined)
+      if (info !== undefined && now - info.mtimeMs > LOG_MAX_AGE_MS) await unlink(file).catch(() => undefined)
+    }
+    return dir
+  })().catch(error => { logDirReady = undefined; throw error })
+  return logDirReady
 }
 
 /** Collect a whole run; used where streaming is not needed. */
@@ -350,7 +483,7 @@ export interface AgyStatus {
   quota?: AgyQuota
 }
 
-function capture(binary: string, args: string[], timeoutMs: number): Promise<{ stdout: string, stderr: string, error?: NodeJS.ErrnoException }> {
+export function capture(binary: string, args: string[], timeoutMs: number): Promise<{ stdout: string, stderr: string, error?: NodeJS.ErrnoException }> {
   return new Promise(resolve => {
     const child = spawn(binary, args, { env: agyEnv(), stdio: ['ignore', 'pipe', 'pipe'] })
     let stdout = ''

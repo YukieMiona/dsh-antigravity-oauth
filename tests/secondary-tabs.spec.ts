@@ -48,6 +48,8 @@ const apiServer = (): ApiServerTabProps => ({
     host: '127.0.0.1',
     port: 18045,
     apiKey: 'sk-agy-fixture-1234',
+    hourlyLimit: 0,
+    dailyLimit: 0,
   },
   status: {
     running: true,
