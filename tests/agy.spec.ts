@@ -127,8 +127,8 @@ describe('agy runner against a fake binary', () => {
   beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'agy-fake-')) })
   afterEach(async () => { await rm(dir, { recursive: true, force: true }) })
 
-  async function fakeAgy(body: string): Promise<string> {
-    const path = join(dir, 'agy')
+  async function fakeAgy(body: string, name = 'agy'): Promise<string> {
+    const path = join(dir, name)
     await writeFile(path, `#!/usr/bin/env node\n${body}\n`)
     await chmod(path, 0o755)
     return path
@@ -216,7 +216,7 @@ process.stdin.on('end', () => {
   })
 
   it('does not wait in the queue for ever: busy after the queue time limit, and an abort leaves the queue', async () => {
-    const slow = await fakeAgy(`process.stdin.resume(); setTimeout(() => console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'slow' } })), 1500)`)
+    const slow = await fakeAgy(`process.stdin.resume(); setTimeout(() => console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'slow' } })), 1500)`, 'agy-slow')
     const ok = await fakeAgy(`process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'ok' } })))`)
     const first = runAgy({ binary: slow, cwd: join(dir, 'ws'), model: 'm', prompt: 'x' })
     await new Promise(resolve => setTimeout(resolve, 50))
