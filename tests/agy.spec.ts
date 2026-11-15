@@ -173,7 +173,7 @@ process.stdin.on('end', () => {
     expect(events).toEqual([
       { type: 'text', text: 'Hel' },
       { type: 'text', text: 'lo' },
-      { type: 'result', result: { status: 'SUCCESS', response: 'Hello', usage: { input_tokens: 5 }, readsDone: 0 } },
+      { type: 'result', result: { status: 'SUCCESS', response: 'Hello', usage: { input_tokens: 5 }, readsDone: 0, filesRead: [] } },
     ])
     expect(JSON.parse(await readFile(join(dir, 'ws', 'seen.json'), 'utf8'))).toEqual({ event: 'user', message: { content: 'hello' } })
   })
@@ -270,7 +270,7 @@ process.stdin.on('end', () => {
     await expect(runAgy({ binary: noCapacity, cwd: join(dir, 'ws'), model: 'm', effort: 'low', prompt: 'x', maxUpstreamAttempts: 2 })).rejects.toMatchObject({ kind: 'capacity' })
     const spawned = join(dir, 'spawned')
     const ok = await fakeAgy(`require('node:fs').writeFileSync(${JSON.stringify(spawned)}, 'yes'); process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'ok' } })))`)
-    await expect(runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'm', effort: 'low', prompt: 'x' })).rejects.toMatchObject({ kind: 'capacity', message: expect.stringContaining('next attempt in') })
+    await expect(runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'm', effort: 'low', prompt: 'x' })).rejects.toMatchObject({ kind: 'capacity', message: expect.stringContaining('next attempt is in') })
     await expect(readFile(spawned, 'utf8')).rejects.toThrow()
     // Another effort is another model on Google's side, so it is not held back.
     await expect(runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'm', effort: 'high', prompt: 'x' })).resolves.toMatchObject({ response: 'ok' })
@@ -293,7 +293,7 @@ else console.log(${JSON.stringify(JSON.stringify(usage))})`)
     expect(reading).toMatchObject({ weekly: 0.1, fiveHour: 0.9, low: true, version: '1.6.0' })
   })
 
-  const VIEWER = (open: boolean) => `
+  const VIEWER = (open: 'all' | 'none' | 'first-twice') => `
 const fs = require('node:fs')
 let input = ''
 process.stdin.on('data', c => { input += c })
@@ -303,13 +303,14 @@ process.stdin.on('end', () => {
   const agent = process.argv[process.argv.indexOf('--agent') + 1]
   const template = fs.readFileSync(process.cwd() + '/.agents/agents/' + agent + '.md', 'utf8')
   const report = { cwd: process.cwd(), files, sizes: files.map(f => fs.statSync(f).size), viewer: /tools:\\n  - view_file/.test(template), settings: JSON.parse(process.argv[process.argv.indexOf('--settings') + 1]) }
-  ${open ? `for (const f of files) console.log(JSON.stringify({ event: 'step_update', step_update: { step_type: 'tool', tool_name: 'read_file', state: 'DONE' } }))` : ''}
+  ${open === 'all' ? `for (const f of files) console.log(JSON.stringify({ event: 'step_update', step_update: { step_type: 'tool', tool_name: 'read_file', state: 'DONE', tool_info: { name: 'read_file', parameters: { Path: f } } } }))` : ''}
+  ${open === 'first-twice' ? `for (const f of files) console.log(JSON.stringify({ event: 'step_update', step_update: { step_type: 'tool', tool_name: 'read_file', state: 'DONE', tool_info: { name: 'read_file', parameters: { Path: files[0] } } } }))` : ''}
   console.log(JSON.stringify({ event: 'step_update', step_update: { step_type: 'agent_response', text_delta: JSON.stringify(report) } }))
   console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: JSON.stringify(report) } }))
 })`
 
   it('carries an image as a file in a folder of the request, and removes the folder afterwards', async () => {
-    const binary = await fakeAgy(VIEWER(true))
+    const binary = await fakeAgy(VIEWER('all'))
     const image = { type: 'image', attachment: { name: 'cat.png' } }
     const old = { type: 'image', attachment: { name: 'old.png' } }
     const events = []
@@ -336,7 +337,7 @@ process.stdin.on('end', () => {
   })
 
   it('discards an answer about an image that agy never opened, and refuses unsupported images', async () => {
-    const binary = await fakeAgy(VIEWER(false))
+    const binary = await fakeAgy(VIEWER('none'))
     const image = { type: 'image', attachment: { name: 'cat.png' } }
     const turn = (mimeType: string) => (async () => {
       const events = []
@@ -365,6 +366,53 @@ else { process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.st
     expect(seen.length).toBeGreaterThanOrEqual(2)
     expect(new Set(seen)).toEqual(new Set(['true']))
   })
+
+  it('needs every new image opened: one image opened twice does not count for two', async () => {
+    const binary = await fakeAgy(VIEWER('first-twice'), 'agy-twice')
+    const a = { type: 'image', attachment: { name: 'a.png' } }
+    const b = { type: 'image', attachment: { name: 'b.png' } }
+    const run = async () => {
+      for await (const _ of agyTurn({
+        binary, workspace: join(dir, 'ws'), model: 'm',
+        request: { messages: [msg('user', [{ type: 'text', text: 'Compare.' }, a, b])] } as never,
+        loadImage: async () => ({ mimeType: 'image/png', data: Buffer.from('PNGDATA') }),
+      })) { /* drain */ }
+    }
+    await expect(run()).rejects.toMatchObject({ kind: 'image-unread', message: expect.stringContaining('1 of 2') })
+  })
+
+  it('removes images already written when a later image is rejected', async () => {
+    const binary = await fakeAgy(VIEWER('all'), 'agy-reject')
+    const good = { type: 'image', attachment: { name: 'good.png' } }
+    const bad = { type: 'image', attachment: { name: 'bad.tiff' } }
+    const run = async () => {
+      for await (const _ of agyTurn({
+        binary, workspace: join(dir, 'ws'), model: 'm',
+        request: { messages: [msg('user', [good, bad])] } as never,
+        loadImage: async block => ({ mimeType: block === good ? 'image/png' : 'image/tiff', data: Buffer.from('DATA') }),
+      })) { /* drain */ }
+    }
+    await expect(run()).rejects.toMatchObject({ kind: 'image-rejected' })
+    expect(await readdir(join(dir, 'ws', 'requests'))).toEqual([])
+  })
+
+  it('kills agy when it ignores SIGTERM after the consumer stops reading, and frees the slot after it exits', async () => {
+    setMemoryProbe(() => 0)
+    const stubborn = await fakeAgy(`
+process.on('SIGTERM', () => {})
+process.stdin.resume()
+process.stdin.on('end', () => console.log(JSON.stringify({ event: 'step_update', step_update: { step_type: 'agent_response', text_delta: 'hi' } })))
+setInterval(() => {}, 1000)`, 'agy-stubborn')
+    const ok = await fakeAgy(`process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'ok' } })))`, 'agy-next')
+    for await (const event of streamAgy({ binary: stubborn, cwd: join(dir, 'ws'), model: 'm', prompt: 'x' })) {
+      expect(event).toEqual({ type: 'text', text: 'hi' })
+      break
+    }
+    const started = Date.now()
+    await expect(runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'm', prompt: 'x' })).resolves.toMatchObject({ response: 'ok' })
+    // The next run waited for the kill after the grace period, so the two never overlapped.
+    expect(Date.now() - started).toBeGreaterThan(4_000)
+  }, 20_000)
 
   it('checkAgy adds the version and the Gemini quota when the CLI reports them', async () => {
     const usage = { event: 'command_result', command: { name: 'usage', data: { groups: [

@@ -160,6 +160,12 @@ export class ThoughtSignatureStore implements ReadonlyMap<string, string> {
   }
 }
 
+
+/** An account the plugin may send requests for: not turned off by the user, not disabled by Google. */
+function isUsable(account: StoredAccount): boolean {
+  return account.disabled !== true && account.bannedAt === undefined
+}
+
 export class AntigravitySession {
   readonly store: AntigravityCredentialStore
   readonly thoughtSignatures: ThoughtSignatureStore
@@ -487,7 +493,7 @@ export class AntigravitySession {
     const now = Date.now()
     for (const account of all) {
       if (account.id === active?.id) continue
-      if (account.disabled === true) continue
+      if (!isUsable(account)) continue
       if (account.expires >= now - OAUTH_REFRESH_SOON_MS) continue
       if ((this.precheckAt.get(account.id) ?? 0) > now - PRECHECK_INTERVAL_MS) continue
       this.precheckAt.set(account.id, now)
@@ -551,6 +557,8 @@ export class AntigravitySession {
   private async refreshGrantForAccount(accountId: string, now = Date.now()): Promise<AntigravityGrant | undefined> {
     const target = await this.store.get(accountId)
     if (target === undefined) return undefined
+    // No request to Google for an account the user turned off or Google disabled.
+    if (!isUsable(target)) return undefined
     if (now < target.expires - OAUTH_REFRESH_SOON_MS) return target
     if (now - (this.refreshAttempts.get(target.id) ?? 0) < OAUTH_REFRESH_COOLDOWN_MS) return target
     this.refreshAttempts.set(target.id, now)
@@ -588,6 +596,8 @@ export class AntigravitySession {
       if (active?.id === accountId) {
         const next = await this.findBestAccount({ excludeId: accountId }).catch(() => undefined)
           ?? await this.findFailoverAccount(accountId).catch(() => undefined)
+          // A rate-limited account is still a better current account than one that is off.
+          ?? (await this.store.list()).find(account => account.id !== accountId && isUsable(account) && account.projectId !== undefined)
         if (next !== undefined) await this.store.setActive(next.id)
       }
     }
@@ -661,8 +671,8 @@ export class AntigravitySession {
       // Eligibility failed for the freshly added account. Keep a working
       // account active instead of stranding requests on the broken one.
       const active = await this.store.active()
-      if (active?.projectId === undefined) {
-        const ready = accounts.find(account => account.projectId !== undefined)
+      if (active?.projectId === undefined || !isUsable(active)) {
+        const ready = accounts.find(account => account.projectId !== undefined && isUsable(account))
         if (ready !== undefined) await this.store.setActive(ready.id)
       }
       this.login = { status: 'idle' }
@@ -990,7 +1000,10 @@ export class AntigravitySession {
   }
 
   private async fetchAvailableModelsFromUpstream(): Promise<ModelCatalogItem[] | null> {
-    const active = await this.store.active() ?? (await this.store.list())[0]
+    const current = await this.store.active()
+    const active = current !== undefined && isUsable(current) && current.projectId !== undefined
+      ? current
+      : (await this.store.list()).find(account => isUsable(account) && account.projectId !== undefined)
     if (!active) return null
     let access = active.access
     if (Date.now() >= active.expires - 30_000) {

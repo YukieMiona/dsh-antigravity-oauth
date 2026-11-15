@@ -119,7 +119,11 @@ export function openAiToRequest(body: any, images: OpenAiImages = new Map()): Pi
   }
 }
 
-/** How long a request may wait for the first piece of an answer before it gets a 504. */
+/**
+ * How long a request may go without any sign of progress before its first answer event; then it
+ * gets a 504. On the Official CLI route every line agy prints counts as progress, because a
+ * tool-call answer or an answer about an image arrives in one piece at the end.
+ */
 export const FIRST_EVENT_DEADLINE_MS = 120_000
 /** How long a request may wait behind other Official CLI requests before it gets a 503. */
 export const AGY_QUEUE_TIMEOUT_MS = 20_000
@@ -131,7 +135,7 @@ export interface HttpFailure { status: number, message: string, type: string, co
 /** The HTTP answer for a failed completion: a client must be able to tell "try later" from "do not retry". */
 export function httpFailureOf(error: unknown, timedOut = false): HttpFailure {
   const message = error instanceof Error ? error.message : String(error)
-  if (timedOut) return { status: 504, message: `No answer started within ${FIRST_EVENT_DEADLINE_MS / 1000} s.`, type: 'server_error', code: 'upstream_timeout' }
+  if (timedOut) return { status: 504, message: `No progress for ${FIRST_EVENT_DEADLINE_MS / 1000} s before the answer started.`, type: 'server_error', code: 'upstream_timeout' }
   if (error instanceof AgyError) {
     switch (error.kind) {
       case 'capacity': return { status: 503, message, type: 'server_error', code: 'model_capacity_exhausted', retryAfter: CAPACITY_COOLDOWN_MS / 1000 }
@@ -510,9 +514,15 @@ export class AntigravityApiServer {
     effort: ReasoningEffort,
     body: any,
     signal: AbortSignal,
+    onActivity?: () => void,
   ): AsyncIterable<any> {
     const images: OpenAiImages = new Map()
     const request = openAiToRequest(body, images)
+    // Like the DSH adapter: only images after the last assistant message travel; older ones were
+    // answered already and become a placeholder, so one old bad image cannot block a conversation.
+    let lastAssistant = -1
+    request.messages.forEach((message, index) => { if (message.role === 'assistant') lastAssistant = index })
+    const fresh = new Set<object>(request.messages.slice(lastAssistant + 1).flatMap(message => message.content.filter(block => block.type === 'image')))
     for await (const event of agyTurn({
       binary,
       workspace: agyWorkspace(String(this.session.store?.filename)),
@@ -522,7 +532,9 @@ export class AntigravityApiServer {
       signal,
       queueTimeoutMs: AGY_QUEUE_TIMEOUT_MS,
       maxUpstreamAttempts: AGY_MAX_UPSTREAM_ATTEMPTS,
+      ...onActivity === undefined ? {} : { onActivity },
       loadImage: async block => {
+        if (!fresh.has(block)) return `[Earlier image: ${block.attachment?.name ?? 'image'} (already answered)]`
         const image = images.get(block)
         if (image === undefined || typeof image === 'string') throw new AgyError(image ?? 'image data is missing', 'image-rejected')
         return image
@@ -667,10 +679,18 @@ export class AntigravityApiServer {
       if (!res.writableFinished) abortController.abort()
     })
     let timedOut = false
-    const deadline = setTimeout(() => {
+    let started = false
+    const expire = (): void => {
       timedOut = true
       abortController.abort()
-    }, FIRST_EVENT_DEADLINE_MS)
+    }
+    let deadline = setTimeout(expire, FIRST_EVENT_DEADLINE_MS)
+    // Progress before the first event restarts the deadline; after it, the stream is on its own.
+    const touch = (): void => {
+      if (started) return
+      clearTimeout(deadline)
+      deadline = setTimeout(expire, FIRST_EVENT_DEADLINE_MS)
+    }
 
     const isStream = Boolean(body.stream)
     const requestId = randomUUID()
@@ -679,11 +699,12 @@ export class AntigravityApiServer {
 
     try {
       const source: AsyncIterable<any> = viaAgy
-        ? this.agyEvents(routeSettings.agyPath, publicId, effort, body, abortController.signal)
+        ? this.agyEvents(routeSettings.agyPath, publicId, effort, body, abortController.signal, touch)
         : await this.openWithFailover(publicId, input, lease, abortController.signal)
       // Read the first event before any header goes out, so a failure still gets an HTTP status.
       const iterator = source[Symbol.asyncIterator]()
       const head = await iterator.next()
+      started = true
       clearTimeout(deadline)
       const ccaStream = resume(head, iterator)
 
@@ -817,6 +838,7 @@ export class AntigravityApiServer {
         res.end()
       }
     } finally {
+      started = true
       clearTimeout(deadline)
     }
   }

@@ -73,7 +73,7 @@ export function buildTemplateBody(
     out.push(
       '# Attached images',
       'An image in the conversation appears as a line `[Image file: /absolute/path]`. You cannot see it until you open it: '
-        + 'before you answer, call the view_file tool once for every image file in the latest turn, with that exact absolute path, '
+        + 'before you answer, call the view_file tool once for every image file named at the end of the user message, with that exact absolute path, '
         + 'and describe only what you see. Never open any other path. Do not mention file paths or the act of opening files in your answer.',
     )
   }

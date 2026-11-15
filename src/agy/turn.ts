@@ -77,8 +77,8 @@ interface StagedImages {
   /** Folder of this request, or undefined when no image travels. */
   dir?: string
   text: Map<ImageBlock, string>
-  /** Images in the turns after the last assistant message: the model has to open each of them. */
-  fresh: number
+  /** Files of the images after the last assistant message: the model has to open each of them. */
+  fresh: string[]
 }
 
 /**
@@ -87,7 +87,18 @@ interface StagedImages {
  * folder) opens it.
  */
 async function stageImages(options: AgyTurnOptions): Promise<StagedImages> {
-  const staged: StagedImages = { text: new Map(), fresh: 0 }
+  const staged: StagedImages = { text: new Map(), fresh: [] }
+  try {
+    await stageInto(staged, options)
+    return staged
+  } catch (error) {
+    // A rejected image must not leave the ones already written on disk.
+    if (staged.dir !== undefined) await rm(staged.dir, { recursive: true, force: true }).catch(() => undefined)
+    throw error
+  }
+}
+
+async function stageInto(staged: StagedImages, options: AgyTurnOptions): Promise<void> {
   const messages = options.request.messages
   let lastAssistant = -1
   messages.forEach((message, index) => { if (message.role === 'assistant') lastAssistant = index })
@@ -113,10 +124,9 @@ async function stageImages(options: AgyTurnOptions): Promise<StagedImages> {
       const file = join(staged.dir, `image-${count}.${extension}`)
       await writeFile(file, loaded.data, { mode: 0o600 })
       staged.text.set(block, `[Image file: ${file}]`)
-      if (index > lastAssistant) staged.fresh += 1
+      if (index > lastAssistant) staged.fresh.push(file)
     }
   }
-  return staged
 }
 
 /**
@@ -149,7 +159,10 @@ export async function* agyTurn(options: AgyTurnOptions): AsyncGenerator<AgyTurnE
       model: options.model,
       ...options.effort === undefined ? {} : { effort: options.effort },
       agent,
-      prompt: conversation.recent,
+      // The files to open are named again at the end, where the model reads last.
+      prompt: images.fresh.length === 0
+        ? conversation.recent
+        : `${conversation.recent}\n\n[Open these image files with view_file before you answer: ${images.fresh.join(', ')}]`,
       allowWorkspaceRead: withImages,
       ...options.signal === undefined ? {} : { signal: options.signal },
       ...options.onActivity === undefined ? {} : { onActivity: options.onActivity },
@@ -160,13 +173,15 @@ export async function* agyTurn(options: AgyTurnOptions): AsyncGenerator<AgyTurnE
       const visible = filter.feed(event.text)
       if (visible.length === 0) continue
       // An answer about an image is held until agy confirms that it opened the image.
-      if (images.fresh > 0) { held += visible; continue }
+      if (images.fresh.length > 0) { held += visible; continue }
       streamed += visible
       yield { type: 'text', text: visible }
     }
-    if (images.fresh > 0 && (result?.readsDone ?? 0) < images.fresh) {
+    const opened = new Set(result?.filesRead ?? [])
+    const unread = images.fresh.filter(file => !opened.has(file))
+    if (unread.length > 0) {
       throw new AgyError(
-        `the model opened ${result?.readsDone ?? 0} of ${images.fresh} attached image(s), so its answer was discarded`,
+        `the model did not open ${unread.length} of ${images.fresh.length} attached image(s), so its answer was discarded`,
         'image-unread',
       )
     }

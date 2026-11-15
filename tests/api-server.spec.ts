@@ -280,7 +280,7 @@ process.stdin.on('end', () => {
     return
   }
   const file = /\\[Image file: ([^\\]]+)\\]/.exec(content)
-  if (file && content.includes('look')) console.log(JSON.stringify({ event: 'step_update', step_update: { step_type: 'tool', tool_name: 'read_file', state: 'DONE' } }))
+  if (file && content.includes('look')) console.log(JSON.stringify({ event: 'step_update', step_update: { step_type: 'tool', tool_name: 'read_file', state: 'DONE', tool_info: { name: 'read_file', parameters: { Path: file[1] } } } }))
   console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: file ? 'bytes=' + fs.statSync(file[1]).size : 'no image' } }))
 })
 `)
@@ -321,6 +321,19 @@ process.stdin.on('end', () => {
     const remote = await post([{ type: 'text', text: 'look at this' }, image('https://example.com/cat.png')])
     expect(remote.status).toBe(400)
     expect((await remote.json() as any).error.code).toBe('image_input_not_supported')
+
+    // An image that was answered already does not travel again, so an old remote image does not block.
+    const history = await fetch(`http://127.0.0.1:${testPort}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${testKey}` },
+      body: JSON.stringify({ model: 'gemini-3.8-flash-low', messages: [
+        { role: 'user', content: [{ type: 'text', text: 'old' }, image('https://example.com/cat.png')] },
+        { role: 'assistant', content: 'A cat.' },
+        { role: 'user', content: [{ type: 'text', text: 'look at this one' }, image(dataUrl)] },
+      ] }),
+    })
+    expect(history.status).toBe(200)
+    expect((await history.json() as any).choices[0].message.content).toBe('bytes=5')
   })
 
   it('answers 429 with Retry-After above the hourly limit, and counts requests', async () => {
