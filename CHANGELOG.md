@@ -6,6 +6,7 @@ This file records completed features, fixes, and process milestones in `YukieMio
 
 - Official CLI: a request fails fast. The plugin reads `agy`'s run log and stops after a few refused model calls (for example Google's `503 No capacity`) instead of waiting about two minutes for `agy`'s silent retries; a request leaves the queue when its client disconnects or after a time limit.
 - Official CLI: images are sent. Each image is written to a folder of that request, `agy`'s file viewer may read that folder only, and the folder is deleted afterwards. An answer is discarded when `agy` did not open the image.
+- Accounts: every account has an off switch. An account that is off is never selected (chats, failover, rotation, API server), and the plugin sends nothing to Google for it: no model call, no quota check, no token refresh. Turning off the current account moves the current role to another usable account.
 - API server: failures get an HTTP status before any stream header (503 `model_capacity_exhausted`, 503 `server_busy`, 504 `upstream_timeout`, 400 `image_input_not_supported`, 502 `image_not_read`); a stream that fails midway ends with an `error` event; a disconnected client stops its model call.
 
 ## v0.2.5 (2026-11-14)

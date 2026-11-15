@@ -430,3 +430,49 @@ describe('AntigravitySession expired token refresh in retrieveAllQuotas', () => 
     }
   })
 })
+
+describe('AntigravitySession account off switch', () => {
+  it('never selects an account that is off, sends nothing for it, and moves the current role', async () => {
+    const { store, cleanup } = await createTempStore()
+    try {
+      const grant = (name: string): AntigravityGrant => ({
+        type: 'oauth', access: `access-${name}`, refresh: `refresh-${name}`, expires: Date.now() + 3_600_000, projectId: `project-${name}`, email: `${name}@example.test`,
+      })
+      await store.add(grant('one'))
+      await store.add(grant('two'))
+      const [one, two] = await store.list()
+      await store.setActive(one!.id)
+      const quotaTokens: string[] = []
+      const fetchImpl: typeof fetch = async (input, init) => {
+        if (String(input).includes(QUOTA_SUMMARY_PATH)) {
+          quotaTokens.push((init?.headers as Record<string, string>)['Authorization']!)
+          return Response.json({ groups: [] })
+        }
+        return new Response('', { status: 404 })
+      }
+      const session = new AntigravitySession(store, fetchImpl)
+
+      const off = await session.setAccountEnabled(one!.id, false)
+      expect(off.accounts.find(a => a.id === one!.id)?.disabled).toBe(true)
+      expect((await store.active())?.id).toBe(two!.id)
+      expect((await session.acquire({ model: 'gemini-3.8-flash' }))?.accountId).toBe(two!.id)
+      expect(await session.acquireForAccount(one!.id)).toBeUndefined()
+      expect(await session.findFailoverAccount(two!.id)).toBeUndefined()
+      await expect(session.switchAccount(one!.id)).rejects.toThrow(/turned off/)
+      expect(Object.keys(await session.retrieveAllQuotas({ force: true }))).toEqual([two!.id])
+      expect(quotaTokens.every(token => token === 'Bearer access-two')).toBe(true)
+
+      // With every account off there is nothing to use, and the choice survives a reload.
+      await session.setAccountEnabled(two!.id, false)
+      expect(await session.acquire({ model: 'gemini-3.8-flash' })).toBeUndefined()
+      expect(await session.hasReadyAccount()).toBe(false)
+      expect((await new AntigravityCredentialStore(store.filename).list()).map(a => a.disabled)).toEqual([true, true])
+
+      const on = await session.setAccountEnabled(one!.id, true)
+      expect(on.accounts.find(a => a.id === one!.id)?.disabled).toBeUndefined()
+      expect((await session.acquire({ model: 'gemini-3.8-flash' }))?.accountId).toBe(one!.id)
+    } finally {
+      await cleanup()
+    }
+  })
+})

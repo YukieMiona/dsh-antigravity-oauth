@@ -14,7 +14,7 @@ const BACKUP_SUFFIX = '.v1.bak'
 const MAX_ACCOUNTS = 10
 const MIGRATED_ACCOUNT_ID = 'acc_default'
 const OAUTH_FIELDS = new Set(['type', 'access', 'refresh', 'expires', 'projectId', 'email'])
-const ACCOUNT_FIELDS = new Set([...OAUTH_FIELDS, 'id', 'addedAt', 'hasArgon', 'bannedAt'])
+const ACCOUNT_FIELDS = new Set([...OAUTH_FIELDS, 'id', 'addedAt', 'hasArgon', 'bannedAt', 'disabled'])
 
 export interface AdvancedSettings {
   defaultReasoningEffort: 'low' | 'medium' | 'high'
@@ -32,8 +32,11 @@ export const DEFAULT_ADVANCED_SETTINGS: AdvancedSettings = {
   enabledModels: [...DEFAULT_ENABLED_MODELS],
 }
 
-/** `bannedAt`: when Google disabled this account for a ToS violation. Token refreshes still succeed, so it must persist. */
-export type StoredAccount = AntigravityGrant & { id: string, addedAt?: string, hasArgon?: boolean, bannedAt?: string }
+/**
+ * `bannedAt`: when Google disabled this account for a ToS violation. Token refreshes still succeed, so it must persist.
+ * `disabled`: the user turned the account off; the plugin sends nothing to Google for it.
+ */
+export type StoredAccount = AntigravityGrant & { id: string, addedAt?: string, hasArgon?: boolean, bannedAt?: string, disabled?: boolean }
 
 interface AuthDocument {
   version: typeof AUTH_FORMAT_VERSION
@@ -119,12 +122,16 @@ function parseAccount(raw: unknown, filename: string): StoredAccount {
   if (raw.bannedAt !== undefined && typeof raw.bannedAt !== 'string') {
     throw new Error(`dsh-antigravity-oauth: ${filename} account bannedAt must be a string`)
   }
+  if (raw.disabled !== undefined && typeof raw.disabled !== 'boolean') {
+    throw new Error(`dsh-antigravity-oauth: ${filename} account disabled must be a boolean`)
+  }
   return {
     ...grant,
     id: raw.id,
     ...typeof raw.addedAt === 'string' ? { addedAt: raw.addedAt } : {},
     ...typeof raw.hasArgon === 'boolean' ? { hasArgon: raw.hasArgon } : {},
     ...typeof raw.bannedAt === 'string' ? { bannedAt: raw.bannedAt } : {},
+    ...raw.disabled === true ? { disabled: true } : {},
   }
 }
 
