@@ -20,13 +20,21 @@ export const TOOL_RESULT_BUDGET_BYTES = 24_000
 
 const OPEN_TAG = '<tool_call'
 
-function textOf(blocks: readonly ContentBlock[]): string {
+export type ImageBlock = Extract<ContentBlock, { type: 'image' }>
+/** Text that stands for an image in the conversation: a staged file path, or a placeholder. */
+export type ImageText = (block: ImageBlock) => string
+
+export function imageName(block: ImageBlock): string {
+  return block.attachment?.name || block.attachment?.attachmentId || 'image'
+}
+
+const noImage: ImageText = block => `[Image: ${imageName(block)} (not attached)]`
+
+function textOf(blocks: readonly ContentBlock[], imageText: ImageText = noImage): string {
   const parts: string[] = []
   for (const block of blocks) {
     if (block.type === 'text' && block.text.length > 0) parts.push(block.text)
-    else if (block.type === 'image') {
-      parts.push(`[Image: ${block.attachment?.name || block.attachment?.attachmentId || 'image'} (images are not sent through the agy route)]`)
-    }
+    else if (block.type === 'image') parts.push(imageText(block))
   }
   return parts.join('\n')
 }
@@ -47,7 +55,10 @@ export function toolsOf(options: Pick<GenerateOptions, 'tools' | 'purpose'>): To
 }
 
 /** Template body: role, DSH system instructions, tools, and the call protocol. */
-export function buildTemplateBody(options: Pick<GenerateOptions, 'messages' | 'system' | 'tools' | 'purpose'>): { body: string, tools: Tool[] } {
+export function buildTemplateBody(
+  options: Pick<GenerateOptions, 'messages' | 'system' | 'tools' | 'purpose'>,
+  withImages = false,
+): { body: string, tools: Tool[] } {
   const tools = toolsOf(options)
   const system = [options.system ?? '', ...options.messages.filter(m => m.role === 'system').map(m => textOf(m.content))]
     .map(text => text.trim()).filter(text => text.length > 0).join('\n\n')
@@ -58,6 +69,14 @@ export function buildTemplateBody(options: Pick<GenerateOptions, 'messages' | 's
       : 'This request offers no tools; answer in text.',
     'The conversation arrives in the user message as tagged turns. Write the next assistant turn.',
   ]
+  if (withImages) {
+    out.push(
+      '# Attached images',
+      'An image in the conversation appears as a line `[Image file: /absolute/path]`. You cannot see it until you open it: '
+        + 'before you answer, call the view_file tool once for every image file in the latest turn, with that exact absolute path, '
+        + 'and describe only what you see. Never open any other path. Do not mention file paths or the act of opening files in your answer.',
+    )
+  }
   if (system.length > 0) out.push('# DSH system instructions', system)
   if (tools.length > 0) {
     out.push('# Tools DSH can run for you')
@@ -73,8 +92,8 @@ export function buildTemplateBody(options: Pick<GenerateOptions, 'messages' | 's
   return { body: out.join('\n\n'), tools }
 }
 
-function renderMessage(message: GenerateOptions['messages'][number]): string | undefined {
-  if (message.role === 'user') return `<user>\n${textOf(message.content)}\n</user>`
+function renderMessage(message: GenerateOptions['messages'][number], imageText?: ImageText): string | undefined {
+  if (message.role === 'user') return `<user>\n${textOf(message.content, imageText)}\n</user>`
   if (message.role === 'assistant') {
     const pieces: string[] = []
     for (const block of message.content) {
@@ -84,7 +103,7 @@ function renderMessage(message: GenerateOptions['messages'][number]): string | u
     return pieces.length > 0 ? `<assistant>\n${pieces.join('\n')}\n</assistant>` : undefined
   }
   if (message.role === 'tool') {
-    const body = clipMiddle(textOf(message.content), TOOL_RESULT_BUDGET_BYTES)
+    const body = clipMiddle(textOf(message.content, imageText), TOOL_RESULT_BUDGET_BYTES)
     return `<tool_result id="${message.toolCallId}"${message.isError === true ? ' error="true"' : ''}>\n${body}\n</tool_result>`
   }
   return undefined
@@ -107,8 +126,9 @@ export function splitConversation(
   messages: GenerateOptions['messages'],
   recentBudget = CONVERSATION_BUDGET_BYTES,
   earlierBudget = 0,
+  imageText?: ImageText,
 ): ConversationParts {
-  const rendered = messages.map(renderMessage).filter((m): m is string => m !== undefined)
+  const rendered = messages.map(message => renderMessage(message, imageText)).filter((m): m is string => m !== undefined)
   const recent: string[] = []
   const earlier: string[] = []
   let used = 0

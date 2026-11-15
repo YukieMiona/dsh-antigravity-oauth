@@ -122,7 +122,9 @@ dsh plugin --profile web remove dsh-antigravity-oauth
 
 - 从 <https://antigravity.google> 安装 `agy`，在终端运行一次完成登录。“路由”页会显示登录状态、版本和剩余额度。
 - 工具仍由 DSH 执行。插件把 DSH 的系统提示词和工具列表写入认证文件旁 `.dsh-antigravity-oauth.agy-workspace/` 下的 agent 模板。该模板移除 `agy` 的内置工具，并用覆盖所有操作类别的拒绝规则兜底。
-- 一次只处理一个请求，每次约 5–10 秒；回答大多在末尾一次到达；不发送图片。
+- 一次只处理一个请求，每次约 5–10 秒；回答大多在末尾一次到达。
+- 图片以文件形式发送：插件把每张图片写入该请求专用的文件夹，只允许 `agy` 的文件查看器读取这个文件夹，回答结束后删除。如果 `agy` 没有打开图片，这次回答会被丢弃。
+- 请求会快速失败。Google 拒绝模型调用时（例如 `503 No capacity`），插件在几次尝试后停止；`agy` 自身会静默重试约两分钟。本地 API 服务器返回明确的 HTTP 状态：503 `model_capacity_exhausted` 或 `server_busy`、504 `upstream_timeout`、400 `image_input_not_supported`、502 `image_not_read`。
 - 单个请求约可携带 620 KB，因此该路由下插件向 DSH 报告 128K token 的上下文窗口，DSH 会更早压缩。
 - `agy` 会自动更新。版本不在本路由验证过的版本线（1.5.x）内时，“路由”页会给出提示。
 

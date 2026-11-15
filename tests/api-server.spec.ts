@@ -260,6 +260,65 @@ process.stdin.on('end', () => {
     expect(JSON.parse(seen.input).message.content).toContain('<user>\nWeather in Paris?\n</user>')
   })
 
+  it('Official CLI route: fails fast with an HTTP status, and never answers 200 for an image it could not send', async () => {
+    const testPort = 19150
+    const testKey = 'sk-agy-test-secret-fail'
+    await store.save({ enabled: true, host: '127.0.0.1', port: testPort, apiKey: testKey })
+    const agyPath = join(tempDir, 'agy')
+    // Text "capacity" → Google refuses every attempt; an image → opened only when the text says "look".
+    await writeFile(agyPath, `#!/usr/bin/env node
+const fs = require('node:fs')
+let input = ''
+process.stdin.on('data', c => { input += c })
+process.stdin.on('end', () => {
+  const content = JSON.parse(input).message.content
+  if (content.includes('capacity')) {
+    const log = process.argv[process.argv.indexOf('--log-file') + 1]
+    let n = 0
+    setInterval(() => fs.appendFileSync(log, 'Run: attempt ' + (++n) + ' failed (UNAVAILABLE (code 503): No capacity available for model gemini-3.8-flash-low on the server), retrying in 2s\\n'), 40)
+    return
+  }
+  const file = /\\[Image file: ([^\\]]+)\\]/.exec(content)
+  if (file && content.includes('look')) console.log(JSON.stringify({ event: 'step_update', step_update: { step_type: 'tool', tool_name: 'read_file', state: 'DONE' } }))
+  console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: file ? 'bytes=' + fs.statSync(file[1]).size : 'no image' } }))
+})
+`)
+    await chmod(agyPath, 0o755)
+    const fakeSession = {
+      store: { filename: join(tempDir, 'auth.json') },
+      manager: { read: async () => ({ route: 'agy', enabled: false, baseUrl: '', apiKey: '', agyPath }) },
+      getAdvancedSettings: async () => ({ enabledModels: ['gemini-3.8-flash'], defaultReasoningEffort: 'medium' }),
+      acquire: async () => undefined,
+    } as unknown as AntigravitySession
+    server = new AntigravityApiServer(fakeSession, store)
+    await server.start()
+    const post = (content: unknown, stream = false) => fetch(`http://127.0.0.1:${testPort}/v1/chat/completions`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${testKey}` },
+      body: JSON.stringify({ model: 'gemini-3.8-flash-low', stream, messages: [{ role: 'user', content }] }),
+    })
+    const image = (url: string) => ({ type: 'image_url', image_url: { url } })
+    const dataUrl = `data:image/png;base64,${Buffer.from('12345').toString('base64')}`
+
+    const started = Date.now()
+    const busy = await post('capacity', true)
+    expect(busy.status).toBe(503)
+    expect((await busy.json() as any).error.code).toBe('model_capacity_exhausted')
+    expect(Date.now() - started).toBeLessThan(5_000)
+
+    const seen = await post([{ type: 'text', text: 'look at this' }, image(dataUrl)])
+    expect(seen.status).toBe(200)
+    expect((await seen.json() as any).choices[0].message.content).toBe('bytes=5')
+
+    const unread = await post([{ type: 'text', text: 'describe this' }, image(dataUrl)])
+    expect(unread.status).toBe(502)
+    expect((await unread.json() as any).error.code).toBe('image_not_read')
+
+    const remote = await post([{ type: 'text', text: 'look at this' }, image('https://example.com/cat.png')])
+    expect(remote.status).toBe(400)
+    expect((await remote.json() as any).error.code).toBe('image_input_not_supported')
+  })
+
   it('follows the Gateway route by relaying the request with the wire model id', async () => {
     const testPort = 19148
     const testKey = 'sk-agy-test-secret-gw'

@@ -723,7 +723,13 @@ export class AntigravityAdapter extends LlmAdapter {
     settings: ManagerSettings,
   ): AsyncIterable<StreamChunk> {
     const effort = effortOf(options)
-    const watchdog = new IdleWatchdog(this.idleTimeoutFor(effort, false), options.signal)
+    const hasImages = this.options.disableImageUpload !== true
+      && options.messages.some(m => m.content.some(b => b.type === 'image' && b.offloaded !== true))
+    const watchdog = new IdleWatchdog(this.idleTimeoutFor(effort, hasImages), options.signal)
+    // Like the other routes, only images after the last assistant turn travel as bytes.
+    let lastAssistant = -1
+    options.messages.forEach((m, i) => { if (m.role === 'assistant') lastAssistant = i })
+    const fresh = new Set(options.messages.slice(lastAssistant + 1).flatMap(m => m.content.filter(b => b.type === 'image')))
     let textOpen = false
     try {
       for await (const event of agyTurn({
@@ -734,6 +740,15 @@ export class AntigravityAdapter extends LlmAdapter {
         request: options,
         signal: watchdog.signal,
         onActivity: () => watchdog.touch(),
+        // agy retries a refused call for about two minutes by itself; a chat should not wait that long.
+        maxUpstreamAttempts: 5,
+        loadImage: async block => {
+          const name = block.attachment?.name || block.attachment?.attachmentId || 'image'
+          if (this.options.disableImageUpload === true) return `[Image: ${name} (image input disabled)]`
+          if (block.offloaded !== true && !fresh.has(block)) return `[Historical image: ${name} (omitted to preserve context)]`
+          const image = await resolveImageBlock(block, this.options.resolveAttachments?.(), options.signal, this.options.resolveImageAccess)
+          return image.type === 'inline' ? { mimeType: image.mimeType, data: Buffer.from(image.data, 'base64') } : image.text
+        },
       })) {
         if (event.type === 'text') {
           if (!textOpen) { yield { type: 'block-start', index: 0, blockType: 'text' }; textOpen = true }
@@ -768,8 +783,10 @@ export class AntigravityAdapter extends LlmAdapter {
       if (watchdog.timedOut) throw new LlmError(IDLE_TIMEOUT_MESSAGE, 'TIMEOUT', { cause: error })
       if (error instanceof AgyError && error.kind === 'aborted') throw error
       const message = error instanceof Error ? error.message : String(error)
-      const code = error instanceof AgyError && (error.kind === 'not-installed' || error.kind === 'not-signed-in')
+      const kind = error instanceof AgyError ? error.kind : undefined
+      const code = kind === 'not-installed' || kind === 'not-signed-in'
         ? 'MISSING_CREDENTIAL'
+        : kind === 'capacity' || kind === 'busy' ? 'RATE_LIMIT'
         : isAccountBannedError(message) ? 'AUTH' : /\b429\b|RESOURCE_EXHAUSTED|quota/i.test(message) ? 'RATE_LIMIT' : 'UNKNOWN'
       throw new LlmError(`Antigravity CLI: ${message}`, code, { cause: error })
     } finally {

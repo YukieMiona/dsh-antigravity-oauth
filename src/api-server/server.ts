@@ -3,7 +3,8 @@ import { randomUUID } from 'node:crypto'
 import { isPublicModelId, isReasoningEffort, publicModel, routeChatModel, thinkingLevelFor } from '../models.ts'
 import { isAccountBannedError } from '../ban.ts'
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
-import { agyTurn, agyWorkspace } from '../agy/turn.ts'
+import { AgyError } from '../agy/run.ts'
+import { agyTurn, agyWorkspace, type AgyImage } from '../agy/turn.ts'
 import { chatCompletionsUrl, type ManagerSettings } from '../manager/store.ts'
 import type { AntigravitySession } from '../session.ts'
 import type {
@@ -54,13 +55,32 @@ async function readBodyJson(req: IncomingMessage): Promise<any> {
 function openAiText(content: unknown): string {
   if (typeof content === 'string') return content
   if (!Array.isArray(content)) return content === null || content === undefined ? '' : JSON.stringify(content)
-  return content.map((part: any) => part?.type === 'text' && typeof part.text === 'string'
-    ? part.text
-    : part?.type === 'image_url' ? '[image omitted: images are not sent through the agy route]' : '').filter(Boolean).join('\n')
+  return content.map((part: any) => part?.type === 'text' && typeof part.text === 'string' ? part.text : '').filter(Boolean).join('\n')
+}
+
+/** Images of an OpenAI request by the block that stands for them; a string says why one cannot be sent. */
+export type OpenAiImages = Map<object, AgyImage | string>
+
+/** User or tool content as DSH blocks; each `image_url` part becomes an image block recorded in `images`. */
+function openAiBlocks(content: unknown, images: OpenAiImages): unknown[] {
+  if (!Array.isArray(content)) return [{ type: 'text', text: openAiText(content) }]
+  const blocks: unknown[] = []
+  for (const part of content) {
+    if (part?.type === 'text' && typeof part.text === 'string') blocks.push({ type: 'text', text: part.text })
+    if (part?.type !== 'image_url') continue
+    const block = { type: 'image', attachment: { name: `image-${images.size + 1}` } }
+    const url = typeof part.image_url === 'string' ? part.image_url : String(part.image_url?.url ?? '')
+    const match = /^data:([^;,]+);base64,([A-Za-z0-9+/=\s]+)$/.exec(url)
+    images.set(block, match === null
+      ? 'only base64 data URLs are accepted in image_url on this route'
+      : { mimeType: match[1]!, data: Buffer.from(match[2]!, 'base64') })
+    blocks.push(block)
+  }
+  return blocks
 }
 
 /** Reshape an OpenAI chat request into the fields agy/turn.ts reads. */
-export function openAiToRequest(body: any): Pick<GenerateOptions, 'messages' | 'system' | 'tools'> {
+export function openAiToRequest(body: any, images: OpenAiImages = new Map()): Pick<GenerateOptions, 'messages' | 'system' | 'tools'> {
   const system: string[] = []
   const messages: unknown[] = []
   for (const msg of Array.isArray(body?.messages) ? body.messages : []) {
@@ -69,7 +89,7 @@ export function openAiToRequest(body: any): Pick<GenerateOptions, 'messages' | '
       const text = openAiText(msg.content).trim()
       if (text.length > 0) system.push(text)
     } else if (msg.role === 'user') {
-      messages.push({ role: 'user', content: [{ type: 'text', text: openAiText(msg.content) }] })
+      messages.push({ role: 'user', content: openAiBlocks(msg.content, images) })
     } else if (msg.role === 'assistant') {
       const content: unknown[] = []
       const text = openAiText(msg.content)
@@ -80,7 +100,7 @@ export function openAiToRequest(body: any): Pick<GenerateOptions, 'messages' | '
       }
       messages.push({ role: 'assistant', content })
     } else if (msg.role === 'tool') {
-      messages.push({ role: 'tool', toolCallId: String(msg.tool_call_id ?? ''), content: [{ type: 'text', text: openAiText(msg.content) }] })
+      messages.push({ role: 'tool', toolCallId: String(msg.tool_call_id ?? ''), content: openAiBlocks(msg.content, images) })
     }
   }
   const tools = (Array.isArray(body?.tools) ? body.tools : [])
@@ -94,6 +114,52 @@ export function openAiToRequest(body: any): Pick<GenerateOptions, 'messages' | '
     messages: messages as GenerateOptions['messages'],
     ...system.length > 0 ? { system: system.join('\n\n') } : {},
     ...tools.length > 0 ? { tools } : {},
+  }
+}
+
+/** How long a request may wait for the first piece of an answer before it gets a 504. */
+export const FIRST_EVENT_DEADLINE_MS = 120_000
+/** How long a request may wait behind other Official CLI requests before it gets a 503. */
+export const AGY_QUEUE_TIMEOUT_MS = 20_000
+/** Refused model calls after which the Official CLI route gives up (agy alone would retry for two minutes). */
+export const AGY_MAX_UPSTREAM_ATTEMPTS = 3
+
+export interface HttpFailure { status: number, message: string, type: string, code?: string }
+
+/** The HTTP answer for a failed completion: a client must be able to tell "try later" from "do not retry". */
+export function httpFailureOf(error: unknown, timedOut = false): HttpFailure {
+  const message = error instanceof Error ? error.message : String(error)
+  if (timedOut) return { status: 504, message: `No answer started within ${FIRST_EVENT_DEADLINE_MS / 1000} s.`, type: 'server_error', code: 'upstream_timeout' }
+  if (error instanceof AgyError) {
+    switch (error.kind) {
+      case 'capacity': return { status: 503, message, type: 'server_error', code: 'model_capacity_exhausted' }
+      case 'busy': return { status: 503, message, type: 'server_error', code: 'server_busy' }
+      case 'not-installed':
+      case 'not-signed-in': return { status: 503, message, type: 'server_error', code: 'agy_unavailable' }
+      case 'image-rejected': return { status: 400, message, type: 'invalid_request_error', code: 'image_input_not_supported' }
+      case 'image-unread': return { status: 502, message, type: 'upstream_error', code: 'image_not_read' }
+      case 'upstream':
+        return /\b429\b|RESOURCE_EXHAUSTED|quota/i.test(message)
+          ? { status: 429, message, type: 'rate_limit_error', code: 'rate_limit_exceeded' }
+          : { status: 502, message, type: 'upstream_error', code: 'upstream_refused' }
+      default: return { status: 502, message, type: 'upstream_error', code: 'agy_failed' }
+    }
+  }
+  return { status: 500, message: message || 'Upstream CCA generation error', type: 'upstream_error' }
+}
+
+/** Put an event that was read ahead back in front of its stream. */
+async function* resume<T>(head: IteratorResult<T>, iterator: AsyncIterator<T>): AsyncGenerator<T> {
+  try {
+    if (head.done) return
+    yield head.value
+    while (true) {
+      const next = await iterator.next()
+      if (next.done) return
+      yield next.value
+    }
+  } finally {
+    await iterator.return?.()
   }
 }
 
@@ -412,13 +478,22 @@ export class AntigravityApiServer {
     body: any,
     signal: AbortSignal,
   ): AsyncIterable<any> {
+    const images: OpenAiImages = new Map()
+    const request = openAiToRequest(body, images)
     for await (const event of agyTurn({
       binary,
       workspace: agyWorkspace(String(this.session.store?.filename)),
       model,
       effort,
-      request: openAiToRequest(body),
+      request,
       signal,
+      queueTimeoutMs: AGY_QUEUE_TIMEOUT_MS,
+      maxUpstreamAttempts: AGY_MAX_UPSTREAM_ATTEMPTS,
+      loadImage: async block => {
+        const image = images.get(block)
+        if (image === undefined || typeof image === 'string') throw new AgyError(image ?? 'image data is missing', 'image-rejected')
+        return image
+      },
     })) {
       if (event.type === 'text') { yield { type: 'text', text: event.text }; continue }
       if (event.rejected.length > 0) console.warn(`[dsh-antigravity-oauth] api-server agy: ignored ${event.rejected.join(', ')}`)
@@ -544,19 +619,33 @@ export class AntigravityApiServer {
       return
     }
 
+    // A client that gave up must not keep a model call (or a place in the agy queue) alive. The
+    // request's own `close` fires as soon as the body is read, so the response is what to watch.
     const abortController = new AbortController()
-    req.on('close', () => {
-      abortController.abort()
+    if (res.destroyed || req.socket.destroyed) abortController.abort()
+    res.on('close', () => {
+      if (!res.writableFinished) abortController.abort()
     })
+    let timedOut = false
+    const deadline = setTimeout(() => {
+      timedOut = true
+      abortController.abort()
+    }, FIRST_EVENT_DEADLINE_MS)
 
     const isStream = Boolean(body.stream)
     const requestId = randomUUID()
     const createdTime = Math.floor(Date.now() / 1000)
+    const startedAt = Date.now()
 
     try {
-      const ccaStream = viaAgy
+      const source: AsyncIterable<any> = viaAgy
         ? this.agyEvents(routeSettings.agyPath, publicId, effort, body, abortController.signal)
         : await this.openWithFailover(publicId, input, lease, abortController.signal)
+      // Read the first event before any header goes out, so a failure still gets an HTTP status.
+      const iterator = source[Symbol.asyncIterator]()
+      const head = await iterator.next()
+      clearTimeout(deadline)
+      const ccaStream = resume(head, iterator)
 
       if (isStream) {
         res.writeHead(200, {
@@ -676,11 +765,19 @@ export class AntigravityApiServer {
         })
       }
     } catch (err: unknown) {
+      clearTimeout(deadline)
+      if (res.destroyed) return
+      const failure = httpFailureOf(err, timedOut)
+      console.warn(`[dsh-antigravity-oauth] api-server route=${route} failed after ${Date.now() - startedAt} ms: ${failure.status} ${failure.code ?? failure.type}: ${failure.message.slice(0, 300)}`)
       if (!res.headersSent) {
-        sendError(res, 500, (err as Error).message || 'Upstream CCA generation error', 'upstream_error')
+        sendError(res, failure.status, failure.message, failure.type, failure.code)
       } else {
+        // The stream is already open: say why it stops instead of ending it silently.
+        if (isStream) res.write(`data: ${JSON.stringify({ error: { message: failure.message, type: failure.type, ...failure.code ? { code: failure.code } : {} } })}\n\n`)
         res.end()
       }
+    } finally {
+      clearTimeout(deadline)
     }
   }
 }

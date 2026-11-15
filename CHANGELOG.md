@@ -2,6 +2,12 @@
 
 This file records completed features, fixes, and process milestones in `YukieMiona/dsh-antigravity-oauth`. Open tasks and acceptance rules live on [Issue 2](https://github.com/YukieMiona/dsh-antigravity-oauth/issues/2). Pull requests hold full test and review logs.
 
+## Unreleased
+
+- Official CLI: a request fails fast. The plugin reads `agy`'s run log and stops after a few refused model calls (for example Google's `503 No capacity`) instead of waiting about two minutes for `agy`'s silent retries; a request leaves the queue when its client disconnects or after a time limit.
+- Official CLI: images are sent. Each image is written to a folder of that request, `agy`'s file viewer may read that folder only, and the folder is deleted afterwards. An answer is discarded when `agy` did not open the image.
+- API server: failures get an HTTP status before any stream header (503 `model_capacity_exhausted`, 503 `server_busy`, 504 `upstream_timeout`, 400 `image_input_not_supported`, 502 `image_not_read`); a stream that fails midway ends with an `error` event; a disconnected client stops its model call.
+
 ## v0.2.5 (2026-11-14)
 
 Release `v0.2.5` adds three request routes (Direct, Gateway, Official CLI), a local OpenAI-compatible API server, handling for accounts that Google disables, and a rebuilt settings UI. Every item below passed GitHub Actions gates on `dev`:
