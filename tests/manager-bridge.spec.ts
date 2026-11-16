@@ -206,9 +206,34 @@ describe('AntigravityAdapter bridge routing', () => {
     await expect(collect(gateway.stream({ provider: 'agy-google-antigravity', model: 'gemini-3.8-flash', messages: [msg('user', [{ type: 'text', text: 'hi' }])] } as unknown as GenerateOptions)))
       .rejects.toMatchObject({ code: 'TRANSPORT' })
     const agy = createAntigravityAdapter({ ...base, manager: { read: async () => ({ ...settings, route: 'agy', enabled: false }) } } as never, { nativeTools: true, nativeSearch: true })
-    expect((await agy.resolveModel('agy-google-antigravity', 'gemini-3.8-flash')).context?.contextWindow).toBe(131_072)
+    expect((await agy.resolveModel('agy-google-antigravity', 'gemini-3.8-flash')).context?.contextWindow).toBe(196_608)
     const direct = createAntigravityAdapter({ ...base, manager: { read: async () => ({ ...settings, route: 'direct', enabled: false }) } } as never, { nativeTools: true, nativeSearch: true })
     expect((await direct.resolveModel('agy-google-antigravity', 'gemini-3.8-flash')).context?.contextWindow).toBe(1_048_576)
+  })
+
+  it('leaves DSH a compaction budget on every route and window (DSH default headroom 64K)', async () => {
+    // Mirrors resolveCompactSpec in @deepseek-ai/dsh-compaction-basic with its defaults.
+    const budget = (window: number, reserve: number) => {
+      const pressure = window - reserve - 65_536
+      const threshold = Math.floor(Math.min(window * 0.8, pressure))
+      const retain = Math.floor((window - reserve) * 0.16)
+      return { pressure, threshold, retain }
+    }
+    for (const route of ['agy', 'direct', 'gateway'] as const) {
+      for (const modelContextWindow of [131_072, 262_144, 524_288, 1_048_576]) {
+        const adapter = createAntigravityAdapter({
+          thoughtSignatures: new Map(),
+          getAdvancedSettings: async () => ({ modelContextWindow, defaultReasoningEffort: 'medium' }),
+          manager: { read: async () => ({ ...settings, route, enabled: route === 'gateway' }) },
+        } as never, { nativeTools: true, nativeSearch: true })
+        const model = await adapter.resolveModel('agy-google-antigravity', 'gemini-3.8-flash')
+        const window = model.context!.contextWindow
+        const { pressure, threshold, retain } = budget(window, model.defaultMaxTokens!)
+        expect(pressure, `${route} ${modelContextWindow}`).toBeGreaterThan(0)
+        expect(retain, `${route} ${modelContextWindow}`).toBeLessThan(threshold)
+        if (route === 'agy') expect(threshold).toBeLessThanOrEqual(114_688)
+      }
+    }
   })
 
   it('sends requests to the gateway with the effort wire id and never acquires a direct account', async () => {

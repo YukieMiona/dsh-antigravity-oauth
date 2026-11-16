@@ -127,7 +127,7 @@ dsh plugin --profile web remove dsh-antigravity-oauth
 - 使用该路由时，插件每 30 分钟读取一次 `agy` 版本和额度。额度偏低（每周低于 20%、5 小时低于 15%）或 `agy` 自行更新时，在日志中写入警告。API 服务器的 `/health` 以 `agyStatus` 返回最近一次读数。
 - 图片以文件形式发送：插件把每张图片写入该请求专用的文件夹，只允许 `agy` 的文件查看器读取这个文件夹，回答结束后删除。如果 `agy` 没有打开图片，这次回答会被丢弃。
 - 请求会快速失败。Google 拒绝模型调用时（例如 `503 No capacity`），插件在几次尝试后停止；`agy` 自身会静默重试约两分钟。本地 API 服务器返回明确的 HTTP 状态：503 `model_capacity_exhausted` 或 `server_busy`、504 `upstream_timeout`、400 `image_input_not_supported`、502 `image_not_read`。
-- 单个请求约可携带 620 KB，因此该路由下插件向 DSH 报告 128K token 的上下文窗口，DSH 会更早压缩。
+- 单个请求约可携带 620 KB。该路由下插件向 DSH 报告 192K token 的上下文窗口和 16K 的输出预留，DSH 的压缩约在 115K token（约 400 KB）开始，单个请求仍可完整携带。
 - 插件为它启动的 `agy` 进程关闭后台自动更新（`AGY_CLI_DISABLE_AUTO_UPDATE=true`），因此两次请求之间版本不会改变。要更新时，在终端运行 `agy update`。您自己启动的 `agy` 仍会自动更新。版本不在本路由验证过的版本线（1.5.x）内时，“路由”页会给出提示。
 
 被 Google 因违反服务条款停用的账号会标记为 **已被 Google 停用（违反条款）**，之后不再被选用。
