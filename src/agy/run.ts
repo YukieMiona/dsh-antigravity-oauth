@@ -1,8 +1,8 @@
 import { spawn } from 'node:child_process'
 import { randomUUID } from 'node:crypto'
 import { readFileSync } from 'node:fs'
-import { chmod, mkdir, open, readdir, stat, unlink } from 'node:fs/promises'
-import { freemem, tmpdir } from 'node:os'
+import { chmod, mkdir, open, readdir, rm, stat, unlink } from 'node:fs/promises'
+import { freemem, homedir, tmpdir } from 'node:os'
 import { join } from 'node:path'
 
 /**
@@ -75,6 +75,8 @@ export interface AgyRunOptions {
   onActivity?: () => void
   /** Let agy's file viewer read inside `cwd` (image requests). Everything else stays denied. */
   allowWorkspaceRead?: boolean
+  /** Keep the conversation agy saves for this run (by default it is deleted afterwards). */
+  keepConversation?: boolean
   /** Give up with `busy` after waiting this long for another run to finish. */
   queueTimeoutMs?: number
   /**
@@ -99,6 +101,8 @@ export type AgyErrorKind =
   | 'image-unread'
   /** An attached image cannot be sent (type, size, count). */
   | 'image-rejected'
+  /** The input is above agy's own cap for the model ("maxMessageTokens must be positive"). */
+  | 'too-large'
 
 export class AgyError extends Error {
   constructor(message: string, readonly kind: AgyErrorKind) {
@@ -229,6 +233,8 @@ export function agyArgs(options: Pick<AgyRunOptions, 'cwd' | 'model' | 'effort' 
 }
 
 const RETRY_LINE = /Run: attempt (\d+) failed \((.*)\), retrying in/g
+/** agy's message when the input does not fit the model's window (agy 1.5.9). */
+const TOO_LARGE = /maxMessageTokens must be positive|exceeds? (the )?(context|token) (window|limit)/i
 
 function upstreamError(reason: string, model: string): AgyError {
   const capacity = /UNAVAILABLE|code 503|No capacity/i.test(reason)
@@ -273,6 +279,7 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
   let child: ReturnType<typeof spawn> | undefined
   let poll: ReturnType<typeof setInterval> | undefined
   let logFile: string | undefined
+  let conversationId: string | undefined
   const onAbort = (): void => { if (child !== undefined) stopChild(child) }
   try {
     // The signal may have fired while this request waited for its turn.
@@ -290,6 +297,7 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
     // Any model output means a model call succeeded, so an earlier refusal did not end the run.
     let sawModelOutput = false
     let lastRefusal: string | undefined
+    let resultError: string | undefined
     let gaveUp: AgyError | undefined
     const notify = (): void => { wake?.(); wake = undefined }
     const finish = (error?: Error): void => {
@@ -339,6 +347,8 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
         let event: Record<string, any>
         try { event = JSON.parse(line) as Record<string, any> } catch { continue }
         const step = event.step_update
+        const id = step?.conversation_id ?? event.result?.conversation_id
+        if (typeof id === 'string' && id.length > 0) conversationId = id
         if (step?.step_type === 'agent_response' && typeof step.text_delta === 'string' && step.text_delta.length > 0) {
           sawModelOutput = true
           queue.push({ type: 'text', text: step.text_delta })
@@ -355,6 +365,7 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
         }
         if (event.event === 'result' && event.result) {
           const r = event.result
+          if (typeof r.error === 'string' && r.error.length > 0) resultError = r.error
           result = {
             status: String(r.status ?? ''),
             response: typeof r.response === 'string' ? r.response : '',
@@ -380,11 +391,15 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
           queue.push({ type: 'result', result })
           return finish()
         }
+        if (resultError !== undefined && TOO_LARGE.test(resultError)) {
+          return finish(new AgyError(`the request is larger than the Antigravity CLI accepts for ${options.model} (${resultError.slice(0, 200)})`, 'too-large'))
+        }
         // agy gave up by itself after its own retries, before any model call succeeded.
         if (lastRefusal !== undefined && !sawModelOutput) return finish(upstreamError(lastRefusal, options.model))
         const refusal = lastRefusal === undefined ? '' : ` (earlier refusal: ${lastRefusal.slice(0, 200)})`
-        if (result === undefined) return finish(new AgyError(`agy exited with code ${code ?? 'null'} without a result${detail ? `: ${detail}` : ''}${refusal}`, 'failed'))
-        finish(new AgyError(`agy returned ${result.status}${detail ? `: ${detail}` : ''}${refusal}`, 'failed'))
+        const reason = resultError === undefined ? '' : `: ${resultError.slice(0, 300)}`
+        if (result === undefined) return finish(new AgyError(`agy exited with code ${code ?? 'null'} without a result${reason}${detail ? `: ${detail}` : ''}${refusal}`, 'failed'))
+        finish(new AgyError(`agy returned ${result.status}${reason}${detail ? `: ${detail}` : ''}${refusal}`, 'failed'))
       })()
     })
     running.stdin!.on('error', () => { /* the close handler reports the real failure */ })
@@ -405,9 +420,11 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
   } finally {
     clearInterval(poll)
     options.signal?.removeEventListener('abort', onAbort)
+    const forget = conversationId
     const log = logFile
     const cleanUp = (): void => {
       if (log !== undefined) void unlink(log).catch(() => undefined)
+      if (forget !== undefined && options.keepConversation !== true) void forgetConversation(forget)
       release()
     }
     // The slot is free only once the process is gone, so two never overlap on a closed stream.
@@ -422,6 +439,26 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
       cleanUp()
     }
   }
+}
+
+/**
+ * agy saves every run as a conversation (a database, a "brain" folder and a lock file under
+ * ~/.gemini/antigravity-cli). The plugin never resumes one, and they hold the full prompt, so
+ * they only use disk (about 90 MB a day at Nami's volume) and keep chat text around.
+ */
+export function agyAppDataDir(): string {
+  return join(homedir(), '.gemini', 'antigravity-cli')
+}
+
+const CONVERSATION_ID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+
+export async function forgetConversation(id: string, appDataDir = agyAppDataDir()): Promise<void> {
+  if (!CONVERSATION_ID.test(id)) return
+  await Promise.all([
+    ...['.db', '.db-wal', '.db-shm'].map(suffix => rm(join(appDataDir, 'conversations', id + suffix), { force: true })),
+    rm(join(appDataDir, 'presence', `${id}.lock`), { force: true }),
+    rm(join(appDataDir, 'brain', id), { recursive: true, force: true }),
+  ]).catch(() => undefined)
 }
 
 /** Ask agy to stop; kill it if it is still there after a grace period. */

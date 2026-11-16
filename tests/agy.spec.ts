@@ -1,4 +1,4 @@
-import { chmod, mkdtemp, readdir, readFile, rm, writeFile } from 'node:fs/promises'
+import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
@@ -7,11 +7,12 @@ import {
   buildConversation,
   buildTemplateBody,
   clipMiddle,
+  estimateTokens,
   parseAnswer,
   splitConversation,
   ToolCallFilter,
 } from '../src/agy/prompt.ts'
-import { AgyError, agyArgs, agyEnv, agySettings, checkAgy, parseAgyQuota, resetCapacityCooldown, runAgy, setMemoryProbe, streamAgy } from '../src/agy/run.ts'
+import { AgyError, agyArgs, agyEnv, agySettings, checkAgy, forgetConversation, parseAgyQuota, resetCapacityCooldown, runAgy, setMemoryProbe, streamAgy } from '../src/agy/run.ts'
 import { checkAgyWatch, isQuotaLow, resetAgyWatch } from '../src/agy/quota-watch.ts'
 import { agyTurn } from '../src/agy/turn.ts'
 import { ensureTemplate, templateDir, templateName } from '../src/agy/template.ts'
@@ -56,20 +57,36 @@ describe('buildConversation', () => {
 
   it('clips a single oversized latest turn instead of dropping it', () => {
     const text = buildConversation([msg('user', [{ type: 'text', text: 'a'.repeat(5_000) + 'TAIL' }])] as never, 1_000)
-    expect(Buffer.byteLength(text)).toBeLessThan(1_000)
+    expect(estimateTokens(text)).toBeLessThan(1_000)
     expect(text).toContain('bytes omitted')
     expect(text).toContain('TAIL')
   })
 
   it('moves older turns to the template part before omitting anything', () => {
     const turn = (n: number) => msg('user', [{ type: 'text', text: `turn ${n} ` + 'x'.repeat(380) }])
-    const parts = splitConversation([turn(1), turn(2), turn(3), turn(4)] as never, 500, 900)
+    // Each turn is about 123 tokens.
+    const parts = splitConversation([turn(1), turn(2), turn(3), turn(4)] as never, 150, 300)
     expect(parts.recent).toContain('turn 4')
     expect(parts.recent).toContain('Earlier turns of this conversation are in your instructions')
     expect(parts.earlier).toContain('turn 3')
     expect(parts.earlier).toContain('turn 2')
     expect(parts.earlier.startsWith('[1 oldest turn(s) omitted')).toBe(true)
     expect(parts.earlier).not.toContain('turn 1 ')
+  })
+
+  it('estimates tokens conservatively for English, code and Chinese', () => {
+    // Measured on agy: 3.9 bytes per token for English, 3.45 for code, about 1 token per Chinese character.
+    expect(estimateTokens('a'.repeat(3_900))).toBeGreaterThanOrEqual(1_000)
+    expect(estimateTokens('const x = 1;\n'.repeat(300))).toBeGreaterThanOrEqual(Math.ceil(13 * 300 / 3.45))
+    expect(estimateTokens('的'.repeat(1_000))).toBeGreaterThanOrEqual(1_000)
+    expect(estimateTokens('😀')).toBe(2)
+  })
+
+  it("gives the recent part's unused tokens to the earlier part", () => {
+    const turn = (n: number) => msg('user', [{ type: 'text', text: `turn ${n} ` + 'x'.repeat(380) }])
+    const parts = splitConversation([turn(1), turn(2), turn(3)] as never, 150, used => 400 - used)
+    expect(parts.earlier).toContain('turn 2')
+    expect(parts.earlier).toContain('turn 1')
   })
 
   it('clipMiddle keeps head and tail', () => {
@@ -262,7 +279,11 @@ process.stdin.on('end', () => {
     setMemoryProbe(() => 2 * 1024 ** 3)
     expect((await both()).slice(0, 2).sort()).toEqual(['start a', 'start b'])
     setMemoryProbe(() => 100 * 1024 ** 2)
-    expect(await both()).toEqual(['start a', 'end a', 'start b', 'end b'])
+    // One at a time: whichever started first ends before the other starts.
+    const serial = await both()
+    const first = serial[0]!.slice(-1)
+    const second = first === 'a' ? 'b' : 'a'
+    expect(serial).toEqual([`start ${first}`, `end ${first}`, `start ${second}`, `end ${second}`])
   })
 
   it('holds a model back for a short time after Google had no capacity for it', async () => {
@@ -413,6 +434,70 @@ setInterval(() => {}, 1000)`, 'agy-stubborn')
     // The next run waited for the kill after the grace period, so the two never overlapped.
     expect(Date.now() - started).toBeGreaterThan(4_000)
   }, 20_000)
+
+  it('sends fewer earlier turns when agy refuses the input as too large, and gives up after the last try', async () => {
+    const sized = (limit: number) => `
+const fs = require('node:fs')
+process.stdin.resume()
+process.stdin.on('end', () => {
+  const agent = process.argv[process.argv.indexOf('--agent') + 1]
+  const size = fs.statSync(process.cwd() + '/.agents/agents/' + agent + '.md').size
+  fs.appendFileSync(${JSON.stringify(join(dir, 'sizes.txt'))}, size + '\\n')
+  if (size > ${limit}) {
+    console.log(JSON.stringify({ event: 'result', result: { status: 'ERROR', response: '', error: 'agent executor error: generating and executing: serializing trajectory: maxMessageTokens must be positive, got 0' } }))
+    process.exit(1)
+  }
+  console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'fits' } }))
+})`
+    const turns = Array.from({ length: 60 }, (_, n) => msg(n % 2 === 0 ? 'user' : 'assistant', [{ type: 'text', text: `turn ${n} ` + 'x'.repeat(10_000) }]))
+    const run = async (binary: string) => {
+      const events = []
+      for await (const e of agyTurn({ binary, workspace: join(dir, 'ws'), model: 'm', request: { messages: turns } as never })) events.push(e)
+      return events
+    }
+    const fits = await fakeAgy(sized(300_000), 'agy-sized')
+    expect((await run(fits)).at(-1)).toMatchObject({ type: 'done', text: 'fits' })
+    const sizes = (await readFile(join(dir, 'sizes.txt'), 'utf8')).trim().split('\n').map(Number)
+    expect(sizes.length).toBeGreaterThan(1)
+    expect(sizes.at(-1)!).toBeLessThan(sizes[0]!)
+    const never = await fakeAgy(sized(1_000), 'agy-never')
+    await expect(run(never)).rejects.toMatchObject({ kind: 'too-large' })
+  })
+
+  it("deletes the conversation agy saved for a run, unless asked to keep it", async () => {
+    const id = '0a1b2c3d-1111-2222-3333-444455556666'
+    const app = join(dir, 'home', '.gemini', 'antigravity-cli')
+    const make = async () => {
+      await mkdir(join(app, 'conversations'), { recursive: true })
+      await mkdir(join(app, 'presence'), { recursive: true })
+      await mkdir(join(app, 'brain', id), { recursive: true })
+      await writeFile(join(app, 'conversations', `${id}.db`), 'db')
+      await writeFile(join(app, 'presence', `${id}.lock`), '')
+      await writeFile(join(app, 'brain', id, 'note.md'), 'x')
+    }
+    const exists = (path: string) => stat(path).then(() => true, () => false)
+    await make()
+    await forgetConversation('../not-an-id', app)
+    expect(await exists(join(app, 'conversations', `${id}.db`))).toBe(true)
+    await forgetConversation(id, app)
+    expect(await exists(join(app, 'conversations', `${id}.db`))).toBe(false)
+    expect(await exists(join(app, 'brain', id))).toBe(false)
+    expect(await exists(join(app, 'presence', `${id}.lock`))).toBe(false)
+
+    const binary = await fakeAgy(`process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({ event: 'result', result: { conversation_id: '${id}', status: 'SUCCESS', response: 'ok' } })))`, 'agy-conv')
+    const home = process.env.HOME
+    process.env.HOME = join(dir, 'home')
+    try {
+      await make()
+      await runAgy({ binary, cwd: join(dir, 'ws'), model: 'm', prompt: 'x', keepConversation: true })
+      expect(await exists(join(app, 'conversations', `${id}.db`))).toBe(true)
+      await runAgy({ binary, cwd: join(dir, 'ws'), model: 'm', prompt: 'x' })
+      await new Promise(resolve => setTimeout(resolve, 100))
+      expect(await exists(join(app, 'conversations', `${id}.db`))).toBe(false)
+    } finally {
+      process.env.HOME = home
+    }
+  })
 
   it('checkAgy adds the version and the Gemini quota when the CLI reports them', async () => {
     const usage = { event: 'command_result', command: { name: 'usage', data: { groups: [

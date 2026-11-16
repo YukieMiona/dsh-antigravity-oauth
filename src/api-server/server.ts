@@ -144,6 +144,7 @@ export function httpFailureOf(error: unknown, timedOut = false): HttpFailure {
       case 'not-signed-in': return { status: 503, message, type: 'server_error', code: 'agy_unavailable' }
       case 'image-rejected': return { status: 400, message, type: 'invalid_request_error', code: 'image_input_not_supported' }
       case 'image-unread': return { status: 502, message, type: 'upstream_error', code: 'image_not_read' }
+      case 'too-large': return { status: 400, message, type: 'invalid_request_error', code: 'context_length_exceeded' }
       case 'upstream':
         return /\b429\b|RESOURCE_EXHAUSTED|quota/i.test(message)
           ? { status: 429, message, type: 'rate_limit_error', code: 'rate_limit_exceeded' }

@@ -4,12 +4,14 @@ import { dirname, join } from 'node:path'
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
 import { AGY_WORKSPACE_DIRNAME } from '../ids.ts'
 import {
+  AGY_MAX_INPUT_TOKENS,
+  AGY_OVERHEAD_TOKENS,
   buildTemplateBody,
-  CONVERSATION_BUDGET_BYTES,
+  estimateTokens,
   imageName,
+  MESSAGE_BUDGET_TOKENS,
   parseAnswer,
   splitConversation,
-  TEMPLATE_BUDGET_BYTES,
   ToolCallFilter,
   type ImageBlock,
 } from './prompt.ts'
@@ -41,18 +43,14 @@ export interface AgyTurnOptions {
 }
 
 /**
- * Budget DSH plans with on this route. One request carries about 620 KB (100 KB in the user
- * message plus a 520 KB template, less the system prompt and tools), so DSH has to compact
- * well before the model's own limit.
- *
- * DSH's basic compaction compacts at min(0.8 × window, window − output reserve − headroom), and
- * its headroom defaults to 65,536 tokens. A 128K window with the model's 64K output reserve left
- * nothing ("leaving no pressure budget"), so a model switch failed. agy takes no output limit,
- * so the reserve is only a planning number here: 192K − 16K − 64K compacts at 114,688 tokens,
- * about 400 KB, which one request still carries whole.
+ * Window DSH plans with on this route: agy's own input cap for gemini-3.8-flash, about 195K
+ * tokens (see AGY_MAX_INPUT_TOKENS in prompt.ts). agy takes no output limit, so the output
+ * reserve is only a planning number. DSH's basic compaction then starts at
+ * min(0.8 × window, window − reserve − headroom); with its default 64K headroom that is about
+ * 123K tokens. Older turns beyond what one request carries are dropped from the oldest end.
  */
 export const AGY_CONTEXT_WINDOW_TOKENS = 196_608
-export const AGY_RESERVED_OUTPUT_TOKENS = 16_384
+export const AGY_RESERVED_OUTPUT_TOKENS = 8_192
 
 export const AGY_MAX_IMAGES = 8
 export const AGY_MAX_IMAGE_BYTES = 12 * 1024 * 1024
@@ -137,6 +135,9 @@ async function stageInto(staged: StagedImages, options: AgyTurnOptions): Promise
   }
 }
 
+/** Share of the earlier-turn budget for each attempt after agy refused an input as too large. */
+const TOO_LARGE_SHARES = [1, 0.6, 0.25] as const
+
 /**
  * One model turn through the official CLI, shared by the DSH adapter and the local API server:
  * visible text as it streams, then one `done` event with the validated tool calls and usage.
@@ -148,20 +149,8 @@ export async function* agyTurn(options: AgyTurnOptions): AsyncGenerator<AgyTurnE
     const withImages = images.dir !== undefined
     const cwd = images.dir ?? options.workspace
     const { body, tools } = buildTemplateBody(options.request, withImages)
-    const conversation = splitConversation(
-      options.request.messages,
-      CONVERSATION_BUDGET_BYTES,
-      Math.max(0, TEMPLATE_BUDGET_BYTES - Buffer.byteLength(body)),
-      block => images.text.get(block) ?? `[Image: ${imageName(block)} (not attached)]`,
-    )
-    const agent = await ensureTemplate(cwd, conversation.earlier.length === 0
-      ? body
-      : `${body}\n\n# Earlier conversation (oldest first)\n\n${conversation.earlier}\n\n(End of the earlier conversation. The latest turns arrive in the user message.)`, withImages)
-    const filter = new ToolCallFilter()
-    let streamed = ''
-    let held = ''
-    let result: AgyResult | undefined
-    for await (const event of streamAgy({
+    const bodyTokens = estimateTokens(body)
+    const runOnce = (agent: string, recent: string) => streamAgy({
       binary: options.binary,
       cwd,
       model: options.model,
@@ -169,21 +158,48 @@ export async function* agyTurn(options: AgyTurnOptions): AsyncGenerator<AgyTurnE
       agent,
       // The files to open are named again at the end, where the model reads last.
       prompt: images.fresh.length === 0
-        ? conversation.recent
-        : `${conversation.recent}\n\n[Open these image files with view_file before you answer: ${images.fresh.join(', ')}]`,
+        ? recent
+        : `${recent}\n\n[Open these image files with view_file before you answer: ${images.fresh.join(', ')}]`,
       allowWorkspaceRead: withImages,
       ...options.signal === undefined ? {} : { signal: options.signal },
       ...options.onActivity === undefined ? {} : { onActivity: options.onActivity },
       ...options.queueTimeoutMs === undefined ? {} : { queueTimeoutMs: options.queueTimeoutMs },
       ...options.maxUpstreamAttempts === undefined ? {} : { maxUpstreamAttempts: options.maxUpstreamAttempts },
-    })) {
-      if (event.type === 'result') { result = event.result; break }
-      const visible = filter.feed(event.text)
-      if (visible.length === 0) continue
-      // An answer about an image is held until agy confirms that it opened the image.
-      if (images.fresh.length > 0) { held += visible; continue }
-      streamed += visible
-      yield { type: 'text', text: visible }
+    })
+    const filter = new ToolCallFilter()
+    let streamed = ''
+    let held = ''
+    let result: AgyResult | undefined
+    // agy refuses an input above its cap before the model runs. The estimate is conservative,
+    // but if agy still refuses, older turns are dropped and the request is sent again.
+    for (let attempt = 0; ; attempt++) {
+      const share = TOO_LARGE_SHARES[attempt]!
+      const conversation = splitConversation(
+        options.request.messages,
+        MESSAGE_BUDGET_TOKENS,
+        recentTokens => Math.max(0, Math.floor((AGY_MAX_INPUT_TOKENS - AGY_OVERHEAD_TOKENS - bodyTokens - recentTokens) * share)),
+        block => images.text.get(block) ?? `[Image: ${imageName(block)} (not attached)]`,
+      )
+      const agent = await ensureTemplate(cwd, conversation.earlier.length === 0
+        ? body
+        : `${body}\n\n# Earlier conversation (oldest first)\n\n${conversation.earlier}\n\n(End of the earlier conversation. The latest turns arrive in the user message.)`, withImages)
+      try {
+        for await (const event of runOnce(agent, conversation.recent)) {
+          if (event.type === 'result') { result = event.result; break }
+          const visible = filter.feed(event.text)
+          if (visible.length === 0) continue
+          // An answer about an image is held until agy confirms that it opened the image.
+          if (images.fresh.length > 0) { held += visible; continue }
+          streamed += visible
+          yield { type: 'text', text: visible }
+        }
+        break
+      } catch (error) {
+        const retry = error instanceof AgyError && error.kind === 'too-large'
+          && attempt + 1 < TOO_LARGE_SHARES.length && streamed.length === 0 && held.length === 0
+        if (!retry) throw error
+        console.warn(`[dsh-antigravity-oauth] agy: input over the CLI's cap; retrying with ${Math.round(TOO_LARGE_SHARES[attempt + 1]! * 100)}% of the earlier-turn budget`)
+      }
     }
     const opened = new Set(result?.filesRead ?? [])
     const unread = images.fresh.filter(file => !opened.has(file))
