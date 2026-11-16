@@ -279,7 +279,11 @@ process.stdin.on('end', () => {
     setMemoryProbe(() => 2 * 1024 ** 3)
     expect((await both()).slice(0, 2).sort()).toEqual(['start a', 'start b'])
     setMemoryProbe(() => 100 * 1024 ** 2)
-    expect(await both()).toEqual(['start a', 'end a', 'start b', 'end b'])
+    // One at a time: whichever started first ends before the other starts.
+    const serial = await both()
+    const first = serial[0]!.slice(-1)
+    const second = first === 'a' ? 'b' : 'a'
+    expect(serial).toEqual([`start ${first}`, `end ${first}`, `start ${second}`, `end ${second}`])
   })
 
   it('holds a model back for a short time after Google had no capacity for it', async () => {
