@@ -56,7 +56,7 @@ import { streamBridge, toBridgeMessages, toBridgeTools, type BridgeRequest } fro
 import type { ManagerSettings } from './manager/store.ts'
 import { usageOf } from './agy/prompt.ts'
 import { AgyError } from './agy/run.ts'
-import { AGY_CONTEXT_WINDOW_TOKENS, agyTurn, agyWorkspace } from './agy/turn.ts'
+import { AGY_CONTEXT_WINDOW_TOKENS, AGY_RESERVED_OUTPUT_TOKENS, agyTurn, agyWorkspace } from './agy/turn.ts'
 import { randomUUID } from 'node:crypto'
 import type {
   AntigravityLease,
@@ -550,9 +550,16 @@ export class AntigravityAdapter extends LlmAdapter {
       : undefined
     // The Official CLI carries about 620 KB per request, so DSH must compact before that.
     const routeSettings = await this.session.manager?.read().catch(() => undefined)
-    if (routeSettings?.route === 'agy' && effectiveContext !== undefined) {
+    const viaAgy = routeSettings?.route === 'agy'
+    if (viaAgy && effectiveContext !== undefined) {
       effectiveContext = Math.min(effectiveContext, AGY_CONTEXT_WINDOW_TOKENS)
     }
+    // DSH compacts at window − output reserve − headroom (64K by default). A small window (the
+    // 128K choice on the Advanced tab, or this route) with the full 64K reserve leaves nothing,
+    // and every model switch fails; keep the reserve to a quarter of the window at most.
+    const reservedOutput = spec === undefined || effectiveContext === undefined
+      ? undefined
+      : Math.max(1, Math.min(spec.maxTokens, viaAgy ? AGY_RESERVED_OUTPUT_TOKENS : Math.floor(effectiveContext / 4)))
     // Omit toolUpdate. On 0.2.0-rc.2, as on 0.1.7-rc.2, that means every request
     // still carries the complete current tool list, which this adapter forwards as declarations.
     return {
@@ -562,7 +569,7 @@ export class AntigravityAdapter extends LlmAdapter {
       inputModalities: [...inputModalities],
       ...spec === undefined || effectiveContext === undefined ? {} : {
         context: { contextWindow: effectiveContext },
-        defaultMaxTokens: spec.maxTokens,
+        defaultMaxTokens: reservedOutput ?? spec.maxTokens,
       },
       reasoning: {
         efforts: REASONING_EFFORTS.map(id => ({

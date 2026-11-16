@@ -4,6 +4,7 @@ This file records completed features, fixes, and process milestones in `YukieMio
 
 ## Unreleased
 
+- Official CLI: switching a chat to this route no longer fails with "leaving no pressure budget". The route reports a 192K-token window with a 16K output reserve (DSH compacts at about 115K tokens); on other routes the output reserve is at most a quarter of the window, so the 128K choice on the Advanced tab works too.
 - Official CLI: the plugin turns off `agy`'s background self-update for the processes it starts (`AGY_CLI_DISABLE_AUTO_UPDATE=true`, built into `agy` 1.5.9). The version no longer changes between two requests, and no updater process starts every 15 minutes. Run `agy update` to update.
 - Official CLI: a second `agy` process may run beside the first while the host has at least 700 MB available; a model that Google refused for capacity is held back for 45 seconds; the plugin reads the `agy` quota and version every 30 minutes while the route is in use and logs a low quota or a self-update.
 - API server: optional limits for chat requests per hour and per day (HTTP 429 with `Retry-After`), request counters on the API Server tab, `Retry-After` on 503 answers, and the last `agy` reading in `/health`.

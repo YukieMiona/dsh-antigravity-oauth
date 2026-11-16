@@ -41,10 +41,18 @@ export interface AgyTurnOptions {
 }
 
 /**
- * Context window DSH should plan for on this route. One request carries about 620 KB (100 KB in
- * the user message plus a 520 KB template), so DSH has to compact before the model's own limit.
+ * Budget DSH plans with on this route. One request carries about 620 KB (100 KB in the user
+ * message plus a 520 KB template, less the system prompt and tools), so DSH has to compact
+ * well before the model's own limit.
+ *
+ * DSH's basic compaction compacts at min(0.8 × window, window − output reserve − headroom), and
+ * its headroom defaults to 65,536 tokens. A 128K window with the model's 64K output reserve left
+ * nothing ("leaving no pressure budget"), so a model switch failed. agy takes no output limit,
+ * so the reserve is only a planning number here: 192K − 16K − 64K compacts at 114,688 tokens,
+ * about 400 KB, which one request still carries whole.
  */
-export const AGY_CONTEXT_WINDOW_TOKENS = 131_072
+export const AGY_CONTEXT_WINDOW_TOKENS = 196_608
+export const AGY_RESERVED_OUTPUT_TOKENS = 16_384
 
 export const AGY_MAX_IMAGES = 8
 export const AGY_MAX_IMAGE_BYTES = 12 * 1024 * 1024

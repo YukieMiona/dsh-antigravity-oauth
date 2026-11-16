@@ -127,7 +127,7 @@ Official CLI route:
 - While the route is in use, the plugin reads the `agy` version and quota every 30 minutes. It writes a warning to the log when the quota is low (weekly below 20 %, 5-hour below 15 %) or when `agy` updated itself. The API server's `/health` shows the last reading as `agyStatus`.
 - Images are sent as files: the plugin writes each one to a folder of that request, lets `agy`'s file viewer read that folder only, and deletes the folder after the answer. An answer is discarded if `agy` did not open the image.
 - A request fails fast. When Google refuses the model call (for example `503 No capacity`), the plugin stops after a few attempts; `agy` alone would retry in silence for about two minutes. The local API server answers with an HTTP status: 503 `model_capacity_exhausted` or `server_busy`, 504 `upstream_timeout`, 400 `image_input_not_supported`, 502 `image_not_read`.
-- A request carries about 620 KB, so the plugin reports a 128K-token context window on this route and DSH compacts earlier.
+- A request carries about 620 KB. On this route the plugin reports a 192K-token context window with a 16K output reserve, so DSH's compaction starts at about 115K tokens (about 400 KB), which one request still carries whole.
 - The plugin stops `agy`'s background self-update for the `agy` processes that it starts (`AGY_CLI_DISABLE_AUTO_UPDATE=true`), so the version does not change between two requests. To update, run `agy update` in a terminal. An `agy` that you start yourself still updates itself. The Route tab warns when the version is outside the release line this route was tested with (1.5.x).
 
 An account that Google disables for a Terms of Service violation is marked **Disabled by Google (ToS)** and is never selected again.
