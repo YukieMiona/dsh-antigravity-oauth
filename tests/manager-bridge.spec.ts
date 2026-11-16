@@ -231,7 +231,8 @@ describe('AntigravityAdapter bridge routing', () => {
         const { pressure, threshold, retain } = budget(window, model.defaultMaxTokens!)
         expect(pressure, `${route} ${modelContextWindow}`).toBeGreaterThan(0)
         expect(retain, `${route} ${modelContextWindow}`).toBeLessThan(threshold)
-        if (route === 'agy') expect(threshold).toBeLessThanOrEqual(114_688)
+        // Within what one agy request carries (about 185K tokens of conversation).
+        if (route === 'agy') expect(threshold).toBeLessThanOrEqual(122_880)
       }
     }
   })

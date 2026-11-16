@@ -1,4 +1,5 @@
 import {
+  CONTEXT_WINDOW_EXCEEDED_CODE,
   IMAGE_OFFLOAD_REQUIRED_CODE,
   LlmAdapter,
   LlmError,
@@ -794,6 +795,8 @@ export class AntigravityAdapter extends LlmAdapter {
       const code = kind === 'not-installed' || kind === 'not-signed-in'
         ? 'MISSING_CREDENTIAL'
         : kind === 'capacity' || kind === 'busy' ? 'RATE_LIMIT'
+        // DSH's compaction recovers from this code by compacting and sending again.
+        : kind === 'too-large' ? CONTEXT_WINDOW_EXCEEDED_CODE
         : isAccountBannedError(message) ? 'AUTH' : /\b429\b|RESOURCE_EXHAUSTED|quota/i.test(message) ? 'RATE_LIMIT' : 'UNKNOWN'
       throw new LlmError(`Antigravity CLI: ${message}`, code, { cause: error })
     } finally {

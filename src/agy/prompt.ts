@@ -11,14 +11,48 @@ import type { AgyUsage } from './run.ts'
 
 type Tool = NonNullable<GenerateOptions['tools']>[number]
 
-/** agy truncates a long user message (verified: 140 KB intact, 200 KB cut), so stay well below. */
-export const CONVERSATION_BUDGET_BYTES = 100_000
-/** A template body is read whole up to at least 600 KB (1 MB fails), so older turns go there. */
-export const TEMPLATE_BUDGET_BYTES = 520_000
+/**
+ * Size limits of one agy run with gemini-3.8-flash, measured on agy 1.5.9 (2026-11-16):
+ * - The whole input is capped at about 195K tokens: 193,111 tokens ran, about 197,000 failed with
+ *   "serializing trajectory: maxMessageTokens must be positive". Every effort level has the same
+ *   cap, and the `contextWindow` setting does not change it.
+ * - The user message alone is cut at about 54K tokens, keeping its start (300 KB of prose arrived
+ *   as 53,767 tokens); the agent template is read whole up to the overall cap.
+ * The limits are in tokens, not bytes: English prose is about 3.9 bytes per token, code 3.45, and
+ * Chinese about one token per character (3 bytes), so a byte budget overflows on dense text.
+ */
+export const AGY_MAX_INPUT_TOKENS = 185_000
+/** Budget of the user message (the newest turns); agy cuts it at about 54K tokens. */
+export const MESSAGE_BUDGET_TOKENS = 36_000
+/** Tokens agy adds around our text, plus the note that lists image files. */
+export const AGY_OVERHEAD_TOKENS = 2_000
 /** One tool result may not crowd out the rest of the conversation. */
 export const TOOL_RESULT_BUDGET_BYTES = 24_000
 
 const OPEN_TAG = '<tool_call'
+
+/**
+ * Conservative token estimate for Gemini: ASCII at 3.3 characters per token (measured 3.45 to
+ * 3.9) and one token per other character (measured for Chinese). It overestimates a little, so a
+ * budget built on it stays under agy's cap.
+ */
+export function estimateTokens(text: string): number {
+  let ascii = 0
+  let other = 0
+  for (let i = 0; i < text.length; i++) {
+    const code = text.charCodeAt(i)
+    if (code < 0x80) ascii += 1
+    else if (code < 0xdc00 || code > 0xdfff) other += 1 // count a surrogate pair once
+  }
+  return Math.ceil(ascii / 3.3 + other * 1.05)
+}
+
+/** Clip to about `maxTokens`, keeping head and tail. */
+export function clipToTokens(text: string, maxTokens: number): string {
+  if (estimateTokens(text) <= maxTokens) return text
+  // At most 3 bytes per token for any text this estimator sees, so this byte limit fits.
+  return clipMiddle(text, Math.max(0, maxTokens) * 3)
+}
 
 export type ImageBlock = Extract<ContentBlock, { type: 'image' }>
 /** Text that stands for an image in the conversation: a staged file path, or a placeholder. */
@@ -117,15 +151,15 @@ export interface ConversationParts {
 }
 
 /**
- * Split the conversation by size, newest first: the latest turns go into the user message, older
- * ones into the agent template (which agy reads whole), and only what fits neither is left out,
- * with a note saying how many turns that was. The latest turn is always kept, clipped if it alone
- * is too big.
+ * Split the conversation by size in tokens, newest first: the latest turns go into the user
+ * message, older ones into the agent template (which agy reads whole), and only what fits neither
+ * is left out, with a note saying how many turns that was. The latest turn is always kept, clipped
+ * if it alone is too big. `earlierBudget` may depend on the tokens the recent part used.
  */
 export function splitConversation(
   messages: GenerateOptions['messages'],
-  recentBudget = CONVERSATION_BUDGET_BYTES,
-  earlierBudget = 0,
+  recentBudget = MESSAGE_BUDGET_TOKENS,
+  earlierBudget: number | ((recentTokens: number) => number) = 0,
   imageText?: ImageText,
 ): ConversationParts {
   const rendered = messages.map(message => renderMessage(message, imageText)).filter((m): m is string => m !== undefined)
@@ -135,9 +169,9 @@ export function splitConversation(
   let i = rendered.length - 1
   for (; i >= 0; i--) {
     const piece = rendered[i]!
-    const size = Buffer.byteLength(piece) + 2
+    const size = estimateTokens(piece) + 1
     if (recent.length === 0 && size > recentBudget) {
-      recent.unshift(clipMiddle(piece, recentBudget - 200))
+      recent.unshift(clipToTokens(piece, recentBudget - 100))
       used = recentBudget
       continue
     }
@@ -145,11 +179,12 @@ export function splitConversation(
     recent.unshift(piece)
     used += size
   }
+  const earlierLimit = typeof earlierBudget === 'function' ? earlierBudget(used) : earlierBudget
   let usedEarlier = 0
   for (; i >= 0; i--) {
     const piece = rendered[i]!
-    const size = Buffer.byteLength(piece) + 2
-    if (usedEarlier + size > earlierBudget) break
+    const size = estimateTokens(piece) + 1
+    if (usedEarlier + size > earlierLimit) break
     earlier.unshift(piece)
     usedEarlier += size
   }
@@ -166,8 +201,8 @@ export function splitConversation(
 }
 
 /** The conversation as one user message, without template overflow. */
-export function buildConversation(messages: GenerateOptions['messages'], budgetBytes = CONVERSATION_BUDGET_BYTES): string {
-  return splitConversation(messages, budgetBytes, 0).recent
+export function buildConversation(messages: GenerateOptions['messages'], budgetTokens = MESSAGE_BUDGET_TOKENS): string {
+  return splitConversation(messages, budgetTokens, 0).recent
 }
 
 /**
