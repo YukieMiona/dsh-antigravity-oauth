@@ -77,9 +77,20 @@ export async function syncAuthenticatedRoute(
 ): Promise<void> {
   try {
     // With the gateway or agy route, the accounts live elsewhere, so the route needs no direct sign-in.
-    const settings = await session.manager?.read()
+    const settings = await session.manager?.read().catch(() => undefined)
     const bridged = settings !== undefined && (settings.route ?? (settings.enabled ? 'gateway' : 'direct')) !== 'direct'
-    registration.replace(bridged || await session.hasReadyAccount() ? [HARNESS_ROUTE] : [])
+    let ready = bridged
+    if (!bridged) {
+      try {
+        ready = await session.hasReadyAccount()
+      } catch (error) {
+        if (isDisposedRegistration(error)) throw error
+        // A credential file this version cannot read must not stop DSH: log it and leave the
+        // Direct route unregistered until the file is fixed.
+        console.error(`[dsh-antigravity-oauth] cannot read the account file, so the Direct route is off: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+    registration.replace(ready ? [HARNESS_ROUTE] : [])
     if (web2apiRegistration) {
       const webSettings = await session.web2api.read()
       web2apiRegistration.replace(webSettings.enabled ? [WEB2API_ROUTE] : [])
@@ -88,7 +99,8 @@ export async function syncAuthenticatedRoute(
     // A short command such as `dsh web --help` disposes the fiber before this
     // async refresh runs. Replacing routes after that is not a load failure.
     if (isDisposedRegistration(error)) return
-    throw error
+    // Nothing here may end the DSH process: this runs unawaited at load time.
+    console.error(`[dsh-antigravity-oauth] route refresh failed: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 

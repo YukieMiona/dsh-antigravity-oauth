@@ -97,11 +97,18 @@ export function parseAntigravityOAuth(raw: unknown, filename: string): Antigravi
   }
 }
 
+/**
+ * Fields this version does not know (written by a newer or older plugin version) are kept as they
+ * are and written back. Rejecting them made a downgraded plugin stop DSH at every start
+ * ("account contains an unknown field", 2026-11-17).
+ */
+function unknownFields(raw: Record<string, unknown>, known: ReadonlySet<string>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(raw).filter(([key]) => !known.has(key)))
+}
+
 function parseAccount(raw: unknown, filename: string): StoredAccount {
   if (!isRecord(raw)) throw new Error(`dsh-antigravity-oauth: ${filename} account must be an object`)
-  if (Object.keys(raw).some(key => !ACCOUNT_FIELDS.has(key))) {
-    throw new Error(`dsh-antigravity-oauth: ${filename} account contains an unknown field`)
-  }
+  const extra = unknownFields(raw, ACCOUNT_FIELDS)
   const grant = parseAntigravityOAuth({
     type: raw.type,
     access: raw.access,
@@ -126,6 +133,7 @@ function parseAccount(raw: unknown, filename: string): StoredAccount {
     throw new Error(`dsh-antigravity-oauth: ${filename} account disabled must be a boolean`)
   }
   return {
+    ...extra,
     ...grant,
     id: raw.id,
     ...typeof raw.addedAt === 'string' ? { addedAt: raw.addedAt } : {},
@@ -164,9 +172,7 @@ function parseDocument(text: string, filename: string): ParsedDocument {
   if (value.version !== AUTH_FORMAT_VERSION) {
     throw new Error(`dsh-antigravity-oauth: ${filename} has unsupported auth format version ${String(value.version)}`)
   }
-  if (Object.keys(value).some(key => key !== 'version' && key !== 'activeId' && key !== 'accounts' && key !== 'advanced')) {
-    throw new Error(`dsh-antigravity-oauth: ${filename} contains an unknown top-level field`)
-  }
+  // Unknown top-level fields (from another plugin version) are ignored rather than fatal.
   if (!Array.isArray(value.accounts)) {
     throw new Error(`dsh-antigravity-oauth: ${filename} accounts must be an array`)
   }
