@@ -222,8 +222,23 @@ setInterval(() => { n += 1; fs.appendFileSync(log, 'E1115 run.go:316] Run: attem
     await expect(runAgy({ binary: noCapacity, cwd: join(dir, 'ws'), model: 'gemini-3.8-flash', prompt: 'x', maxUpstreamAttempts: 3 }))
       .rejects.toMatchObject({ kind: 'capacity', message: expect.stringContaining('no capacity for gemini-3.8-flash') })
     expect(Date.now() - started).toBeLessThan(5_000)
-    const limited = await fakeAgy(RETRYING.replace('REASON', 'RESOURCE_EXHAUSTED (code 429): quota'))
-    await expect(runAgy({ binary: limited, cwd: join(dir, 'ws'), model: 'm', prompt: 'x', maxUpstreamAttempts: 2 })).rejects.toMatchObject({ kind: 'upstream' })
+    const refused = await fakeAgy(RETRYING.replace('REASON', 'PERMISSION_DENIED (code 403): denied'), 'agy-refused')
+    await expect(runAgy({ binary: refused, cwd: join(dir, 'ws'), model: 'm', prompt: 'x', maxUpstreamAttempts: 2 })).rejects.toMatchObject({ kind: 'upstream' })
+  })
+
+  it('stops at the first 429 and sends nothing to Google for a while after it', async () => {
+    const limited = await fakeAgy(RETRYING.replace('REASON', 'RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. check quota).'), 'agy-429')
+    const started = Date.now()
+    // agy alone would retry eight times; the plugin stops at the first 429 even with a higher limit.
+    await expect(runAgy({ binary: limited, cwd: join(dir, 'ws'), model: 'm', prompt: 'x', maxUpstreamAttempts: 5 })).rejects.toMatchObject({ kind: 'rate-limited' })
+    expect(Date.now() - started).toBeLessThan(4_000)
+    const spawned = join(dir, 'spawned-429')
+    const ok = await fakeAgy(`require('node:fs').writeFileSync(${JSON.stringify(spawned)}, 'yes'); process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'ok' } })))`, 'agy-after-429')
+    // Every model is held back, not only the one that got the 429.
+    await expect(runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'other', prompt: 'x' })).rejects.toMatchObject({ kind: 'rate-limited', message: expect.stringContaining('resume in') })
+    await expect(readFile(spawned, 'utf8')).rejects.toThrow()
+    resetCapacityCooldown()
+    await expect(runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'other', prompt: 'x' })).resolves.toMatchObject({ response: 'ok' })
   })
 
   it('reports the refusal from the log when agy itself gives up', async () => {

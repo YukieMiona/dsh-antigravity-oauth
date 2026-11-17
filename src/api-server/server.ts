@@ -4,7 +4,7 @@ import { isPublicModelId, isReasoningEffort, publicModel, routeChatModel, thinki
 import { isAccountBannedError } from '../ban.ts'
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
 import { lastAgyReading } from '../agy/quota-watch.ts'
-import { AgyError, CAPACITY_COOLDOWN_MS } from '../agy/run.ts'
+import { AgyError, CAPACITY_COOLDOWN_MS, rateLimitRetryAfter } from '../agy/run.ts'
 import { agyTurn, agyWorkspace, type AgyImage } from '../agy/turn.ts'
 import { chatCompletionsUrl, type ManagerSettings } from '../manager/store.ts'
 import type { AntigravitySession } from '../session.ts'
@@ -144,6 +144,7 @@ export function httpFailureOf(error: unknown, timedOut = false): HttpFailure {
       case 'not-signed-in': return { status: 503, message, type: 'server_error', code: 'agy_unavailable' }
       case 'image-rejected': return { status: 400, message, type: 'invalid_request_error', code: 'image_input_not_supported' }
       case 'image-unread': return { status: 502, message, type: 'upstream_error', code: 'image_not_read' }
+      case 'rate-limited': return { status: 429, message, type: 'rate_limit_error', code: 'rate_limit_exceeded', retryAfter: Math.max(1, rateLimitRetryAfter()) }
       case 'too-large': return { status: 400, message, type: 'invalid_request_error', code: 'context_length_exceeded' }
       case 'upstream':
         return /\b429\b|RESOURCE_EXHAUSTED|quota/i.test(message)

@@ -103,6 +103,8 @@ export type AgyErrorKind =
   | 'image-rejected'
   /** The input is above agy's own cap for the model ("maxMessageTokens must be positive"). */
   | 'too-large'
+  /** Google answered 429 RESOURCE_EXHAUSTED; the account is held back for a while. */
+  | 'rate-limited'
 
 export class AgyError extends Error {
   constructor(message: string, readonly kind: AgyErrorKind) {
@@ -201,9 +203,23 @@ export function capacityRetryAfter(options: Pick<AgyRunOptions, 'model' | 'effor
   return until > now ? Math.ceil((until - now) / 1000) : 0
 }
 
-/** For tests: forget every capacity refusal. */
+/**
+ * After a 429, no request goes to Google for this long, for any model. A 429 with quota left is
+ * how Google answers traffic it is limiting; agy's own retries (eight in about two minutes)
+ * would only send more of it, so the run stops at the first 429 and the account rests.
+ */
+export const RATE_LIMIT_HOLD_MS = 5 * 60_000
+let rateLimitedUntil = 0
+
+/** Seconds until requests go to Google again after a 429; 0 when not held back. */
+export function rateLimitRetryAfter(now = Date.now()): number {
+  return rateLimitedUntil > now ? Math.ceil((rateLimitedUntil - now) / 1000) : 0
+}
+
+/** For tests: forget every capacity refusal and 429. */
 export function resetCapacityCooldown(): void {
   capacityUntil.clear()
+  rateLimitedUntil = 0
 }
 
 /** stderr carries glog noise ("logging before google.Init"); keep only lines a user can act on. */
@@ -236,7 +252,12 @@ const RETRY_LINE = /Run: attempt (\d+) failed \((.*)\), retrying in/g
 /** agy's message when the input does not fit the model's window (agy 1.5.9). */
 const TOO_LARGE = /maxMessageTokens must be positive|exceeds? (the )?(context|token) (window|limit)/i
 
+const RATE_LIMITED = /RESOURCE_EXHAUSTED|code 429/i
+
 function upstreamError(reason: string, model: string): AgyError {
+  if (RATE_LIMITED.test(reason)) {
+    return new AgyError(`Google refused the request with 429 (${reason.slice(0, 200)}); no requests for ${RATE_LIMIT_HOLD_MS / 60_000} min`, 'rate-limited')
+  }
   const capacity = /UNAVAILABLE|code 503|No capacity/i.test(reason)
   return new AgyError(
     capacity
@@ -270,6 +291,10 @@ async function readFrom(file: string, offset: number): Promise<{ text: string, o
  */
 export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEvent> {
   if (options.signal?.aborted) throw new AgyError('aborted', 'aborted')
+  const resting = rateLimitRetryAfter()
+  if (resting > 0) {
+    throw new AgyError(`Google answered 429 a moment ago; requests resume in ${resting} s`, 'rate-limited')
+  }
   const holdOff = capacityRetryAfter(options)
   if (holdOff > 0) {
     throw new AgyError(`Google had no capacity for ${options.model} a moment ago; the next attempt is in ${holdOff} s`, 'capacity')
@@ -319,7 +344,8 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
       logOffset = chunk.offset
       for (const match of chunk.text.matchAll(RETRY_LINE)) {
         lastRefusal = match[2]!
-        if (gaveUp === undefined && options.maxUpstreamAttempts !== undefined && Number(match[1]) >= options.maxUpstreamAttempts) {
+        const limit = RATE_LIMITED.test(lastRefusal) ? 1 : options.maxUpstreamAttempts
+        if (gaveUp === undefined && limit !== undefined && Number(match[1]) >= limit) {
           gaveUp = upstreamError(lastRefusal, options.model)
           stopChild(running)
         }
@@ -410,6 +436,9 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
       if (finished !== undefined) {
         if (finished.error instanceof AgyError && finished.error.kind === 'capacity') {
           capacityUntil.set(capacityKey(options), Date.now() + CAPACITY_COOLDOWN_MS)
+        }
+        if (finished.error instanceof AgyError && finished.error.kind === 'rate-limited') {
+          rateLimitedUntil = Math.max(rateLimitedUntil, Date.now() + RATE_LIMIT_HOLD_MS)
         }
         if (finished.error !== undefined) throw finished.error
         capacityUntil.delete(capacityKey(options))
