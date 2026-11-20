@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AntigravityApiServer, AntigravityApiServerStore } from '../src/api-server/index.ts'
-import { resetCapacityCooldown } from '../src/agy/run.ts'
+import { AgyError, resetCapacityCooldown } from '../src/agy/run.ts'
+import { httpFailureOf } from '../src/api-server/server.ts'
 import type { AntigravitySession } from '../src/session.ts'
 import type { CcaEvent, ChatGenerateInput } from '../src/types.ts'
 
@@ -404,5 +405,13 @@ process.stdin.on('end', () => console.log(JSON.stringify({ event: 'result', resu
     } finally {
       await new Promise(resolve => gateway.close(resolve))
     }
+  })
+})
+
+describe('httpFailureOf for a 429 on the Official CLI route', () => {
+  it('sends the hold of this error as Retry-After', () => {
+    expect(httpFailureOf(new AgyError('quota spent', 'rate-limited', 3 * 3_600_000))).toMatchObject({ status: 429, code: 'rate_limit_exceeded', retryAfter: 3 * 3_600 })
+    expect(httpFailureOf(new AgyError('limited', 'rate-limited', 60_000)).retryAfter).toBe(60)
+    expect(httpFailureOf(new AgyError('limited', 'rate-limited')).retryAfter).toBe(1)
   })
 })

@@ -107,7 +107,8 @@ export type AgyErrorKind =
   | 'rate-limited'
 
 export class AgyError extends Error {
-  constructor(message: string, readonly kind: AgyErrorKind) {
+  /** `retryAfterMs`: how long the plugin holds requests back after this error, when it does. */
+  constructor(message: string, readonly kind: AgyErrorKind, readonly retryAfterMs?: number) {
     super(message)
     this.name = 'AgyError'
   }
@@ -204,22 +205,117 @@ export function capacityRetryAfter(options: Pick<AgyRunOptions, 'model' | 'effor
 }
 
 /**
- * After a 429, no request goes to Google for this long, for any model. A 429 with quota left is
- * how Google answers traffic it is limiting; agy's own retries (eight in about two minutes)
- * would only send more of it, so the run stops at the first 429 and the account rests.
+ * Google answers 429 for two reasons, and the plugin holds back differently for each.
+ *
+ * - Short-window limit (for example `RESOURCE_EXHAUSTED ... (e.g. check quota)` with quota left):
+ *   Google is limiting the traffic of the signed-in account. Every model runs on that one account,
+ *   so no request goes to Google for any model: the delay Google tells, but at least 60 s, doubled
+ *   for each further 429 in a row, at most 5 min. agy's own retries (eight in about two minutes)
+ *   would only send more of the same traffic, so the run stops at the first 429.
+ * - Spent quota (for example "Individual quota reached. Resets in 96h12m27s"): only that model
+ *   rests, until the reset Google tells, or for 30 min when it tells none.
+ *
+ * The same split as gemini-cli's `TerminalQuotaError` and `RetryableQuotaError`
+ * (`packages/core/src/utils/googleQuotaErrors.ts`).
  */
-export const RATE_LIMIT_HOLD_MS = 5 * 60_000
+export const RATE_LIMIT_BASE_HOLD_MS = 60_000
+export const RATE_LIMIT_MAX_HOLD_MS = 5 * 60_000
+export const QUOTA_SPENT_HOLD_MS = 30 * 60_000
+const QUOTA_SPENT_MAX_HOLD_MS = 8 * 24 * 3_600_000
+/** A 429 this long after the previous one starts a new row: the hold is the base hold again. */
+const RATE_LIMIT_STREAK_RESET_MS = 15 * 60_000
 let rateLimitedUntil = 0
+let rateLimitStreak = 0
+let lastRateLimitAt = 0
+const quotaSpentUntil = new Map<string, number>()
 
-/** Seconds until requests go to Google again after a 429; 0 when not held back. */
+export interface RateLimit {
+  kind: 'short-window' | 'quota-spent'
+  /** The delay or reset time that Google named, when it named one. */
+  delayMs?: number
+}
+
+const RATE_LIMITED = /RESOURCE_EXHAUSTED|code 429/i
+const DURATION = String.raw`((?:\d+(?:\.\d+)?(?:ms|h|m|s))+)`
+const TOLD_DELAY = [
+  new RegExp(String.raw`\bresets?\s+(?:after|in)\s+` + DURATION, 'i'),
+  new RegExp(String.raw`\bretry\s+(?:after|in)\s+` + DURATION, 'i'),
+  new RegExp(String.raw`"?(?:retryDelay|quotaResetDelay)"?\s*[:=]\s*"?` + DURATION, 'i'),
+]
+/** Wording that means the quota is spent, not that traffic is limited for a moment. */
+const QUOTA_SPENT = /quota_exhausted|quota\s+(?:exhausted|reached)|individual\s+quota|exhausted\s+your\s+capacity|out\s+of\s+quota|insufficient\s+quota|enable\s+overages|daily\s+limit|per\s*day\b|PerDay/i
+
+/** Milliseconds in a Go-style duration such as `1h2m3.5s` or `500ms`; undefined when it is not one. */
+export function parseDuration(text: string): number | undefined {
+  const unit: Record<string, number> = { h: 3_600_000, m: 60_000, s: 1_000, ms: 1 }
+  let total = 0
+  let matched = ''
+  for (const part of text.matchAll(/(\d+(?:\.\d+)?)(ms|h|m|s)/g)) {
+    total += Number(part[1]) * unit[part[2]!]!
+    matched += part[0]
+  }
+  return matched.length > 0 && matched === text ? Math.round(total) : undefined
+}
+
+/** Sort a refusal reason into a 429 class; undefined when the reason is not a 429. */
+export function classifyRateLimit(reason: string): RateLimit | undefined {
+  if (!RATE_LIMITED.test(reason)) return undefined
+  let delayMs: number | undefined
+  for (const pattern of TOLD_DELAY) {
+    const found = pattern.exec(reason)?.[1]
+    delayMs = found === undefined ? undefined : parseDuration(found)
+    if (delayMs !== undefined) break
+  }
+  // A reset that is far away is a spent quota, whatever the wording; "reset after 0s" is not.
+  const spent = delayMs === undefined ? QUOTA_SPENT.test(reason) : delayMs > RATE_LIMIT_MAX_HOLD_MS || (delayMs > 0 && QUOTA_SPENT.test(reason))
+  return { kind: spent ? 'quota-spent' : 'short-window', ...delayMs === undefined ? {} : { delayMs } }
+}
+
+/** Short text for a wait: `45 s`, `12 min`, `3 h 5 min`, `4 d 2 h`. */
+export function formatWait(ms: number): string {
+  const s = Math.max(1, Math.ceil(ms / 1000))
+  if (s < 120) return `${s} s`
+  const min = Math.round(s / 60)
+  if (min < 120) return `${min} min`
+  const h = Math.floor(min / 60)
+  if (h < 48) return `${h} h ${min % 60} min`
+  return `${Math.floor(h / 24)} d ${h % 24} h`
+}
+
+/** Record a 429 and return how long it holds requests back. Exported for tests. */
+export function holdAfter(limit: RateLimit, model: string, now = Date.now()): number {
+  if (limit.kind === 'quota-spent') {
+    const hold = Math.min(QUOTA_SPENT_MAX_HOLD_MS, limit.delayMs ?? QUOTA_SPENT_HOLD_MS)
+    quotaSpentUntil.set(model, Math.max(quotaSpentUntil.get(model) ?? 0, now + hold))
+    return hold
+  }
+  if (now - lastRateLimitAt > RATE_LIMIT_STREAK_RESET_MS) rateLimitStreak = 0
+  rateLimitStreak += 1
+  lastRateLimitAt = now
+  const backoff = RATE_LIMIT_BASE_HOLD_MS * 2 ** Math.min(rateLimitStreak - 1, 8)
+  const hold = Math.min(RATE_LIMIT_MAX_HOLD_MS, Math.max(limit.delayMs ?? 0, backoff))
+  rateLimitedUntil = Math.max(rateLimitedUntil, now + hold)
+  return hold
+}
+
+/** Seconds until requests for any model go to Google again after a short-window 429; 0 when not held back. */
 export function rateLimitRetryAfter(now = Date.now()): number {
   return rateLimitedUntil > now ? Math.ceil((rateLimitedUntil - now) / 1000) : 0
+}
+
+/** Seconds until `model` is tried again after its quota was spent; 0 when it is not held back. */
+export function quotaRetryAfter(model: string, now = Date.now()): number {
+  const until = quotaSpentUntil.get(model) ?? 0
+  return until > now ? Math.ceil((until - now) / 1000) : 0
 }
 
 /** For tests: forget every capacity refusal and 429. */
 export function resetCapacityCooldown(): void {
   capacityUntil.clear()
+  quotaSpentUntil.clear()
   rateLimitedUntil = 0
+  rateLimitStreak = 0
+  lastRateLimitAt = 0
 }
 
 /** stderr carries glog noise ("logging before google.Init"); keep only lines a user can act on. */
@@ -252,11 +348,15 @@ const RETRY_LINE = /Run: attempt (\d+) failed \((.*)\), retrying in/g
 /** agy's message when the input does not fit the model's window (agy 1.5.9). */
 const TOO_LARGE = /maxMessageTokens must be positive|exceeds? (the )?(context|token) (window|limit)/i
 
-const RATE_LIMITED = /RESOURCE_EXHAUSTED|code 429/i
-
+/** The error for a refused model call. A 429 also starts its hold, so call this once for each run. */
 function upstreamError(reason: string, model: string): AgyError {
-  if (RATE_LIMITED.test(reason)) {
-    return new AgyError(`Google refused the request with 429 (${reason.slice(0, 200)}); no requests for ${RATE_LIMIT_HOLD_MS / 60_000} min`, 'rate-limited')
+  const limit = classifyRateLimit(reason)
+  if (limit !== undefined) {
+    const hold = holdAfter(limit, model)
+    const detail = reason.slice(0, 200)
+    return limit.kind === 'quota-spent'
+      ? new AgyError(`Google says the quota for ${model} is used up (${detail}); ${model} rests for ${formatWait(hold)}`, 'rate-limited', hold)
+      : new AgyError(`Google is limiting requests (${detail}); no requests for ${formatWait(hold)}`, 'rate-limited', hold)
   }
   const capacity = /UNAVAILABLE|code 503|No capacity/i.test(reason)
   return new AgyError(
@@ -293,7 +393,11 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
   if (options.signal?.aborted) throw new AgyError('aborted', 'aborted')
   const resting = rateLimitRetryAfter()
   if (resting > 0) {
-    throw new AgyError(`Google answered 429 a moment ago; requests resume in ${resting} s`, 'rate-limited')
+    throw new AgyError(`Google answered 429 a moment ago; requests resume in ${formatWait(resting * 1000)}`, 'rate-limited', resting * 1000)
+  }
+  const spent = quotaRetryAfter(options.model)
+  if (spent > 0) {
+    throw new AgyError(`the quota for ${options.model} is used up; it is tried again in ${formatWait(spent * 1000)}`, 'rate-limited', spent * 1000)
   }
   const holdOff = capacityRetryAfter(options)
   if (holdOff > 0) {
@@ -437,11 +541,9 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
         if (finished.error instanceof AgyError && finished.error.kind === 'capacity') {
           capacityUntil.set(capacityKey(options), Date.now() + CAPACITY_COOLDOWN_MS)
         }
-        if (finished.error instanceof AgyError && finished.error.kind === 'rate-limited') {
-          rateLimitedUntil = Math.max(rateLimitedUntil, Date.now() + RATE_LIMIT_HOLD_MS)
-        }
         if (finished.error !== undefined) throw finished.error
         capacityUntil.delete(capacityKey(options))
+        rateLimitStreak = 0
         return
       }
       await new Promise<void>(resolve => { wake = resolve })
