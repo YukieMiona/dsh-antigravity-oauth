@@ -8,6 +8,9 @@ export interface Config {
   retryPolicy?: RetryPolicyConfig
   nativeTools?: boolean
   nativeSearch?: boolean
+  disableImageUpload?: boolean
+  imageSlidingWindow?: boolean
+  maxFreshImages?: number
 }
 
 export const Config: z<Config> = z.object({
@@ -15,4 +18,7 @@ export const Config: z<Config> = z.object({
   retryPolicy: RetryPolicySchema,
   nativeTools: z.boolean().default(true),
   nativeSearch: z.boolean().default(true),
+  disableImageUpload: z.boolean().default(false),
+  imageSlidingWindow: z.boolean().default(true),
+  maxFreshImages: z.number().min(1).max(5).default(1),
 })

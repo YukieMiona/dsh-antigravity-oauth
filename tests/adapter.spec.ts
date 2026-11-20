@@ -1,8 +1,8 @@
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { createAntigravityAdapter } from '../src/adapter.ts'
 import { CcaHttpError } from '../src/cca-client.ts'
-import type { AntigravitySession } from '../src/session.ts'
+import { AntigravitySession } from '../src/session.ts'
 import type { CcaEvent, ChatGenerateInput, SearchGenerateInput } from '../src/types.ts'
 
 const oauth = {
@@ -615,10 +615,87 @@ describe('AntigravityAdapter model catalog', () => {
     const resolved = await adapter.resolveModel('agy-google-antigravity', 'gemini-3.7-flash')
     expect(resolved.toolUpdate).toBeUndefined()
     expect(resolved.id).toBe('gemini-3.7-flash')
+
+    const argonResolved = await adapter.resolveModel('agy-google-antigravity', 'gemini-4-argon')
+    expect(argonResolved.id).toBe('gemini-4-argon')
+    expect(argonResolved.name).toBe('Gemini 4 Argon')
+    expect(argonResolved.context?.contextWindow).toBe(1_048_576)
+    expect(argonResolved.defaultMaxTokens).toBe(65_536)
+    expect(argonResolved.reasoning?.efforts).toHaveLength(3)
+    expect(argonResolved.reasoning?.defaultEffort).toBe('medium')
+  })
+
+  it('applies user-configured modelContextWindow (clamped and floored) and defaultReasoningEffort', async () => {
+    const fake = fakeSession({})
+    let configuredWindow = 524_288.9
+    ;(fake.session as any).getAdvancedSettings = async () => ({
+      defaultReasoningEffort: 'high',
+      modelContextWindow: configuredWindow,
+      switchingStrategy: 'failover_429',
+      proactiveThreshold: 20,
+    })
+    const adapter = createAntigravityAdapter(fake.session, {
+      nativeTools: true,
+      nativeSearch: true,
+    })
+
+    const resolved512k = await adapter.resolveModel('agy-google-antigravity', 'gemini-3.8-flash')
+    expect(resolved512k.context?.contextWindow).toBe(524_288)
+    expect(resolved512k.reasoning?.defaultEffort).toBe('high')
+
+    configuredWindow = 2_097_152
+    const clamped = await adapter.resolveModel('agy-google-antigravity', 'gemini-4-argon')
+    expect(clamped.context?.contextWindow).toBe(1_048_576)
   })
 })
 
 describe('AntigravityAdapter multimodal image input', () => {
+  const imageOf = (bytes: number, offloaded = false) => ({
+    type: 'image',
+    attachment: { attachmentId: `att-${bytes}`, mediaType: 'image/png', name: 'big.png', bytes, width: 1, height: 1 },
+    ...offloaded ? { offloaded: true } : {},
+  })
+  const streamImages = (adapter: ReturnType<typeof createAntigravityAdapter>, content: unknown[]) => adapter.stream({
+    provider: 'agy-google-antigravity',
+    model: 'gemini-3.8-flash',
+    messages: [{ id: 'u1', role: 'user', source: { kind: 'user' }, content }],
+    tools: [],
+  } as any)
+
+  it('asks the harness to offload images over the request budget', async () => {
+    const fake = fakeSession({})
+    const adapter = createAntigravityAdapter(fake.session, { nativeTools: true, nativeSearch: true })
+
+    await expect(collect(streamImages(adapter, [imageOf(8_000_000), imageOf(8_000_001)])))
+      .rejects.toMatchObject({ code: 'IMAGE_OFFLOAD_REQUIRED', failure: { offloadImages: 1 } })
+    expect(fake.chatBodies).toHaveLength(0)
+  })
+
+  it('counts tool result images toward the request budget', async () => {
+    const fake = fakeSession({})
+    const adapter = createAntigravityAdapter(fake.session, { nativeTools: true, nativeSearch: true })
+
+    await expect(collect(adapter.stream({
+      provider: 'agy-google-antigravity',
+      model: 'gemini-3.8-flash',
+      messages: [
+        { id: 'u1', role: 'user', source: { kind: 'user' }, content: [imageOf(8_000_000)] },
+        { id: 'a1', role: 'assistant', content: [{ type: 'tool-call', id: 'call_1', name: 'read_image', arguments: '{}' }] },
+        { id: 't1', role: 'tool', toolCallId: 'call_1', content: [imageOf(8_000_001)] },
+      ],
+      tools: [],
+    } as any))).rejects.toMatchObject({ code: 'IMAGE_OFFLOAD_REQUIRED', failure: { offloadImages: 1 } })
+    expect(fake.chatBodies).toHaveLength(0)
+  })
+
+  it('sends a request when offloaded images bring it under the budget', async () => {
+    const fake = fakeSession({ chat: [{ type: 'text', text: 'ok' }, { type: 'finish', reason: 'STOP' }] })
+    const adapter = createAntigravityAdapter(fake.session, { nativeTools: true, nativeSearch: true })
+
+    await collect(streamImages(adapter, [imageOf(8_000_000, true), imageOf(8_000_001)]))
+    expect(fake.chatBodies).toHaveLength(1)
+  })
+
   it('converts user image block to Gemini inlineData part with base64 payload', async () => {
     const fake = fakeSession({ chat: [{ type: 'text', text: 'I see the image' }, { type: 'finish', reason: 'STOP' }] })
     const imageBytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
@@ -645,6 +722,7 @@ describe('AntigravityAdapter multimodal image input', () => {
           type: 'image',
           attachment: {
             attachmentId: 'att-img-1',
+            bytes: 8,
             mediaType: 'image/png',
             name: 'sample.png',
           },
@@ -693,9 +771,9 @@ describe('AntigravityAdapter multimodal image input', () => {
       source: { kind: 'user' },
       content: [
         { type: 'text', text: 'First diagram:' },
-        { type: 'image', attachment: { attachmentId: 'img1', mediaType: 'image/jpeg' } },
+        { type: 'image', attachment: { attachmentId: 'img1', bytes: 3, mediaType: 'image/jpeg' } },
         { type: 'text', text: 'Second diagram:' },
-        { type: 'image', attachment: { attachmentId: 'img2', mediaType: 'image/jpeg' } },
+        { type: 'image', attachment: { attachmentId: 'img2', bytes: 3, mediaType: 'image/jpeg' } },
       ],
     }] as any
 
@@ -731,7 +809,7 @@ describe('AntigravityAdapter multimodal image input', () => {
       role: 'user',
       source: { kind: 'user' },
       content: [
-        { type: 'image', attachment: { attachmentId: 'bad-img', name: 'missing.png' } },
+        { type: 'image', attachment: { attachmentId: 'bad-img', bytes: 3, name: 'missing.png' } },
       ],
     }] as any
 
@@ -772,7 +850,7 @@ describe('AntigravityAdapter multimodal image input', () => {
 
     const parts = fake.chatBodies[0].contents[0].parts
     expect(parts).toHaveLength(1)
-    expect(parts[0]).toEqual({ text: '[Image: chart.png (offloaded)]' })
+    expect((parts[0] as { text: string }).text).toContain('image omitted to fit request image limits')
   })
 
   it('falls back to placeholder text when stored image data is 0 bytes', async () => {
@@ -795,7 +873,7 @@ describe('AntigravityAdapter multimodal image input', () => {
       role: 'user',
       source: { kind: 'user' },
       content: [
-        { type: 'image', attachment: { attachmentId: 'zero-byte', name: 'empty.png' } },
+        { type: 'image', attachment: { attachmentId: 'zero-byte', bytes: 3, name: 'empty.png' } },
       ],
     }] as any
 
@@ -833,7 +911,7 @@ describe('AntigravityAdapter multimodal image input', () => {
       role: 'user',
       source: { kind: 'user' },
       content: [
-        { type: 'image', attachment: { attachmentId: 'img', name: 'pic.png' } },
+        { type: 'image', attachment: { attachmentId: 'img', bytes: 3, name: 'pic.png' } },
       ],
     }] as any
 
@@ -844,5 +922,933 @@ describe('AntigravityAdapter multimodal image input', () => {
       tools: [],
       signal: abortController.signal,
     } as any))).rejects.toThrow()
+  })
+
+  it('converts tool result image blocks to Gemini inlineData within functionResponse', async () => {
+    const fake = fakeSession({ chat: [{ type: 'text', text: 'Inspected tool image' }, { type: 'finish', reason: 'STOP' }] })
+    const imageBytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x01, 0x02, 0x03, 0x04])
+    const mockAttachments = {
+      readImage: async (ref: any) => ({
+        ref: { ...ref, mediaType: 'image/jpeg' },
+        data: imageBytes,
+      }),
+    } as any
+
+    const adapter = createAntigravityAdapter(fake.session, {
+      nativeTools: true,
+      nativeSearch: true,
+      resolveAttachments: () => mockAttachments,
+    })
+
+    const messages = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        source: { kind: 'model' },
+        content: [
+          {
+            type: 'tool-call',
+            id: 'call_read_img_1',
+            name: 'read_image',
+            arguments: '{"file_path":"test.jpg"}',
+            thoughtSignature: 'sig-test',
+          },
+        ],
+      },
+      {
+        id: 't1',
+        role: 'tool',
+        source: { kind: 'tool', callId: 'call_read_img_1' },
+        toolCallId: 'call_read_img_1',
+        content: [
+          { type: 'text', text: '<path>test.jpg</path><type>image</type>' },
+          {
+            type: 'image',
+            attachment: {
+              attachmentId: 'att-tool-img-1',
+              mediaType: 'image/jpeg',
+              name: 'test.jpg',
+            },
+          },
+        ],
+      },
+    ] as any
+
+    await collect(adapter.stream({
+      provider: 'agy-google-antigravity',
+      model: 'gemini-3.8-flash',
+      messages,
+      tools: [{ name: 'read_image', description: 'read img', parameters: { type: 'object' } }],
+    } as any))
+
+    expect(fake.chatBodies).toHaveLength(1)
+    const contents = fake.chatBodies[0].contents
+    expect(contents).toHaveLength(2)
+    const toolContent = contents[1]
+    expect(toolContent.role).toBe('user')
+    expect(toolContent.parts).toHaveLength(1)
+    expect(toolContent.parts[0]).toEqual({
+      functionResponse: {
+        name: 'read_image',
+        id: 'call_read_img_1',
+        response: { result: '<path>test.jpg</path><type>image</type>' },
+        parts: [
+          {
+            inlineData: {
+              mimeType: 'image/jpeg',
+              data: Buffer.from(imageBytes).toString('base64'),
+            },
+          },
+        ],
+      },
+    })
+  })
+
+  it('appends degraded and offloaded image placeholders to response.result', async () => {
+    const fake = fakeSession({ chat: [{ type: 'text', text: 'Handled degraded image' }, { type: 'finish', reason: 'STOP' }] })
+    const mockAttachments = {
+      readImage: async () => ({
+        ref: { mediaType: 'image/jpeg' },
+        data: new Uint8Array(0),
+      }),
+    } as any
+
+    const adapter = createAntigravityAdapter(fake.session, {
+      nativeTools: true,
+      nativeSearch: true,
+      resolveAttachments: () => mockAttachments,
+    })
+
+    const messages = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            id: 'call_degraded_1',
+            name: 'read_image',
+            arguments: '{}',
+            thoughtSignature: 'sig-test',
+          },
+        ],
+      },
+      {
+        id: 't1',
+        role: 'tool',
+        toolCallId: 'call_degraded_1',
+        content: [
+          { type: 'text', text: 'Read error log' },
+          {
+            type: 'image',
+            attachment: { attachmentId: 'att-empty', name: 'empty.png' },
+          },
+          {
+            type: 'image',
+            attachment: { name: 'cloud.png' },
+            offloaded: true,
+          },
+        ],
+      },
+    ] as any
+
+    await collect(adapter.stream({
+      provider: 'agy-google-antigravity',
+      model: 'gemini-3.8-flash',
+      messages,
+      tools: [{ name: 'read_image', description: 'read img', parameters: { type: 'object' } }],
+    } as any))
+
+    const contents = fake.chatBodies[0].contents
+    const toolContent = contents[1]
+    expect(toolContent.parts).toHaveLength(1)
+    const fr = (toolContent.parts[0] as any).functionResponse
+    expect(fr.parts).toBeUndefined()
+    expect(fr.response.result).toMatch(/^Read error log\n\[Image: empty\.png\]\n\[image omitted to fit request image limits/)
+  })
+
+  it('handles pure image tool result without text description', async () => {
+    const fake = fakeSession({ chat: [{ type: 'text', text: 'Inspected pure image' }, { type: 'finish', reason: 'STOP' }] })
+    const imageBytes = Uint8Array.from([0x12, 0x34])
+    const mockAttachments = {
+      readImage: async () => ({
+        ref: { mediaType: 'image/png' },
+        data: imageBytes,
+      }),
+    } as any
+
+    const adapter = createAntigravityAdapter(fake.session, {
+      nativeTools: true,
+      nativeSearch: true,
+      resolveAttachments: () => mockAttachments,
+    })
+
+    const messages = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            id: 'call_pure_img_1',
+            name: 'capture_screen',
+            arguments: '{}',
+            thoughtSignature: 'sig-test',
+          },
+        ],
+      },
+      {
+        id: 't1',
+        role: 'tool',
+        toolCallId: 'call_pure_img_1',
+        content: [
+          {
+            type: 'image',
+            attachment: { attachmentId: 'att-shot', name: 'screen.png' },
+          },
+        ],
+      },
+    ] as any
+
+    await collect(adapter.stream({
+      provider: 'agy-google-antigravity',
+      model: 'gemini-3.8-flash',
+      messages,
+      tools: [{ name: 'capture_screen', description: 'capture screen', parameters: { type: 'object' } }],
+    } as any))
+
+    const contents = fake.chatBodies[0].contents
+    const toolContent = contents[1]
+    expect(toolContent.parts).toHaveLength(1)
+    const fr = (toolContent.parts[0] as any).functionResponse
+    expect(fr.response.result).toBe('')
+    expect(fr.parts).toHaveLength(1)
+    expect(fr.parts[0].inlineData.mimeType).toBe('image/png')
+  })
+
+  it('batches consecutive parallel tool messages into a single user turn', async () => {
+    const fake = fakeSession({ chat: [{ type: 'text', text: 'Done parallel tools' }, { type: 'finish', reason: 'STOP' }] })
+    const imgBytes = Uint8Array.from([0x99])
+    const mockAttachments = {
+      readImage: async () => ({
+        ref: { mediaType: 'image/jpeg' },
+        data: imgBytes,
+      }),
+    } as any
+
+    const adapter = createAntigravityAdapter(fake.session, {
+      nativeTools: true,
+      nativeSearch: true,
+      resolveAttachments: () => mockAttachments,
+    })
+
+    const messages = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            id: 'call_p1',
+            name: 'tool_one',
+            arguments: '{}',
+            thoughtSignature: 'sig-1',
+          },
+          {
+            type: 'tool-call',
+            id: 'call_p2',
+            name: 'tool_two',
+            arguments: '{}',
+            thoughtSignature: 'sig-2',
+          },
+        ],
+      },
+      {
+        id: 't1',
+        role: 'tool',
+        toolCallId: 'call_p1',
+        content: [{ type: 'text', text: 'Output from tool one' }],
+      },
+      {
+        id: 't2',
+        role: 'tool',
+        toolCallId: 'call_p2',
+        content: [
+          { type: 'text', text: 'Output from tool two' },
+          {
+            type: 'image',
+            attachment: { attachmentId: 'att-p2', name: 'tool_two.jpg' },
+          },
+        ],
+      },
+    ] as any
+
+    await collect(adapter.stream({
+      provider: 'agy-google-antigravity',
+      model: 'gemini-3.8-flash',
+      messages,
+      tools: [
+        { name: 'tool_one', description: 't1', parameters: { type: 'object' } },
+        { name: 'tool_two', description: 't2', parameters: { type: 'object' } },
+      ],
+    } as any))
+
+    const contents = fake.chatBodies[0].contents
+    expect(contents).toHaveLength(2)
+    const toolContent = contents[1]
+    expect(toolContent.role).toBe('user')
+    expect(toolContent.parts).toHaveLength(2)
+    expect((toolContent.parts[0] as any).functionResponse.name).toBe('tool_one')
+    expect((toolContent.parts[1] as any).functionResponse.name).toBe('tool_two')
+    expect((toolContent.parts[1] as any).functionResponse.parts).toHaveLength(1)
+  })
+
+  it('degrades orphaned tool result with images to user turn gracefully', async () => {
+    const fake = fakeSession({ chat: [{ type: 'text', text: 'Handled orphan' }, { type: 'finish', reason: 'STOP' }] })
+    const imgBytes = Uint8Array.from([0x55])
+    const mockAttachments = {
+      readImage: async () => ({
+        ref: { mediaType: 'image/png' },
+        data: imgBytes,
+      }),
+    } as any
+
+    const adapter = createAntigravityAdapter(fake.session, {
+      nativeTools: true,
+      nativeSearch: true,
+      resolveAttachments: () => mockAttachments,
+    })
+
+    const messages = [
+      {
+        id: 't_orphan',
+        role: 'tool',
+        toolCallId: 'call_missing_from_history',
+        content: [
+          { type: 'text', text: 'Orphaned message' },
+          {
+            type: 'image',
+            attachment: { attachmentId: 'att-orphan', name: 'orphan.png' },
+          },
+        ],
+      },
+    ] as any
+
+    await collect(adapter.stream({
+      provider: 'agy-google-antigravity',
+      model: 'gemini-3.8-flash',
+      messages,
+      tools: [],
+    } as any))
+
+    const contents = fake.chatBodies[0].contents
+    expect(contents).toHaveLength(1)
+    const userContent = contents[0]
+    expect(userContent.role).toBe('user')
+    expect(userContent.parts).toHaveLength(2)
+    expect((userContent.parts[0] as any).text).toBe('Orphaned message')
+    expect((userContent.parts[1] as any).inlineData).toBeDefined()
+  })
+
+  const toolTurnAdapter = () => {
+    const fake = fakeSession({ chat: [{ type: 'text', text: 'ok' }, { type: 'finish', reason: 'STOP' }] })
+    const adapter = createAntigravityAdapter(fake.session, { nativeTools: true, nativeSearch: true })
+    const run = (messages: unknown[]) => collect(adapter.stream({
+      provider: 'agy-google-antigravity',
+      model: 'gemini-3.8-flash',
+      messages,
+      tools: [],
+    } as any))
+    return { fake, run }
+  }
+  const call = (id: string, signed = true) => ({
+    type: 'tool-call', id, name: 'probe', arguments: '{}', ...signed ? { thoughtSignature: `sig-${id}` } : {},
+  })
+  const result = (id: string, content: unknown[]) => ({ id: `t-${id}`, role: 'tool', toolCallId: id, content })
+
+  it('keeps an image placeholder where the image was in a tool result', async () => {
+    const { fake, run } = toolTurnAdapter()
+    await run([
+      { id: 'a1', role: 'assistant', content: [call('c1')] },
+      result('c1', [
+        { type: 'text', text: 'before' },
+        { type: 'image', attachment: { attachmentId: 'x', name: 'x.png' } },
+        { type: 'text', text: 'after' },
+      ]),
+    ])
+    const fr = (fake.chatBodies[0].contents[1].parts[0] as any).functionResponse
+    expect(fr.response.result).toBe('before\n[Image: x.png]\nafter')
+  })
+
+  it('sends a result without a live call after the function responses of the same turn', async () => {
+    const { fake, run } = toolTurnAdapter()
+    await run([
+      { id: 'a1', role: 'assistant', content: [call('c1'), call('c2', false)] },
+      result('c2', [{ type: 'text', text: 'unsigned result' }]),
+      result('c1', [{ type: 'text', text: 'signed result' }]),
+    ])
+    const contents = fake.chatBodies[0].contents
+    expect(contents.map(content => content.role)).toEqual(['model', 'user', 'user'])
+    expect(contents[1].parts).toEqual([
+      { functionResponse: { name: 'probe', id: 'c1', response: { result: 'signed result' } } },
+    ])
+    expect(contents[2].parts).toEqual([{ text: 'unsigned result' }])
+  })
+
+  it('keeps responses to one model turn together across an empty assistant message', async () => {
+    const { fake, run } = toolTurnAdapter()
+    await run([
+      { id: 'a1', role: 'assistant', content: [call('c1'), call('c2')] },
+      result('c1', [{ type: 'text', text: 'one' }]),
+      { id: 'a2', role: 'assistant', content: [{ type: 'text', text: '' }] },
+      result('c2', [{ type: 'text', text: 'two' }]),
+    ])
+    const contents = fake.chatBodies[0].contents
+    expect(contents.map(content => content.role)).toEqual(['model', 'user'])
+    expect(contents[1].parts).toHaveLength(2)
+  })
+
+  it('starts a new response turn after the next model turn', async () => {
+    const { fake, run } = toolTurnAdapter()
+    await run([
+      { id: 'a1', role: 'assistant', content: [call('c1')] },
+      result('c1', [{ type: 'text', text: 'one' }]),
+      { id: 'a2', role: 'assistant', content: [call('c2')] },
+      result('c2', [{ type: 'text', text: 'two' }]),
+    ])
+    const contents = fake.chatBodies[0].contents
+    expect(contents.map(content => content.role)).toEqual(['model', 'user', 'model', 'user'])
+  })
+
+  it('converts tool result with multiple image blocks to multiple inlineData parts', async () => {
+    const fake = fakeSession({ chat: [{ type: 'text', text: 'Inspected multiple images' }, { type: 'finish', reason: 'STOP' }] })
+    const img1 = Uint8Array.from([0x01, 0x02])
+    const img2 = Uint8Array.from([0x03, 0x04])
+    const mockAttachments = {
+      readImage: async (ref: any) => ({
+        ref: { ...ref, mediaType: ref.mediaType ?? 'image/png' },
+        data: ref.name === 'first.png' ? img1 : img2,
+      }),
+    } as any
+
+    const adapter = createAntigravityAdapter(fake.session, {
+      nativeTools: true,
+      nativeSearch: true,
+      resolveAttachments: () => mockAttachments,
+    })
+
+    const messages = [
+      {
+        id: 'a1',
+        role: 'assistant',
+        content: [
+          {
+            type: 'tool-call',
+            id: 'call_multi_img',
+            name: 'diff_images',
+            arguments: '{}',
+            thoughtSignature: 'sig-multi',
+          },
+        ],
+      },
+      {
+        id: 't1',
+        role: 'tool',
+        toolCallId: 'call_multi_img',
+        content: [
+          { type: 'text', text: 'Comparison:' },
+          {
+            type: 'image',
+            attachment: { attachmentId: 'att-1', name: 'first.png', mediaType: 'image/png' },
+          },
+          {
+            type: 'image',
+            attachment: { attachmentId: 'att-2', name: 'second.png', mediaType: 'image/png' },
+          },
+        ],
+      },
+    ] as any
+
+    await collect(adapter.stream({
+      provider: 'agy-google-antigravity',
+      model: 'gemini-3.8-flash',
+      messages,
+      tools: [{ name: 'diff_images', description: 'diff images', parameters: { type: 'object' } }],
+    } as any))
+
+    const contents = fake.chatBodies[0].contents
+    expect(contents).toHaveLength(2)
+    const toolContent = contents[1]
+    expect(toolContent.role).toBe('user')
+    expect(toolContent.parts).toHaveLength(1)
+    const fr = (toolContent.parts[0] as any).functionResponse
+    expect(fr.name).toBe('diff_images')
+    expect(fr.response.result).toBe('Comparison:')
+    expect(fr.parts).toHaveLength(2)
+    expect(fr.parts[0].inlineData.data).toBe(Buffer.from(img1).toString('base64'))
+    expect(fr.parts[1].inlineData.data).toBe(Buffer.from(img2).toString('base64'))
+  })
+
+  it('prunes historical turn images while preserving active user turn images across tool loops and offloaded paths', async () => {
+    const fake = fakeSession({ chat: [{ type: 'text', text: 'ok' }, { type: 'finish', reason: 'STOP' }] })
+    const pngBytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    const mockAttachments = {
+      readImage: async (ref: any) => ({
+        ref: { ...ref, mediaType: 'image/png' },
+        data: pngBytes,
+      }),
+    } as any
+    const adapter = createAntigravityAdapter(fake.session, {
+      nativeTools: true,
+      nativeSearch: true,
+      resolveAttachments: () => mockAttachments,
+      imageSlidingWindow: true,
+      maxFreshImages: 1,
+    })
+
+    const messages = [
+      {
+        id: 'u_old',
+        role: 'user',
+        content: [
+          { type: 'image', attachment: { attachmentId: 'old-1', name: 'old.png' } },
+          { type: 'image', attachment: { attachmentId: 'off-1', name: 'saved.png' }, offloaded: true },
+        ],
+      },
+      { id: 'a_old', role: 'assistant', content: [{ type: 'text', text: 'seen old' }] },
+      {
+        id: 'u_active',
+        role: 'user',
+        content: [
+          { type: 'image', attachment: { attachmentId: 'cur-1', name: 'current-a.png' } },
+          { type: 'image', attachment: { attachmentId: 'cur-2', name: 'current-b.png' } },
+        ],
+      },
+      {
+        id: 'a_tool',
+        role: 'assistant',
+        content: [{ type: 'tool-call', id: 'c_img', name: 'read_image', arguments: '{}', thoughtSignature: 'sig-1' }],
+      },
+      {
+        id: 't_tool',
+        role: 'tool',
+        toolCallId: 'c_img',
+        content: [{ type: 'image', attachment: { attachmentId: 'tool-1', name: 'tool.png' } }],
+      },
+    ] as any
+
+    await collect(adapter.stream({
+      provider: 'agy-google-antigravity',
+      model: 'gemini-3.8-flash',
+      messages,
+      tools: [{ name: 'read_image', description: 'read', parameters: { type: 'object' } }],
+    } as any))
+
+    const contents = fake.chatBodies[0]!.contents
+    expect(contents[0]!.parts[0]).toEqual({ text: '[Historical Image: old.png (omitted to preserve context)]' })
+    expect((contents[0]!.parts[1] as { text: string }).text).toContain('image omitted to fit request image limits')
+    expect('inlineData' in contents[2]!.parts[0]!).toBe(true)
+    expect('inlineData' in contents[2]!.parts[1]!).toBe(true)
+    expect(((contents[4]!.parts[0] as any).functionResponse.parts ?? [])).toHaveLength(1)
+  })
+
+  it('degrades corrupted 8+ byte non-image payloads instead of forwarding invalid inlineData', async () => {
+    const fake = fakeSession({ chat: [{ type: 'text', text: 'ok' }, { type: 'finish', reason: 'STOP' }] })
+    const badBytes = new TextEncoder().encode('not-an-image-header-payload')
+    const adapter = createAntigravityAdapter(fake.session, {
+      nativeTools: true,
+      nativeSearch: true,
+      resolveAttachments: () => ({
+        readImage: async (ref: any) => ({ ref: { ...ref, mediaType: 'image/png' }, data: badBytes }),
+      }) as any,
+    })
+
+    await collect(adapter.stream({
+      provider: 'agy-google-antigravity',
+      model: 'gemini-3.8-flash',
+      messages: [{
+        id: 'u1',
+        role: 'user',
+        content: [{ type: 'image', attachment: { attachmentId: 'bad-1', name: 'broken.png' } }],
+      }],
+      tools: [],
+    } as any))
+
+    expect(fake.chatBodies[0]!.contents[0]!.parts[0]).toEqual({
+      text: '[Image: broken.png (invalid or corrupted image header)]',
+    })
+  })
+})
+
+describe('AntigravityAdapter Argon routing and failover', () => {
+  it('passes model to acquire and fails over on 403 PERMISSION_DENIED without marking Flash account dead or leaking usage', async () => {
+    const acquiredModels: Array<string | undefined> = []
+    const authRejected: string[] = []
+    const argonRejected: string[] = []
+
+    const session = {
+      thoughtSignatures: new Map<string, string>(),
+      acquire: async (opts?: { model?: string }) => {
+        acquiredModels.push(opts?.model)
+        return {
+          oauth,
+          accountId: 'acc_flash_only',
+          email: 'flash@example.test',
+          cca: {
+            async *chat(): AsyncIterable<CcaEvent> {
+              yield { type: 'usage', usage: { inputTokens: 999, outputTokens: 5 } }
+              yield { type: 'functionCall', name: 'search_web', args: { query: 'argon test' } }
+              yield { type: 'finish', reason: 'STOP' }
+            },
+            async *search(): AsyncIterable<CcaEvent> {
+              throw new CcaHttpError(403, 'PERMISSION_DENIED: model not allowed')
+            },
+          },
+        }
+      },
+      noteAuthRejected: (id: string) => { authRejected.push(id) },
+      noteArgonRejected: (id: string) => { argonRejected.push(id) },
+      findArgonAccount: async (excluded?: ReadonlySet<string> | string) => {
+        const set = typeof excluded === 'string' ? new Set([excluded]) : excluded
+        if (set?.has('acc_argon')) return undefined
+        return { id: 'acc_argon', email: 'argon@example.test', projectId: 'proj-argon', hasArgon: true } as any
+      },
+      acquireForAccount: async (id: string) => {
+        if (id !== 'acc_argon') return undefined
+        return {
+          oauth,
+          accountId: 'acc_argon',
+          email: 'argon@example.test',
+          cca: {
+            async *chat(): AsyncIterable<CcaEvent> {
+              yield { type: 'usage', usage: { inputTokens: 100, outputTokens: 20 } }
+              yield { type: 'text', text: 'Argon response' }
+              yield { type: 'finish', reason: 'STOP' }
+            },
+            async *search(): AsyncIterable<CcaEvent> {
+              yield { type: 'finish', reason: 'STOP' }
+            },
+          },
+        }
+      },
+    } as unknown as AntigravitySession
+
+    const adapter = createAntigravityAdapter(session, { nativeTools: true, nativeSearch: true })
+    const chunks = await collect(adapter.stream({
+      ...options('hello argon'),
+      model: 'gemini-4-argon',
+    }))
+
+    expect(acquiredModels).toEqual(['gemini-4-argon'])
+    expect(authRejected).toEqual([])
+    expect(argonRejected).toEqual(['acc_flash_only'])
+    expect(visibleText(chunks)).toBe('Argon response')
+    expect(chunks.find(c => c.type === 'usage')).toEqual({
+      type: 'usage',
+      usage: { inputTokens: 100, outputTokens: 20 },
+    })
+  })
+
+  it('routes background compaction and session-title requests to gemini-3.8-flash to save Argon quota (AM1)', async () => {
+    const fake = fakeSession({ chat: [{ type: 'text', text: 'Summary' }, { type: 'finish', reason: 'STOP' }] })
+    const acquiredModels: string[] = []
+    const session = {
+      ...fake.session,
+      acquire: async (opts?: { model?: string }) => {
+        if (opts?.model) acquiredModels.push(opts.model)
+        return fake.session.acquire()
+      },
+    } as unknown as AntigravitySession
+
+    const adapter = createAntigravityAdapter(session, { nativeTools: true, nativeSearch: true })
+
+    // Background compaction request with gemini-4-argon
+    await collect(adapter.stream({
+      ...options('compact memory'),
+      model: 'gemini-4-argon',
+      purpose: 'compaction',
+    }))
+
+    // Background session-title request with gemini-4-argon
+    await collect(adapter.stream({
+      ...options('summarize title'),
+      model: 'gemini-4-argon',
+      purpose: 'session-title',
+    }))
+
+    // Regular conversation request with gemini-4-argon
+    await collect(adapter.stream({
+      ...options('user turn'),
+      model: 'gemini-4-argon',
+    }))
+
+    // First two background calls should be downgraded to gemini-3.8-flash; third call stays gemini-4-argon
+    expect(acquiredModels).toEqual(['gemini-3.8-flash', 'gemini-3.8-flash', 'gemini-4-argon'])
+  })
+})
+
+describe('AntigravitySession switching strategies (R2b)', () => {
+  it('rotates across ready accounts when switchingStrategy is round_robin', async () => {
+    const store = {
+      list: async () => [
+        { id: 'acc_1', type: 'oauth', access: 'a1', refresh: 'r1', expires: Date.now() + 600000, projectId: 'p1' },
+        { id: 'acc_2', type: 'oauth', access: 'a2', refresh: 'r2', expires: Date.now() + 600000, projectId: 'p2' },
+        { id: 'acc_3', type: 'oauth', access: 'a3', refresh: 'r3', expires: Date.now() + 600000, projectId: 'p3' },
+      ],
+      active: async () => ({ id: 'acc_1', type: 'oauth', access: 'a1', refresh: 'r1', expires: Date.now() + 600000, projectId: 'p1' }),
+      setActive: vi.fn(async () => {}),
+    } as any
+
+    const session = new AntigravitySession(store)
+    vi.spyOn(session, 'getAdvancedSettings').mockResolvedValue({
+      defaultReasoningEffort: 'medium',
+      modelContextWindow: 1048576,
+      switchingStrategy: 'round_robin',
+      proactiveThreshold: 20,
+    })
+    vi.spyOn(session as any, 'refreshGrantForAccount').mockImplementation(async (id: any) => ({
+      type: 'oauth', access: `token_${String(id)}`, refresh: `ref_${String(id)}`, expires: Date.now() + 600000, projectId: `proj_${String(id)}`,
+    }))
+
+    // First call: starts from acc_1 (active), rotates in memory to acc_2
+    const lease1 = await session.acquire()
+    expect(lease1?.accountId).toBe('acc_2')
+    expect(store.setActive).not.toHaveBeenCalled()
+
+    // Second call: rotates in memory to acc_3
+    const lease2 = await session.acquire()
+    expect(lease2?.accountId).toBe('acc_3')
+
+    // Third call: rotates back in memory to acc_1
+    const lease3 = await session.acquire()
+    expect(lease3?.accountId).toBe('acc_1')
+  })
+
+  it('keeps active account when switchingStrategy is manual or failover_429', async () => {
+    const store = {
+      list: async () => [
+        { id: 'acc_1', type: 'oauth', access: 'a1', refresh: 'r1', expires: Date.now() + 600000, projectId: 'p1' },
+        { id: 'acc_2', type: 'oauth', access: 'a2', refresh: 'r2', expires: Date.now() + 600000, projectId: 'p2' },
+      ],
+      active: async () => ({ id: 'acc_1', type: 'oauth', access: 'a1', refresh: 'r1', expires: Date.now() + 600000, projectId: 'p1' }),
+      setActive: vi.fn(async () => {}),
+    } as any
+
+    const session = new AntigravitySession(store)
+    vi.spyOn(session, 'getAdvancedSettings').mockResolvedValue({
+      defaultReasoningEffort: 'medium',
+      modelContextWindow: 1048576,
+      switchingStrategy: 'manual',
+      proactiveThreshold: 20,
+    })
+    vi.spyOn(session as any, 'refreshGrantForAccount').mockImplementation(async (id: any) => ({
+      type: 'oauth', access: `token_${String(id)}`, refresh: `ref_${String(id)}`, expires: Date.now() + 600000, projectId: `proj_${String(id)}`,
+    }))
+
+    const lease = await session.acquire()
+    expect(lease?.accountId).toBe('acc_1')
+    expect(store.setActive).not.toHaveBeenCalled()
+  })
+
+  it('rotates across multiple Argon accounts when switchingStrategy is round_robin', async () => {
+    const store = {
+      list: async () => [
+        { id: 'acc_flash', type: 'oauth', access: 'af', refresh: 'rf', expires: Date.now() + 600000, projectId: 'pf', hasArgon: false },
+        { id: 'acc_argon_1', type: 'oauth', access: 'a1', refresh: 'r1', expires: Date.now() + 600000, projectId: 'p1', hasArgon: true },
+        { id: 'acc_argon_2', type: 'oauth', access: 'a2', refresh: 'r2', expires: Date.now() + 600000, projectId: 'p2', hasArgon: true },
+      ],
+      active: async () => ({ id: 'acc_argon_1', type: 'oauth', access: 'a1', refresh: 'r1', expires: Date.now() + 600000, projectId: 'p1', hasArgon: true }),
+      setActive: vi.fn(async () => {}),
+    } as any
+
+    const session = new AntigravitySession(store)
+    vi.spyOn(session, 'getAdvancedSettings').mockResolvedValue({
+      defaultReasoningEffort: 'medium',
+      modelContextWindow: 1048576,
+      switchingStrategy: 'round_robin',
+      proactiveThreshold: 20,
+    })
+    vi.spyOn(session as any, 'refreshGrantForAccount').mockImplementation(async (id: any) => ({
+      type: 'oauth', access: `token_${String(id)}`, refresh: `ref_${String(id)}`, expires: Date.now() + 600000, projectId: `proj_${String(id)}`,
+    }))
+
+    const lease1 = await session.acquire({ model: 'gemini-4-argon' })
+    expect(lease1?.accountId).toBe('acc_argon_2')
+
+    const lease2 = await session.acquire({ model: 'gemini-4-argon' })
+    expect(lease2?.accountId).toBe('acc_argon_1')
+  })
+
+  it('switches to highest quota account when switchingStrategy is proactive_threshold and active is low', async () => {
+    const store = {
+      list: async () => [
+        { id: 'acc_low', type: 'oauth', access: 'a1', refresh: 'r1', expires: Date.now() + 600000, projectId: 'p1' },
+        { id: 'acc_high', type: 'oauth', access: 'a2', refresh: 'r2', expires: Date.now() + 600000, projectId: 'p2' },
+      ],
+      active: async () => ({ id: 'acc_low', type: 'oauth', access: 'a1', refresh: 'r1', expires: Date.now() + 600000, projectId: 'p1' }),
+      setActive: vi.fn(async () => {}),
+    } as any
+
+    const session = new AntigravitySession(store)
+    vi.spyOn(session, 'getAdvancedSettings').mockResolvedValue({
+      defaultReasoningEffort: 'medium',
+      modelContextWindow: 1048576,
+      switchingStrategy: 'proactive_threshold',
+      proactiveThreshold: 20,
+    })
+    vi.spyOn(session, 'retrieveAllQuotas').mockResolvedValue({
+      acc_low: { accountId: 'acc_low', ok: true, groups: [{ displayName: 'G', buckets: [{ bucketId: '5h', window: '5h', remainingFraction: 0.1 }] }] },
+      acc_high: { accountId: 'acc_high', ok: true, groups: [{ displayName: 'G', buckets: [{ bucketId: '5h', window: '5h', remainingFraction: 0.9 }] }] },
+    })
+    vi.spyOn(session as any, 'refreshGrantForAccount').mockImplementation(async (id: any) => ({
+      type: 'oauth', access: `token_${String(id)}`, refresh: `ref_${String(id)}`, expires: Date.now() + 600000, projectId: `proj_${String(id)}`,
+    }))
+
+    const lease = await session.acquire()
+    expect(lease?.accountId).toBe('acc_high')
+    expect(store.setActive).toHaveBeenCalledWith('acc_high')
+  })
+})
+
+describe('AntigravityAdapter reliability patterns (AM2, AM3, AM4)', () => {
+  it('heals 400 bad-image rejection in place by blacklisting image ID and retrying with text placeholder (AM2)', async () => {
+    let callCount = 0
+    const fake = fakeSession({})
+    ;(fake.session as any).acquire = async () => ({
+      oauth,
+      accountId: 'acc_test',
+      email: 'test@example.test',
+      cca: {
+        async *chat(): AsyncIterable<CcaEvent> {
+          callCount++
+          if (callCount === 1) {
+            throw new CcaHttpError(400, 'INVALID_ARGUMENT: image processing failed')
+          }
+          yield { type: 'text', text: 'I see the image description now' }
+          yield { type: 'finish', reason: 'STOP' }
+        },
+      },
+    })
+
+    const pngBytes = Uint8Array.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    const adapter = createAntigravityAdapter(fake.session, {
+      nativeTools: true,
+      nativeSearch: true,
+      resolveAttachments: () => ({
+        readImage: async (ref: any) => ({ ref: { ...ref, mediaType: 'image/png' }, data: pngBytes }),
+      }) as any,
+    })
+
+    const messages = [
+      {
+        id: 'u1',
+        role: 'user',
+        content: [
+          { type: 'text', text: 'Check this image' },
+          { type: 'image', attachment: { attachmentId: 'att-bad-img-1', name: 'broken.png' } },
+        ],
+      },
+    ] as any
+
+    const chunks = await collect(adapter.stream({
+      provider: 'agy-google-antigravity',
+      model: 'gemini-3.8-flash',
+      messages,
+      tools: [],
+    } as any))
+
+    expect(callCount).toBe(2)
+    expect(visibleText(chunks)).toBe('I see the image description now')
+  })
+
+  it('fails over to ready backup account on 503 capacity error before first token (AM3)', async () => {
+    let callCount = 0
+    const session = {
+      thoughtSignatures: new Map<string, string>(),
+      acquire: async () => ({
+        oauth,
+        accountId: 'acc_overloaded',
+        email: 'overloaded@example.test',
+        cca: {
+          async *chat(): AsyncIterable<CcaEvent> {
+            callCount++
+            throw new CcaHttpError(503, 'The service is currently unavailable. Capacity exhausted.')
+          },
+        },
+      }),
+      findFailoverAccount: async (excludeId: string) => {
+        return excludeId === 'acc_overloaded'
+          ? { id: 'acc_backup', email: 'backup@example.test', projectId: 'proj-backup' }
+          : undefined
+      },
+      acquireForAccount: async (id: string) => {
+        if (id !== 'acc_backup') return undefined
+        return {
+          oauth,
+          accountId: 'acc_backup',
+          email: 'backup@example.test',
+          cca: {
+            async *chat(): AsyncIterable<CcaEvent> {
+              callCount++
+              yield { type: 'text', text: 'recovered from 503 capacity error' }
+              yield { type: 'finish', reason: 'STOP' }
+            },
+          },
+        }
+      },
+      switchAccount: async () => {},
+    } as unknown as AntigravitySession
+
+    const adapter = createAntigravityAdapter(session, { nativeTools: true, nativeSearch: true })
+    const chunks = await collect(adapter.stream(options('hello 503')))
+
+    expect(callCount).toBe(2)
+    expect(visibleText(chunks)).toBe('recovered from 503 capacity error')
+  })
+
+  it('marks account dead only on permanent account ban, not on generic or model 403 (AM3)', async () => {
+    const authRejected: string[] = []
+    const fake = fakeSession({})
+    ;(fake.session as any).acquire = async () => ({
+      oauth,
+      accountId: 'acc_banned',
+      email: 'banned@example.test',
+      cca: {
+        async *chat(): AsyncIterable<CcaEvent> {
+          throw new CcaHttpError(403, 'PERMISSION_DENIED: USER_SUSPENDED account_forbidden')
+        },
+      },
+    })
+    ;(fake.session as any).noteAuthRejected = (id: string) => { authRejected.push(id) }
+
+    const adapter = createAntigravityAdapter(fake.session, { nativeTools: true, nativeSearch: true })
+    await expect(collect(adapter.stream(options('test ban')))).rejects.toThrow()
+    expect(authRejected).toEqual(['acc_banned'])
+
+    // Generic 403 without account ban does NOT mark dead
+    authRejected.length = 0
+    ;(fake.session as any).acquire = async () => ({
+      oauth,
+      accountId: 'acc_healthy',
+      email: 'healthy@example.test',
+      cca: {
+        async *chat(): AsyncIterable<CcaEvent> {
+          throw new CcaHttpError(403, 'Forbidden: Request not allowed')
+        },
+      },
+    })
+    await expect(collect(adapter.stream(options('test generic 403')))).rejects.toThrow()
+    expect(authRejected).toHaveLength(0)
+  })
+
+  it('applies extended first-byte idle timeout for high reasoning effort or inline images (AM4)', async () => {
+    const fake = fakeSession({ chat: [{ type: 'text', text: 'deep response' }, { type: 'finish', reason: 'STOP' }] })
+    const adapter = createAntigravityAdapter(fake.session, { nativeTools: true, nativeSearch: true })
+
+    const chunks = await collect(adapter.stream({
+      ...options('reasoning high prompt'),
+      reasoningEffort: 'high' as any,
+    }))
+    expect(visibleText(chunks)).toBe('deep response')
   })
 })

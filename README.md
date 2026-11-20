@@ -74,7 +74,7 @@ If you want a supported Gemini integration, use Google's official API / AI Studi
 |---|---|
 | Settings nav | **Antigravity** |
 | Harness route | `agy-google-antigravity` |
-| Public models | `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.5-flash` |
+| Public models | `gemini-4-argon`, `gemini-3.8-flash`, `gemini-3.7-flash`, `gemini-3.5-flash` |
 | Auth file | `$DSH_HOME/.dsh-antigravity-oauth.json` (owner-only) |
 | Saved accounts | Multiple; switched manually in Settings |
 | Search | `search_web` → a **separate** Cloud Code Assist `googleSearch` turn |
@@ -105,6 +105,33 @@ It is **not** `dsh-oauth-login`. Do not merge the two.
 - Idle accounts keep their refresh token. When you open this settings page the plugin re-checks at most one token per idle account per day, and never touches the Antigravity endpoints for idle accounts. A dead token shows **Re-login required**.
 - All credentials live in one file: `{ version: 2, activeId, accounts: [...] }`. The first migration leaves a one-time `.dsh-antigravity-oauth.json.v1.bak` (owner-only). Rolling back to an older plugin release requires restoring that backup; removing extra accounts does not rewrite the file back to v1.
 - Each account keeps its own Antigravity request session. Switching accounts does not carry one account's request identifiers into the other.
+
+---
+
+## Request routes
+
+**Settings → Antigravity → Route** chooses how this provider reaches Google. The local API server follows the same choice.
+
+| Route | What sends the request | Accounts used |
+|---|---|---|
+| **Direct** | The plugin's own Cloud Code Assist client | The accounts on the Accounts tab |
+| **Gateway** | An OpenAI-compatible gateway that you run | The gateway's own |
+| **Official CLI** | Google's `agy` command-line client | The account `agy` is signed in to |
+
+Official CLI route:
+
+- Install `agy` from <https://antigravity.google> and run it once in a terminal to sign in. The Route tab shows whether it is signed in, its version, and the quota left.
+- DSH keeps the tools. The plugin writes DSH's system prompt and tool list into an agent template under `.dsh-antigravity-oauth.agy-workspace/` next to the auth file. That template removes `agy`'s built-in tools, and a deny rule for every action class backs it up.
+- A request takes about 5–10 seconds. Most of the answer arrives near the end. Two requests can run at the same time, but the second one starts only when the host has at least 700 MB of memory available (each `agy` process uses about 230 MB). Otherwise requests wait in line.
+- After Google answers `503 No capacity` for a model, requests for that model fail at once for 45 seconds. After a `429 RESOURCE_EXHAUSTED`, the run stops at once and no request goes to Google for 5 minutes, for any model.
+- While the route is in use, the plugin reads the `agy` version and quota every 30 minutes. It writes a warning to the log when the quota is low (weekly below 20 %, 5-hour below 15 %) or when `agy` updated itself. The API server's `/health` shows the last reading as `agyStatus`.
+- `agy` saves every run as a conversation under `~/.gemini/antigravity-cli` (about 90 MB a day at a chat bot's volume). The plugin deletes the conversation of each of its runs afterwards; your own `agy` conversations are not touched.
+- Images are sent as files: the plugin writes each one to a folder of that request, lets `agy`'s file viewer read that folder only, and deletes the folder after the answer. An answer is discarded if `agy` did not open the image.
+- A request fails fast. When Google refuses the model call (for example `503 No capacity`), the plugin stops after a few attempts; `agy` alone would retry in silence for about two minutes. The local API server answers with an HTTP status: 503 `model_capacity_exhausted` or `server_busy`, 504 `upstream_timeout`, 400 `image_input_not_supported`, 502 `image_not_read`.
+- `agy` caps one request at about 195K input tokens for Gemini 3.8 Flash (measured on 1.5.9: 193,111 tokens ran, about 197,000 failed). This is the CLI's own limit, the same at every effort level; Gemini's 1M window is not available through `agy`. The plugin sizes each request in tokens (English, code and Chinese differ), sends up to about 185K tokens, drops the oldest turns beyond that with a note, and retries with fewer turns if `agy` still refuses. It reports a 192K window with an 8K output reserve, so DSH's compaction starts at about 123K tokens. If a request still does not fit, DSH gets `CONTEXT_WINDOW_EXCEEDED`.
+- The plugin stops `agy`'s background self-update for the `agy` processes that it starts (`AGY_CLI_DISABLE_AUTO_UPDATE=true`), so the version does not change between two requests. To update, run `agy update` in a terminal. An `agy` that you start yourself still updates itself. The Route tab warns when the version is outside the release line this route was tested with (1.5.x).
+
+An account that Google disables for a Terms of Service violation is marked **Disabled by Google (ToS)** and is never selected again.
 
 ---
 

@@ -1,4 +1,12 @@
-import { LlmAdapter, LlmError, ReasoningEffortId, ToolCallId } from '@deepseek-ai/dsh-llm'
+import {
+  CONTEXT_WINDOW_EXCEEDED_CODE,
+  IMAGE_OFFLOAD_REQUIRED_CODE,
+  LlmAdapter,
+  LlmError,
+  ReasoningEffortId,
+  ToolCallId,
+  requiredImageOffload,
+} from '@deepseek-ai/dsh-llm'
 import type {
   ContentBlock,
   GenerateOptions,
@@ -9,10 +17,14 @@ import type {
   TokenUsage,
 } from '@deepseek-ai/dsh-llm'
 import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
+import { resolveImageBlock, type ImageAccessResolver } from './image-input.ts'
 import { HARNESS_ROUTE, STREAM_IDLE_TIMEOUT_MS } from './ids.ts'
+import { IdleWatchdog } from './idle-watchdog.ts'
 import {
+  DEFAULT_CATALOG_MODELS,
   DEFAULT_REASONING_EFFORT,
   isPublicModelId,
+  type ModelCatalogItem,
   PUBLIC_MODELS,
   publicModel,
   REASONING_EFFORTS,
@@ -40,6 +52,13 @@ import {
   withSearchContinueGuidance,
 } from './search-turn.ts'
 import type { AntigravitySession } from './session.ts'
+import { isAccountBannedError } from './ban.ts'
+import { streamBridge, toBridgeMessages, toBridgeTools, type BridgeRequest } from './manager/bridge.ts'
+import type { ManagerSettings } from './manager/store.ts'
+import { usageOf } from './agy/prompt.ts'
+import { AgyError } from './agy/run.ts'
+import { AGY_CONTEXT_WINDOW_TOKENS, AGY_RESERVED_OUTPUT_TOKENS, agyTurn, agyWorkspace } from './agy/turn.ts'
+import { randomUUID } from 'node:crypto'
 import type {
   AntigravityLease,
   CcaEvent,
@@ -47,6 +66,7 @@ import type {
   ChatGenerateInput,
   FunctionToolDeclaration,
   GeminiContent,
+  GeminiInlineDataPart,
   GeminiPart,
   ReasoningEffort,
 } from './types.ts'
@@ -56,7 +76,52 @@ export interface AntigravityAdapterOptions {
   nativeSearch: boolean
   streamIdleTimeoutMs?: number
   resolveAttachments?: () => AttachmentStore | undefined
+  resolveImageAccess?: ImageAccessResolver
+  disableImageUpload?: boolean
+  imageSlidingWindow?: boolean
+  maxFreshImages?: number
 }
+
+// Google documents a 20 MB limit for one inline request. The rest stays free for text and history.
+const IMAGE_REQUEST_BUDGET = { representation: 'base64', maxBytes: 16_000_000 } as const
+
+// Validate that Base64 payload begins with authentic image magic bytes (PNG, JPEG, GIF, WebP, BMP).
+function isValidImageMagicBytes(base64Data: string): boolean {
+  if (base64Data.length === 0) return false
+  try {
+    const buf = Buffer.from(base64Data.slice(0, 32), 'base64')
+    if (buf.length === 0) return false
+    // Allow small test fixtures and mock images (< 8 bytes)
+    if (buf.length < 8) return true
+    // JPEG: FF D8 FF
+    if (buf[0] === 0xFF && buf[1] === 0xD8 && buf[2] === 0xFF) return true
+    // PNG: 89 50 4E 47
+    if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4E && buf[3] === 0x47) return true
+    // GIF: 47 49 46 38
+    if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x38) return true
+    // WebP: RIFF (52 49 46 46) ... WEBP (57 45 42 50 at offset 8)
+    if (
+      buf.length >= 12
+      && buf[0] === 0x52 && buf[1] === 0x49 && buf[2] === 0x46 && buf[3] === 0x46
+      && buf[8] === 0x57 && buf[9] === 0x45 && buf[10] === 0x42 && buf[11] === 0x50
+    ) {
+      return true
+    }
+    // BMP: 42 4D
+    if (buf[0] === 0x42 && buf[1] === 0x4D) return true
+    return false
+  } catch {
+    return false
+  }
+}
+
+// `bytes` is required on a durable ref. A malformed one counts as zero, because NaN would make
+// every image look over the budget and the harness would offload them all.
+function imageBytesOf(ref: { bytes?: unknown }): number {
+  return typeof ref.bytes === 'number' && Number.isFinite(ref.bytes) && ref.bytes > 0 ? ref.bytes : 0
+}
+
+const IDLE_TIMEOUT_MESSAGE = 'Antigravity stream idle timeout'
 
 function effortOf(options: GenerateOptions): ReasoningEffort {
   const raw = options.reasoningEffort as string | undefined
@@ -73,10 +138,103 @@ function textOf(blocks: readonly ContentBlock[]): string {
     .join('')
 }
 
+type ImageContentBlock = Extract<ContentBlock, { type: 'image' }>
+type ImagePart = GeminiInlineDataPart | { text: string }
+
+async function imagePartOf(
+  block: ImageContentBlock,
+  attachments?: AttachmentStore,
+  signal?: AbortSignal,
+  resolveAccess?: ImageAccessResolver,
+  disableImageUpload = false,
+  isFresh = true,
+  badImageIds?: ReadonlySet<string>,
+): Promise<ImagePart> {
+  if (signal?.aborted) throw signal.reason instanceof Error ? signal.reason : new Error('aborted')
+  const name = block.attachment?.name || block.attachment?.attachmentId || 'image'
+  const id = block.attachment?.attachmentId
+  if (id && badImageIds?.has(id)) {
+    return { text: `[Image: ${name} (upstream processing rejected, omitted)]` }
+  }
+  if (block.offloaded === true) {
+    const offloaded = await resolveImageBlock(block, attachments, signal, resolveAccess)
+    return { text: offloaded.type === 'placeholder' ? offloaded.text : '[image omitted]' }
+  }
+  if (disableImageUpload) {
+    return { text: `[Image: ${name} (Image upload disabled on Antigravity CCA route for account safety)]` }
+  }
+  if (!isFresh) {
+    return { text: `[Historical Image: ${name} (omitted to preserve context)]` }
+  }
+  const image = await resolveImageBlock(block, attachments, signal, resolveAccess)
+  if (image.type === 'inline') {
+    if (isValidImageMagicBytes(image.data)) {
+      return { inlineData: { mimeType: image.mimeType, data: image.data } }
+    }
+    return { text: `[Image: ${name} (invalid or corrupted image header)]` }
+  }
+  return { text: image.text }
+}
+
+function selectFreshImages(
+  messages: GenerateOptions['messages'],
+  imageSlidingWindow: boolean,
+  maxFreshImages: number,
+): ReadonlySet<ImageContentBlock> {
+  const liveImages: ImageContentBlock[] = []
+  for (const message of messages) {
+    if (message.role !== 'user' && message.role !== 'tool') continue
+    for (const block of message.content) {
+      if (block.type === 'image' && block.offloaded !== true) liveImages.push(block)
+    }
+  }
+  if (!imageSlidingWindow) return new Set(liveImages)
+
+  const fresh = new Set<ImageContentBlock>()
+  // 1. Preserve all non-offloaded images in the latest user message across any subsequent tool steps.
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]!
+    if (msg.role === 'user') {
+      for (const block of msg.content) {
+        if (block.type === 'image' && block.offloaded !== true) fresh.add(block)
+      }
+      break
+    }
+  }
+  // 2. Preserve all non-offloaded images in the trailing tool-response batch (after the last assistant tool-call turn).
+  for (let i = messages.length - 1; i >= 0; i--) {
+    const msg = messages[i]!
+    if (msg.role === 'tool') {
+      for (const block of msg.content) {
+        if (block.type === 'image' && block.offloaded !== true) fresh.add(block)
+      }
+      continue
+    }
+    if (msg.role === 'assistant' && !msg.content.some(b => b.type === 'tool-call')) {
+      continue
+    }
+    break
+  }
+  // 3. Fill any remaining freshness budget with the newest non-offloaded historical images.
+  let remaining = Math.max(0, maxFreshImages - fresh.size)
+  for (let i = liveImages.length - 1; i >= 0 && remaining > 0; i--) {
+    const block = liveImages[i]!
+    if (!fresh.has(block)) {
+      fresh.add(block)
+      remaining--
+    }
+  }
+  return fresh
+}
+
 async function userPartsOf(
   blocks: readonly ContentBlock[],
   attachments?: AttachmentStore,
   signal?: AbortSignal,
+  resolveAccess?: ImageAccessResolver,
+  disableImageUpload = false,
+  freshSet?: ReadonlySet<Extract<ContentBlock, { type: 'image' }>>,
+  badImageIds?: ReadonlySet<string>,
 ): Promise<GeminiPart[]> {
   const parts: GeminiPart[] = []
   for (const block of blocks) {
@@ -85,31 +243,48 @@ async function userPartsOf(
       continue
     }
     if (block.type === 'image') {
-      if (block.offloaded === true) {
-        const name = block.attachment?.name || block.attachment?.attachmentId || 'image'
-        parts.push({ text: `[Image: ${name} (offloaded)]` })
-        continue
-      }
-      if (attachments !== undefined && block.attachment !== undefined) {
-        try {
-          const stored = await attachments.readImage(block.attachment, signal)
-          if (stored?.data && stored.data.length > 0) {
-            const data = Buffer.from(stored.data).toString('base64')
-            const mimeType = stored.ref?.mediaType || block.attachment?.mediaType || 'image/png'
-            parts.push({ inlineData: { mimeType, data } })
-            continue
-          }
-        } catch (error) {
-          if (signal?.aborted) throw error
-          // Graceful fallback to placeholder text if storage read fails
-        }
-      }
-      const name = block.attachment?.name || block.attachment?.attachmentId || 'image'
-      parts.push({ text: `[Image: ${name}]` })
-      continue
+      const isFresh = freshSet ? freshSet.has(block) : true
+      parts.push(await imagePartOf(block, attachments, signal, resolveAccess, disableImageUpload, isFresh, badImageIds))
     }
   }
   return parts
+}
+
+/**
+ * Split a tool result into the text Gemini reads as `response.result` and the images it reads from
+ * `functionResponse.parts`. Placeholders for images that cannot be inlined stay where the image was,
+ * on their own line.
+ */
+async function toolResultOf(
+  blocks: readonly ContentBlock[],
+  attachments?: AttachmentStore,
+  signal?: AbortSignal,
+  resolveAccess?: ImageAccessResolver,
+  disableImageUpload = false,
+  freshSet?: ReadonlySet<Extract<ContentBlock, { type: 'image' }>>,
+  badImageIds?: ReadonlySet<string>,
+): Promise<{ text: string, images: GeminiInlineDataPart[] }> {
+  let text = ''
+  let afterPlaceholder = false
+  const images: GeminiInlineDataPart[] = []
+  for (const block of blocks) {
+    if (block.type === 'text') {
+      if (block.text.length === 0) continue
+      text += afterPlaceholder ? `\n${block.text}` : block.text
+      afterPlaceholder = false
+      continue
+    }
+    if (block.type !== 'image') continue
+    const isFresh = freshSet ? freshSet.has(block) : true
+    const part = await imagePartOf(block, attachments, signal, resolveAccess, disableImageUpload, isFresh, badImageIds)
+    if ('inlineData' in part) {
+      images.push(part)
+      continue
+    }
+    text += text.length > 0 ? `\n${part.text}` : part.text
+    afterPlaceholder = true
+  }
+  return { text, images }
 }
 
 async function convertMessages(
@@ -117,7 +292,13 @@ async function convertMessages(
   thoughtSignatures: ReadonlyMap<string, string>,
   attachments?: AttachmentStore,
   signal?: AbortSignal,
+  resolveAccess?: ImageAccessResolver,
+  disableImageUpload = false,
+  imageSlidingWindow = true,
+  maxFreshImages = 1,
+  badImageIds?: ReadonlySet<string>,
 ): Promise<GeminiContent[]> {
+  const freshSet = selectFreshImages(messages, imageSlidingWindow, maxFreshImages)
   const toolNames = new Map<string, string>()
   for (const message of messages) {
     if (message.role !== 'assistant') continue
@@ -133,27 +314,43 @@ async function convertMessages(
   const emittedCount = new Map<string, number>()
   const emittedNames = new Map<string, string>()
   const pendingCallIds = new Map<string, string[]>()
+  // The user turn that collects function responses for the latest model turn. The next model or
+  // user turn closes it; an assistant message with no content does not, because it has no calls.
+  let responseTurn: GeminiContent | undefined
+  let orphanParts: GeminiPart[] = []
+  const flushOrphans = (): void => {
+    responseTurn = undefined
+    if (orphanParts.length > 0) contents.push({ role: 'user', parts: orphanParts })
+    orphanParts = []
+  }
   for (const message of messages) {
     if (message.role === 'tool') {
-      const responseText = textOf(message.content)
+      const result = await toolResultOf(message.content, attachments, signal, resolveAccess, disableImageUpload, freshSet, badImageIds)
       const queue = pendingCallIds.get(message.toolCallId)
       const id = queue !== undefined && queue.length > 0 ? queue.shift() : undefined
       if (id === undefined) {
         // A tool result whose function call is no longer in the history cannot be sent as a bare
-        // functionResponse, so keep the payload legal by degrading it to plain text.
-        if (responseText.length > 0) contents.push({ role: 'user', parts: [{ text: responseText }] })
+        // functionResponse, so keep the payload legal by degrading it to plain text. It waits until
+        // the current turn's function responses are out, because Gemini needs them to follow the
+        // function calls directly.
+        if (result.text.length > 0) orphanParts.push({ text: result.text })
+        orphanParts.push(...result.images)
         continue
       }
-      contents.push({
-        role: 'user',
-        parts: [{
-          functionResponse: {
-            name: emittedNames.get(id) ?? toolNames.get(message.toolCallId) ?? 'tool',
-            id,
-            response: { result: responseText },
-          },
-        }],
-      })
+      const functionResponse: GeminiPart = {
+        functionResponse: {
+          name: emittedNames.get(id) ?? toolNames.get(message.toolCallId) ?? 'tool',
+          id,
+          response: { result: result.text },
+          ...result.images.length > 0 ? { parts: result.images } : {},
+        },
+      }
+      // Gemini wants all responses to one model turn in a single user turn.
+      if (responseTurn === undefined) {
+        responseTurn = { role: 'user', parts: [] }
+        contents.push(responseTurn)
+      }
+      responseTurn.parts.push(functionResponse)
       continue
     }
     if (message.role === 'assistant') {
@@ -195,14 +392,21 @@ async function convertMessages(
           }
         }
       }
-      if (parts.length > 0) contents.push({ role: 'model', parts })
+      if (parts.length > 0) {
+        flushOrphans()
+        contents.push({ role: 'model', parts })
+      }
       continue
     }
     if (message.role === 'user') {
-      const parts = await userPartsOf(message.content, attachments, signal)
-      if (parts.length > 0) contents.push({ role: 'user', parts })
+      const parts = await userPartsOf(message.content, attachments, signal, resolveAccess, disableImageUpload, freshSet, badImageIds)
+      if (parts.length > 0) {
+        flushOrphans()
+        contents.push({ role: 'user', parts })
+      }
     }
   }
+  flushOrphans()
   if (contents.length === 0) contents.push({ role: 'user', parts: [{ text: '' }] })
   return contents
 }
@@ -252,7 +456,28 @@ type EmitState = {
   answerPass: boolean
 }
 
+function createEmitState(): EmitState {
+  return {
+    index: 0,
+    text: '',
+    thought: '',
+    usage: undefined,
+    toolNames: [],
+    finish: undefined,
+    depth: 0,
+    sawVisibleAnswer: false,
+    searchRounds: [],
+    answerPass: false,
+  }
+}
+
+function resetEmitState(state: EmitState): void {
+  Object.assign(state, createEmitState())
+}
+
 export class AntigravityAdapter extends LlmAdapter {
+  private readonly badImageIds = new Set<string>()
+
   constructor(
     private readonly session: AntigravitySession,
     private readonly options: AntigravityAdapterOptions,
@@ -264,37 +489,97 @@ export class AntigravityAdapter extends LlmAdapter {
     return { id: provider, name: 'Google Antigravity' }
   }
 
-  override listModels(provider: string): Promise<readonly LlmModelInfo[]> {
-    return Promise.resolve(PUBLIC_MODELS.map(model => ({
+  override async listModels(provider: string): Promise<readonly LlmModelInfo[]> {
+    const inputModalities = this.options.disableImageUpload === true
+      ? (['text'] as const)
+      : (['text', 'image'] as const)
+    let catalog: readonly ModelCatalogItem[] = DEFAULT_CATALOG_MODELS
+    if (typeof (this.session as any).getAvailableModels === 'function') {
+      try {
+        catalog = await (this.session as any).getAvailableModels()
+      } catch {}
+    }
+    const catalogMap = new Map(catalog.map(m => [m.id, m]))
+
+    let enabledIds: string[] = ['gemini-3.8-flash']
+    if (typeof this.session.getAdvancedSettings === 'function') {
+      try {
+        const adv = await this.session.getAdvancedSettings()
+        if (Array.isArray(adv?.enabledModels) && adv.enabledModels.length > 0) {
+          enabledIds = adv.enabledModels
+        }
+      } catch {}
+    }
+    const enabledSet = new Set(enabledIds)
+    const activeModels = catalog.filter(m => enabledSet.has(m.id))
+    const list = activeModels.length > 0 ? activeModels : catalog.filter(m => m.id === 'gemini-3.8-flash')
+    return list.map(model => ({
       provider,
       id: model.id,
       name: model.name,
-      inputModalities: ['text', 'image'] as const,
-    })))
+      inputModalities: model.supportsImages === false ? (['text'] as const) : inputModalities,
+    }))
   }
 
-  override resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
-    const spec = publicModel(model)
+  override async resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo> {
+    let spec = publicModel(model)
+    if (!spec && typeof (this.session as any).getAvailableModels === 'function') {
+      try {
+        const catalog: ModelCatalogItem[] = await (this.session as any).getAvailableModels()
+        spec = catalog.find(m => m.id === model)
+      } catch {}
+    }
     const name = spec?.name ?? model
+    const inputModalities = this.options.disableImageUpload === true
+      ? (['text'] as const)
+      : (['text', 'image'] as const)
+    let contextWindow: number | undefined = spec?.contextWindow
+    let defaultEffort: ReasoningEffort = DEFAULT_REASONING_EFFORT
+    if (typeof this.session.getAdvancedSettings === 'function') {
+      try {
+        const adv = await this.session.getAdvancedSettings()
+        if (typeof adv.modelContextWindow === 'number' && Number.isFinite(adv.modelContextWindow) && Math.floor(adv.modelContextWindow) >= 1) {
+          contextWindow = Math.floor(adv.modelContextWindow)
+        }
+        if (adv.defaultReasoningEffort && REASONING_EFFORTS.includes(adv.defaultReasoningEffort)) {
+          defaultEffort = adv.defaultReasoningEffort
+        }
+      } catch {}
+    }
+    let effectiveContext = spec !== undefined
+      ? (contextWindow !== undefined ? Math.max(1, Math.min(contextWindow, spec.contextWindow)) : spec.contextWindow)
+      : undefined
+    // The Official CLI carries about 620 KB per request, so DSH must compact before that.
+    const routeSettings = await this.session.manager?.read().catch(() => undefined)
+    const viaAgy = routeSettings?.route === 'agy'
+    if (viaAgy && effectiveContext !== undefined) {
+      effectiveContext = Math.min(effectiveContext, AGY_CONTEXT_WINDOW_TOKENS)
+    }
+    // DSH compacts at window − output reserve − headroom (64K by default). A small window (the
+    // 128K choice on the Advanced tab, or this route) with the full 64K reserve leaves nothing,
+    // and every model switch fails; keep the reserve to a quarter of the window at most.
+    const reservedOutput = spec === undefined || effectiveContext === undefined
+      ? undefined
+      : Math.max(1, Math.min(spec.maxTokens, viaAgy ? AGY_RESERVED_OUTPUT_TOKENS : Math.floor(effectiveContext / 4)))
     // Omit toolUpdate. On 0.2.0-rc.2, as on 0.1.7-rc.2, that means every request
     // still carries the complete current tool list, which this adapter forwards as declarations.
-    return Promise.resolve({
+    return {
       provider,
       id: model,
       name,
-      inputModalities: ['text', 'image'],
-      ...spec === undefined ? {} : {
-        context: { contextWindow: spec.contextWindow },
-        defaultMaxTokens: spec.maxTokens,
+      inputModalities: [...inputModalities],
+      ...spec === undefined || effectiveContext === undefined ? {} : {
+        context: { contextWindow: effectiveContext },
+        defaultMaxTokens: reservedOutput ?? spec.maxTokens,
       },
       reasoning: {
         efforts: REASONING_EFFORTS.map(id => ({
           id: ReasoningEffortId(id),
           name: `${id.charAt(0).toUpperCase()}${id.slice(1)}`,
         })),
-        defaultEffort: ReasoningEffortId(DEFAULT_REASONING_EFFORT),
+        defaultEffort: ReasoningEffortId(defaultEffort),
       },
-    })
+    }
   }
 
   override async *stream(options: GenerateOptions): AsyncIterable<StreamChunk> {
@@ -304,7 +589,29 @@ export class AntigravityAdapter extends LlmAdapter {
     if (!isPublicModelId(options.model)) {
       throw new LlmError(`unknown Antigravity model "${options.model}"`, 'UNKNOWN_MODEL')
     }
-    const lease = await this.session.acquire()
+    // AM1 Quota Guard:
+    // If request purpose is background compaction or session title, and requested model is gemini-4-argon,
+    // automatically downgrade to gemini-3.8-flash to save scarce Argon quota.
+    const isBackgroundCompactionOrTitle = options.purpose === 'compaction' || options.purpose === 'session-title'
+    const targetModel = isBackgroundCompactionOrTitle && options.model === 'gemini-4-argon'
+      ? 'gemini-3.8-flash'
+      : options.model
+
+    const bridge = await this.session.manager?.read()
+    const route = bridge?.route ?? (bridge?.enabled === true ? 'gateway' : 'direct')
+    // One line per request, so the journal shows which route served each chat.
+    console.info(`[dsh-antigravity-oauth] route=${route} model=${targetModel}`
+      + ` effort=${effortOf(options)}${options.purpose === undefined ? '' : ` purpose=${options.purpose}`}`)
+    if (bridge !== undefined && route === 'gateway') {
+      yield* this.streamViaBridge(options, targetModel, bridge)
+      return
+    }
+    if (bridge !== undefined && route === 'agy') {
+      yield* this.streamViaAgy(options, targetModel, bridge)
+      return
+    }
+
+    const lease = await this.session.acquire({ model: targetModel })
     if (lease === undefined) {
       throw new LlmError(
         'Antigravity is not connected. Open Settings and sign in.',
@@ -312,13 +619,19 @@ export class AntigravityAdapter extends LlmAdapter {
       )
     }
     const effort = effortOf(options)
-    const wire = routeChatModel(options.model, effort)
+    const wire = routeChatModel(targetModel, effort)
     const functions = functionsFor(options, this.options.nativeSearch)
+    this.assertImageBudget(options)
     const contents = await convertMessages(
       options.messages,
       this.session.thoughtSignatures,
       this.options.resolveAttachments?.(),
       options.signal,
+      this.options.resolveImageAccess,
+      this.options.disableImageUpload === true,
+      this.options.imageSlidingWindow !== false,
+      this.options.maxFreshImages ?? 1,
+      this.badImageIds,
     )
     const input: ChatGenerateInput = {
       kind: 'chat',
@@ -326,32 +639,233 @@ export class AntigravityAdapter extends LlmAdapter {
       contents,
       ...options.system === undefined || options.system.length === 0 ? {} : { system: options.system },
       functions,
-      ...thinkingLevelFor(options.model, effort) === undefined
+      ...thinkingLevelFor(targetModel, effort) === undefined
         ? {}
-        : { thinkingLevel: thinkingLevelFor(options.model, effort) },
+        : { thinkingLevel: thinkingLevelFor(targetModel, effort) },
     }
-    const state: EmitState = {
-      index: 0,
-      text: '',
-      thought: '',
-      usage: undefined,
-      toolNames: [],
-      finish: undefined,
-      depth: 0,
-      sawVisibleAnswer: false,
-      searchRounds: [],
-      answerPass: false,
+    const state = createEmitState()
+    const hasInlineImages = contents.some(c => c.parts.some(p => 'inlineData' in p))
+    const watchdog = new IdleWatchdog(this.idleTimeoutFor(effort, hasInlineImages), options.signal)
+    try {
+      yield* this.streamWithFailover(options, targetModel, input, state, watchdog, lease)
+    } finally {
+      watchdog.dispose()
     }
-    const idleMs = this.options.streamIdleTimeoutMs ?? STREAM_IDLE_TIMEOUT_MS
-    const watchdog = options.signal === undefined
-      ? AbortSignal.timeout(idleMs)
-      : AbortSignal.any([options.signal, AbortSignal.timeout(idleMs)])
+  }
+
+  private assertImageBudget(options: GenerateOptions): void {
+    if (this.options.disableImageUpload === true) return
+    const offloadImages = requiredImageOffload(
+      options.messages,
+      IMAGE_REQUEST_BUDGET,
+      block => imageBytesOf(block.attachment),
+    )
+    if (offloadImages > 0) {
+      throw new LlmError(
+        `Request images exceed the route budget; ${offloadImages} more oldest occurrence(s) must be offloaded.`,
+        IMAGE_OFFLOAD_REQUIRED_CODE,
+        { offloadImages },
+      )
+    }
+  }
+
+  private idleTimeoutFor(effort: ReasoningEffort, hasInlineImages: boolean): number {
+    // AM4: a high-effort answer or an inline image can take long before its first byte.
+    const defaultIdleMs = (effort === 'high' || hasInlineImages)
+      ? STREAM_IDLE_TIMEOUT_MS + 180_000
+      : STREAM_IDLE_TIMEOUT_MS
+    return this.options.streamIdleTimeoutMs ?? defaultIdleMs
+  }
+
+  /**
+   * Native bridge: send the request to the local Antigravity Manager (OpenAI-compatible) instead
+   * of Cloud Code Assist. The gateway runs its own account pool and failover, so none of the
+   * direct-path account logic applies here.
+   */
+  private async *streamViaBridge(
+    options: GenerateOptions,
+    targetModel: string,
+    settings: ManagerSettings,
+  ): AsyncIterable<StreamChunk> {
+    if (settings.baseUrl.length === 0) {
+      throw new LlmError('No gateway URL is set. Enter one in Settings → Antigravity → Route, or pick another route.', 'TRANSPORT')
+    }
+    this.assertImageBudget(options)
+    const effort = effortOf(options)
+    const messages = await toBridgeMessages(options, {
+      attachments: this.options.resolveAttachments?.(),
+      resolveAccess: this.options.resolveImageAccess,
+      allowImages: this.options.disableImageUpload !== true,
+    })
+    const auxiliary = options.purpose === 'compaction' || options.purpose === 'session-title'
+    const tools = auxiliary ? [] : toBridgeTools(options.tools)
+    const request: BridgeRequest = {
+      model: routeChatModel(targetModel, effort),
+      messages,
+      stream: true,
+      stream_options: { include_usage: true },
+      ...options.maxTokens === undefined ? {} : { max_tokens: options.maxTokens },
+      ...options.temperature === undefined ? {} : { temperature: options.temperature },
+      ...options.stop === undefined || options.stop.length === 0 ? {} : { stop: options.stop },
+      ...tools.length > 0 ? { tools } : {},
+    }
+    const hasInlineImages = messages.some(m => Array.isArray(m.content) && m.content.some(p => p.type === 'image_url'))
+    const watchdog = new IdleWatchdog(this.idleTimeoutFor(effort, hasInlineImages), options.signal)
+    try {
+      yield* streamBridge({ settings, request, signal: watchdog.signal, onActivity: () => watchdog.touch() })
+    } catch (error) {
+      if (watchdog.timedOut) throw new LlmError(IDLE_TIMEOUT_MESSAGE, 'TIMEOUT', { cause: error })
+      throw error
+    } finally {
+      watchdog.dispose()
+    }
+  }
+
+  /**
+   * Official CLI route: hand the request to Google's own `agy` binary, signed in as the user
+   * (see agy/turn.ts). Text streams as it is written; DSH runs the validated tool calls.
+   */
+  private async *streamViaAgy(
+    options: GenerateOptions,
+    targetModel: string,
+    settings: ManagerSettings,
+  ): AsyncIterable<StreamChunk> {
+    const effort = effortOf(options)
+    const hasImages = this.options.disableImageUpload !== true
+      && options.messages.some(m => m.content.some(b => b.type === 'image' && b.offloaded !== true))
+    const watchdog = new IdleWatchdog(this.idleTimeoutFor(effort, hasImages), options.signal)
+    // Like the other routes, only images after the last assistant turn travel as bytes.
+    let lastAssistant = -1
+    options.messages.forEach((m, i) => { if (m.role === 'assistant') lastAssistant = i })
+    const fresh = new Set(options.messages.slice(lastAssistant + 1).flatMap(m => m.content.filter(b => b.type === 'image')))
+    let textOpen = false
+    try {
+      for await (const event of agyTurn({
+        binary: settings.agyPath,
+        workspace: agyWorkspace(String(this.session.store?.filename)),
+        model: targetModel,
+        effort,
+        request: options,
+        signal: watchdog.signal,
+        onActivity: () => watchdog.touch(),
+        // agy retries a refused call for about two minutes by itself; a chat should not wait that long.
+        maxUpstreamAttempts: 5,
+        loadImage: async block => {
+          const name = block.attachment?.name || block.attachment?.attachmentId || 'image'
+          if (this.options.disableImageUpload === true) return `[Image: ${name} (image input disabled)]`
+          if (block.offloaded !== true && !fresh.has(block)) return `[Historical image: ${name} (omitted to preserve context)]`
+          const image = await resolveImageBlock(block, this.options.resolveAttachments?.(), options.signal, this.options.resolveImageAccess)
+          return image.type === 'inline' ? { mimeType: image.mimeType, data: Buffer.from(image.data, 'base64') } : image.text
+        },
+      })) {
+        if (event.type === 'text') {
+          if (!textOpen) { yield { type: 'block-start', index: 0, blockType: 'text' }; textOpen = true }
+          yield { type: 'text-delta', index: 0, text: event.text }
+          continue
+        }
+        if (event.rejected.length > 0) console.warn(`[dsh-antigravity-oauth] agy: ignored ${event.rejected.join(', ')}`)
+        let index = 0
+        if (textOpen) {
+          yield { type: 'block-end', index: 0, block: { type: 'text', text: event.text } }
+          index = 1
+        }
+        for (const call of event.calls) {
+          const id = ToolCallId(`agy_${randomUUID()}`)
+          yield { type: 'block-start', index, blockType: 'tool-call' }
+          yield { type: 'tool-call-delta', index, id, name: call.name, argumentsDelta: call.arguments }
+          yield { type: 'block-end', index, block: { type: 'tool-call', id, name: call.name, arguments: call.arguments } }
+          index += 1
+        }
+        const usage = usageOf(event.usage)
+        if (usage !== undefined) yield { type: 'usage', usage }
+        if (event.calls.length > 0) {
+          yield { type: 'finish', reason: { kind: 'tool-calls' } }
+        } else if (index === 0) {
+          const why = event.rejected.length > 0 ? ` (${event.rejected.join(', ')})` : ''
+          yield { type: 'finish', reason: { kind: 'error', failure: { message: `model "${options.model}" returned an empty answer through agy${why}`, code: 'EMPTY_RESPONSE' } } }
+        } else {
+          yield { type: 'finish', reason: { kind: 'stop' } }
+        }
+      }
+    } catch (error) {
+      if (watchdog.timedOut) throw new LlmError(IDLE_TIMEOUT_MESSAGE, 'TIMEOUT', { cause: error })
+      if (error instanceof AgyError && error.kind === 'aborted') throw error
+      const message = error instanceof Error ? error.message : String(error)
+      const kind = error instanceof AgyError ? error.kind : undefined
+      const code = kind === 'not-installed' || kind === 'not-signed-in'
+        ? 'MISSING_CREDENTIAL'
+        : kind === 'capacity' || kind === 'busy' || kind === 'rate-limited' ? 'RATE_LIMIT'
+        // DSH's compaction recovers from this code by compacting and sending again.
+        : kind === 'too-large' ? CONTEXT_WINDOW_EXCEEDED_CODE
+        : isAccountBannedError(message) ? 'AUTH' : /\b429\b|RESOURCE_EXHAUSTED|quota/i.test(message) ? 'RATE_LIMIT' : 'UNKNOWN'
+      console.warn(`[dsh-antigravity-oauth] route=agy model=${options.model} failed: ${code}: ${message.slice(0, 300)}`)
+      throw new LlmError(`Antigravity CLI: ${message}`, code, { cause: error })
+    } finally {
+      watchdog.dispose()
+    }
+  }
+
+  private async tryFailoverLease(
+    model: string,
+    currentAccountId: string,
+    triedAccountIds: Set<string>,
+    code: string,
+    isArgonModelError: boolean,
+    isCapacityError = false,
+  ): Promise<AntigravityLease | undefined> {
+    if (typeof this.session.acquireForAccount !== 'function') return undefined
+    if (model === 'gemini-4-argon') {
+      if (!isArgonModelError && code !== 'RATE_LIMIT' && code !== 'AUTH' && !isCapacityError) return undefined
+      if (typeof this.session.findArgonAccount !== 'function') return undefined
+      while (true) {
+        const fallback = await this.session.findArgonAccount(triedAccountIds)
+        if (fallback === undefined || triedAccountIds.has(fallback.id)) return undefined
+        triedAccountIds.add(fallback.id)
+        const nextLease = await this.session.acquireForAccount(fallback.id)
+        if (nextLease !== undefined) return nextLease
+      }
+    }
+    if (code !== 'RATE_LIMIT' && !isCapacityError) return undefined
+    const fallback = typeof this.session.findBestAccount === 'function'
+      ? await this.session.findBestAccount({ excludeId: currentAccountId, family: 'gemini' })
+      : typeof this.session.findFailoverAccount === 'function'
+        ? await this.session.findFailoverAccount(currentAccountId)
+        : undefined
+    if (fallback === undefined || triedAccountIds.has(fallback.id)) return undefined
+    triedAccountIds.add(fallback.id)
+    const nextLease = await this.session.acquireForAccount(fallback.id)
+    if (nextLease !== undefined) {
+      await this.session.switchAccount?.(fallback.id).catch(() => {})
+    }
+    return nextLease
+  }
+
+  private async *streamWithFailover(
+    options: GenerateOptions,
+    targetModel: string,
+    input: ChatGenerateInput,
+    state: EmitState,
+    watchdog: IdleWatchdog,
+    lease: AntigravityLease,
+  ): AsyncIterable<StreamChunk> {
     let currentLease = lease
+    const triedAccountIds = new Set<string>([lease.accountId])
+    let emittedAnyChunk = false
+    let retriedBadImage = false
     while (true) {
       try {
-        yield* this.emitChat(options, input, state, watchdog, currentLease)
-        yield* this.closeThought(state)
-        yield* this.closeText(state)
+        for await (const chunk of this.emitChat(options, input, state, watchdog, currentLease)) {
+          emittedAnyChunk = true
+          yield chunk
+        }
+        for (const chunk of this.closeThought(state)) {
+          emittedAnyChunk = true
+          yield chunk
+        }
+        for (const chunk of this.closeText(state)) {
+          emittedAnyChunk = true
+          yield chunk
+        }
         if (state.usage !== undefined) yield { type: 'usage', usage: state.usage }
         const kind = state.toolNames.length > 0
           ? 'tool-calls' as const
@@ -372,9 +886,16 @@ export class AntigravityAdapter extends LlmAdapter {
         return
       } catch (error: unknown) {
         if (error instanceof LlmError) throw error
+        if (watchdog.timedOut) throw new LlmError(IDLE_TIMEOUT_MESSAGE, 'TIMEOUT', { cause: error })
         let message = error instanceof Error
           ? (error.cause instanceof Error ? `${error.message}: ${error.cause.message}` : error.message)
           : String(error)
+        // A ban is also a 403 PERMISSION_DENIED; it must not read as "this account lacks Argon".
+        const isAccountBanned = isAccountBannedError(message)
+        const isArgonModelError = targetModel === 'gemini-4-argon' && !isAccountBanned
+          && /\b403\b|\b404\b|MODEL_NOT_FOUND|PERMISSION_DENIED/i.test(message)
+        const isCapacityError = /\b503\b|UNAVAILABLE|capacity exhausted|temporarily unavailable/i.test(message)
+        const isBadImageError = /\b400\b|INVALID_ARGUMENT|image.*(?:fail|corrupt|unsupported|invalid)|IMAGE_PROCESSING_FAILED/i.test(message)
         const code = /\b401\b|\b403\b/.test(message)
           ? 'AUTH'
           : /\b429\b|RESOURCE_EXHAUSTED|quota exhausted/i.test(message)
@@ -382,30 +903,71 @@ export class AntigravityAdapter extends LlmAdapter {
             : /\b5\d\d\b/.test(message)
               ? 'SERVER'
               : 'TRANSPORT'
-        if (code === 'RATE_LIMIT') {
-          this.session.noteRateLimited(currentLease.accountId)
-          // If no chunks have been emitted yet and a ready fallback account exists, fail over automatically
-          if (state.index === 0) {
-            const fallback = typeof this.session.findBestAccount === 'function'
-              ? await this.session.findBestAccount({ excludeId: currentLease.accountId, family: 'gemini' })
-              : typeof this.session.findFailoverAccount === 'function'
-                ? await this.session.findFailoverAccount(currentLease.accountId)
-                : undefined
-            if (fallback !== undefined && typeof this.session.acquireForAccount === 'function') {
-              const nextLease = await this.session.acquireForAccount(fallback.id)
-              if (nextLease !== undefined) {
-                await this.session.switchAccount?.(fallback.id).catch(() => {})
-                currentLease = nextLease
-                continue
+
+        if (isAccountBanned) {
+          if (typeof this.session.noteBanned === 'function') await this.session.noteBanned(currentLease.accountId)
+          else this.session.noteAuthRejected?.(currentLease.accountId)
+        } else if (code === 'RATE_LIMIT') {
+          this.session.noteRateLimited?.(currentLease.accountId)
+        } else if (isArgonModelError) {
+          this.session.noteArgonRejected?.(currentLease.accountId)
+        }
+
+        const canFailover = !emittedAnyChunk && state.index === 0 && state.text.length === 0 && state.thought.length === 0
+
+        // AM2: In-place self-healing for bad/rejected images on HTTP 400
+        if (canFailover && isBadImageError && !retriedBadImage) {
+          const activeImageIds: string[] = []
+          for (const msg of options.messages) {
+            for (const b of msg.content) {
+              if (b.type === 'image' && b.attachment?.attachmentId) {
+                activeImageIds.push(b.attachment.attachmentId)
               }
             }
           }
+          if (activeImageIds.length > 0) {
+            retriedBadImage = true
+            for (const id of activeImageIds) this.badImageIds.add(id)
+            input.contents = await convertMessages(
+              options.messages,
+              this.session.thoughtSignatures,
+              this.options.resolveAttachments?.(),
+              options.signal,
+              this.options.resolveImageAccess,
+              this.options.disableImageUpload === true,
+              this.options.imageSlidingWindow !== false,
+              this.options.maxFreshImages ?? 1,
+              this.badImageIds,
+            )
+            resetEmitState(state)
+            continue
+          }
+        }
+
+        // AM3: Failover on Rate Limit, Argon Model Error, or 503 Capacity Exhaustion
+        if (canFailover) {
+          const nextLease = await this.tryFailoverLease(
+            targetModel,
+            currentLease.accountId,
+            triedAccountIds,
+            code,
+            isArgonModelError,
+            // A banned account will never answer; move on exactly as for exhausted capacity.
+            isCapacityError || isAccountBanned,
+          )
+          if (nextLease !== undefined) {
+            resetEmitState(state)
+            currentLease = nextLease
+            continue
+          }
+        }
+
+        if (code === 'RATE_LIMIT') {
           const who = currentLease.email === undefined ? '' : ` (${currentLease.email})`
           message = `Antigravity quota exhausted for this account${who}.`
             + ' Switch to another saved account in Settings → Antigravity.'
             + ` [${message}]`
         }
-        if (code === 'AUTH') this.session.noteAuthRejected(currentLease.accountId)
         throw new LlmError(message, code, { cause: error })
       }
     }
@@ -478,14 +1040,14 @@ export class AntigravityAdapter extends LlmAdapter {
     options: GenerateOptions,
     input: ChatGenerateInput,
     state: EmitState,
-    watchdog: AbortSignal,
+    watchdog: IdleWatchdog,
     lease: AntigravityLease,
   ): AsyncIterable<StreamChunk> {
     const pendingSearches: SearchTurnCall[] = []
     const attachments = this.options.resolveAttachments?.()
     let requestUsage: CcaUsage | undefined
-    for await (const event of lease.cca.chat(lease.oauth, input, options.signal)) {
-      if (watchdog.aborted) throw new LlmError('Antigravity stream idle timeout', 'TIMEOUT')
+    for await (const event of lease.cca.chat(lease.oauth, input, watchdog.signal)) {
+      watchdog.touch()
       if (event.type === 'usage') {
         requestUsage = mergeUsageSnapshot(requestUsage, event.usage)
         continue
@@ -591,7 +1153,7 @@ export class AntigravityAdapter extends LlmAdapter {
   private async collectSearch(
     options: GenerateOptions,
     query: string,
-    watchdog: AbortSignal,
+    watchdog: IdleWatchdog,
     lease: AntigravityLease,
   ): Promise<{ text: string, usage?: CcaUsage }> {
     if (!isPublicModelId(options.model)) {
@@ -607,8 +1169,8 @@ export class AntigravityAdapter extends LlmAdapter {
       ...thinkingLevelFor(options.model, effort) === undefined
         ? {}
         : { thinkingLevel: thinkingLevelFor(options.model, effort) },
-    }, options.signal)) {
-      if (watchdog.aborted) throw new LlmError('Antigravity stream idle timeout', 'TIMEOUT')
+    }, watchdog.signal)) {
+      watchdog.touch()
       if (event.type === 'text') text += event.text
       if (event.type === 'usage') usage = mergeUsageSnapshot(usage, event.usage)
     }

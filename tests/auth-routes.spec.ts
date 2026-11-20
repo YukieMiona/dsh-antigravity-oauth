@@ -1,11 +1,13 @@
 import { mkdtemp } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { describe, expect, it } from 'vitest'
-import { CALLBACK_URI, TOKEN_URL } from '../src/ids.ts'
+import { Readable } from 'node:stream'
+import { describe, expect, it, vi } from 'vitest'
+import { ACCOUNT_TOGGLE_ARGON_PATH, CALLBACK_URI, MANAGER_TEST_PATH, TOKEN_URL } from '../src/ids.ts'
 import { AntigravitySession } from '../src/session.ts'
 import { AntigravityCredentialStore } from '../src/store.ts'
 import { authorizationUrl } from '../src/oauth.ts'
+import { registerAntigravityAuthRoutes } from '../src/auth-routes.ts'
 
 async function sessionWithStore(fetchImpl: typeof fetch): Promise<{
   session: AntigravitySession
@@ -123,5 +125,81 @@ describe('AntigravitySession login after logout', () => {
     } finally {
       await session.dispose()
     }
+  })
+
+  it('handles ACCOUNT_TOGGLE_ARGON_PATH and MANAGER_TEST_PATH cleanly', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'dsh-agy-auth-routes-'))
+    const store = new AntigravityCredentialStore(join(dir, 'auth.json'))
+    await store.add({
+      type: 'oauth', access: 'acc_tok', refresh: 'ref_tok', expires: Date.now() + 600000, projectId: 'p1', email: 'user@test.org',
+    })
+    const accounts = await store.list()
+    const targetId = accounts[0]!.id
+
+    const session = new AntigravitySession(store)
+    const routes = new Map<string, (req: any, res: any) => Promise<void>>()
+    const mockCtx = {
+      effect: (fn: any) => fn(),
+      webServer: {
+        register: (def: any) => {
+          routes.set(def.path, def.handler)
+          return () => {}
+        },
+      },
+    } as any
+
+    const notify = vi.fn()
+    registerAntigravityAuthRoutes(mockCtx, session, { onAuthChanged: notify })
+
+    const mockReq = (method: string, body?: any) => {
+      const jsonStr = body !== undefined ? JSON.stringify(body) : ''
+      const req = Readable.from(jsonStr ? [Buffer.from(jsonStr)] : []) as any
+      req.method = method
+      req.socket = { remoteAddress: '127.0.0.1' }
+      req.headers = { host: '127.0.0.1:3080', 'content-type': 'application/json' }
+      return req
+    }
+    const mockRes = () => {
+      let code = 200
+      let raw = ''
+      return {
+        writeHead: (c: number) => { code = c },
+        end: (d?: any) => { raw += d ? d.toString() : '' },
+        get status() { return code },
+        get data() { return JSON.parse(raw) },
+      }
+    }
+
+    // 1. Toggle Argon on
+    const toggleHandler = routes.get(ACCOUNT_TOGGLE_ARGON_PATH)!
+    expect(toggleHandler).toBeDefined()
+
+    const res1 = mockRes()
+    await toggleHandler(mockReq('POST', { id: targetId }), res1)
+    expect(res1.status).toBe(200)
+    expect(res1.data.ok).toBe(true)
+    expect(res1.data.hasArgon).toBe(true)
+    expect(notify).toHaveBeenCalled()
+
+    // Verify persisted
+    const updated1 = await store.get(targetId)
+    expect(updated1?.hasArgon).toBe(true)
+
+    // 2. Toggle Argon off
+    const res2 = mockRes()
+    await toggleHandler(mockReq('POST', { id: targetId }), res2)
+    expect(res2.status).toBe(200)
+    expect(res2.data.ok).toBe(true)
+    expect(res2.data.hasArgon).toBe(false)
+
+    // 3. Manager test endpoint returns safe JSON on unreachable port
+    const managerHandler = routes.get(MANAGER_TEST_PATH)!
+    expect(managerHandler).toBeDefined()
+
+    const resManager = mockRes()
+    await managerHandler(mockReq('POST', { baseUrl: 'http://127.0.0.1:59999/v1', apiKey: 'sk-test' }), resManager)
+    expect(resManager.status).toBe(200)
+    expect(resManager.data.ok).toBe(false)
+    expect(resManager.data.error).toBeDefined()
   })
 })

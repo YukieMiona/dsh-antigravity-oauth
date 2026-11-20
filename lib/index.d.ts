@@ -1,4 +1,4 @@
-import { AdapterRegistrationHandle, GenerateOptions, LlmAdapter, LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo, RetryPolicyConfig, StreamChunk } from "@deepseek-ai/dsh-llm";
+import { AdapterRegistrationHandle, ContentBlock, GenerateOptions, LlmAdapter, LlmModelInfo, LlmProviderInfo, LlmResolvedModelInfo, RetryPolicyConfig, StreamChunk, offloadedImageText } from "@deepseek-ai/dsh-llm";
 import z from "@deepseek-ai/schemastery";
 import { Context } from "@deepseek-ai/cordis";
 import { AttachmentStore } from "@deepseek-ai/dsh-attachment";
@@ -8,6 +8,9 @@ interface Config {
   retryPolicy?: RetryPolicyConfig;
   nativeTools?: boolean;
   nativeSearch?: boolean;
+  disableImageUpload?: boolean;
+  imageSlidingWindow?: boolean;
+  maxFreshImages?: number;
 }
 declare const Config: z<Config>;
 //#endregion
@@ -72,7 +75,8 @@ type CcaSession = {
   sessionId: string;
   lastGoodEndpoint: string;
 };
-type ChatWireModelId = 'gemini-3.8-flash-low' | 'gemini-3.8-flash-medium' | 'gemini-3.8-flash-high' | 'gemini-3.7-flash-low' | 'gemini-3.7-flash-medium' | 'gemini-3.7-flash-high' | 'gemini-3.5-flash-extra-low' | 'gemini-3.5-flash-low' | 'gemini-3-flash-agent';
+type PublicModelId = 'gemini-4-argon' | 'gemini-3.8-flash' | 'gemini-3.7-flash' | 'gemini-3.5-flash' | 'claude-sonnet-4-6' | 'claude-opus-4-6-thinking' | 'gemini-2.5-pro' | 'gpt-oss-120b-medium' | (string & {});
+type ChatWireModelId = 'gemini-4-argon-low' | 'gemini-4-argon-medium' | 'gemini-4-argon-high' | 'gemini-3.8-flash-low' | 'gemini-3.8-flash-medium' | 'gemini-3.8-flash-high' | 'gemini-3.7-flash-low' | 'gemini-3.7-flash-medium' | 'gemini-3.7-flash-high' | 'gemini-3.5-flash-extra-low' | 'gemini-3.5-flash-low' | 'gemini-3-flash-agent' | (string & {});
 type GeminiPart = {
   text: string;
   thought?: boolean;
@@ -89,8 +93,11 @@ type GeminiPart = {
     name: string;
     response: Record<string, unknown>;
     id?: string;
+    parts?: GeminiInlineDataPart[];
   };
-} | {
+} | GeminiInlineDataPart;
+/** The only part shape Gemini accepts inside `functionResponse.parts`. */
+type GeminiInlineDataPart = {
   inlineData: {
     mimeType: string;
     data: string;
@@ -162,6 +169,11 @@ type AccountSummary = {
   ready: boolean;
   limited: boolean;
   dead: boolean;
+  /** Google disabled the account for a Terms of Service violation; it is never selected. */
+  banned?: boolean;
+  /** The user turned the account off: never selected, and no request is made for it. */
+  disabled?: boolean;
+  hasArgon?: boolean;
 };
 type QuotaBucket = {
   bucketId: string;
@@ -213,10 +225,18 @@ interface AdvancedSettings {
   modelContextWindow: number;
   switchingStrategy: 'failover_429' | 'proactive_threshold' | 'round_robin' | 'manual';
   proactiveThreshold: number;
+  enabledModels?: PublicModelId[];
 }
+/**
+ * `bannedAt`: when Google disabled this account for a ToS violation. Token refreshes still succeed, so it must persist.
+ * `disabled`: the user turned the account off; the plugin sends nothing to Google for it.
+ */
 type StoredAccount = AntigravityGrant & {
   id: string;
   addedAt?: string;
+  hasArgon?: boolean;
+  bannedAt?: string;
+  disabled?: boolean;
 };
 declare function antigravityAuthPath(dshHome?: string): string;
 declare class AntigravityCredentialStore {
@@ -228,7 +248,7 @@ declare class AntigravityCredentialStore {
   active(): Promise<StoredAccount | undefined>;
   get(id: string): Promise<StoredAccount | undefined>;
   add(grant: AntigravityGrant): Promise<StoredAccount>;
-  update(id: string, patch: Partial<AntigravityGrant>): Promise<StoredAccount>;
+  update(id: string, patch: Partial<Omit<StoredAccount, 'id'>>): Promise<StoredAccount>;
   setActive(id: string): Promise<void>;
   remove(id: string): Promise<StoredAccount>;
   getAdvanced(): Promise<AdvancedSettings>;
@@ -280,6 +300,113 @@ declare class AntigravityWeb2ApiStore {
   testConnection(settings: Partial<Web2ApiSettings>): Promise<Web2ApiTestResult>;
 }
 //#endregion
+//#region src/api-server/types.d.ts
+interface ApiServerSettings {
+  enabled: boolean;
+  host: string;
+  port: number;
+  apiKey: string;
+  /** Most chat requests accepted in any 60 minutes; 0 = no limit. */
+  hourlyLimit: number;
+  /** Most chat requests accepted in any 24 hours; 0 = no limit. */
+  dailyLimit: number;
+}
+interface ApiServerStatus {
+  running: boolean;
+  host: string;
+  port: number;
+  error?: string;
+  /** Chat requests accepted in the last 60 minutes and 24 hours (since the plugin started). */
+  requestsLastHour?: number;
+  requestsLastDay?: number;
+}
+//#endregion
+//#region src/api-server/store.d.ts
+declare class AntigravityApiServerStore {
+  readonly filename: string;
+  constructor(filename: string);
+  read(): Promise<ApiServerSettings>;
+  save(settings: unknown): Promise<ApiServerSettings>;
+}
+//#endregion
+//#region src/api-server/server.d.ts
+declare class AntigravityApiServer {
+  private readonly session;
+  private readonly store;
+  private server;
+  private status;
+  constructor(session: AntigravitySession, store: AntigravityApiServerStore);
+  /** Start times of accepted chat requests in the last 24 hours, oldest first. */
+  private accepted;
+  getStatus(): ApiServerStatus;
+  /**
+   * Count one chat request against the limits. Returns the seconds to wait when a limit is
+   * reached; a refused request is not counted.
+   */
+  private admit;
+  start(): Promise<ApiServerStatus>;
+  private listen;
+  stop(): Promise<void>;
+  private getEffectiveEnabledModels;
+  private authenticate;
+  private handleRequest;
+  /**
+   * Pull the first upstream event before any response header is sent, so a banned or rate-limited
+   * account can still be swapped for another one. After the first event, the stream is committed.
+   */
+  private openWithFailover;
+  /** Official CLI route, mapped onto the event shape the response writers already consume. */
+  private agyEvents;
+  /** Gateway route: forward the OpenAI request as it is and relay the gateway's answer. */
+  private proxyToGateway;
+  private handleChatCompletions;
+}
+//#endregion
+//#region src/manager/store.d.ts
+/**
+ * Route model requests through a local OpenAI-compatible gateway (Antigravity Manager) instead of
+ * calling Cloud Code Assist directly. The gateway owns its own account pool and failover.
+ */
+/** How the main provider reaches Google: the plugin itself, a local gateway, or the official agy CLI. */
+type RouteKind = 'direct' | 'gateway' | 'agy';
+interface ManagerSettings {
+  route: RouteKind;
+  /** Legacy mirror of `route === 'gateway'`, kept so older settings files and callers still work. */
+  enabled: boolean;
+  /** OpenAI-style base URL ending in `/v1`; empty until the user sets one. */
+  baseUrl: string;
+  apiKey: string;
+  /** Path of the official Antigravity CLI binary used by the `agy` route. */
+  agyPath: string;
+}
+declare class AntigravityManagerStore {
+  readonly filename: string;
+  private cached?;
+  constructor(filename: string);
+  /**
+   * The adapter reads this on every request, so a short cache avoids a disk read per turn.
+   * `save()` refreshes it, so a toggle in the UI takes effect immediately.
+   */
+  read(): Promise<ManagerSettings>;
+  /**
+   * Merge a UI patch. `apiKey` omitted keeps the stored key; an empty string clears it.
+   * Throws on an invalid URL so the UI can show the reason.
+   */
+  save(patch: unknown): Promise<ManagerSettings>;
+}
+//#endregion
+//#region src/models.d.ts
+interface ModelCatalogItem {
+  id: string;
+  name: string;
+  contextWindow: number;
+  maxTokens: number;
+  description?: string;
+  supportsImages?: boolean;
+  supportsThinking?: boolean;
+  thinkingBudget?: number;
+}
+//#endregion
 //#region src/session.d.ts
 type FetchImpl = typeof fetch;
 declare class ThoughtSignatureStore implements ReadonlyMap<string, string> {
@@ -306,6 +433,9 @@ declare class AntigravitySession {
   readonly thoughtSignatures: ThoughtSignatureStore;
   readonly network: AntigravityNetwork;
   readonly web2api: AntigravityWeb2ApiStore;
+  readonly apiServerStore: AntigravityApiServerStore;
+  readonly manager: AntigravityManagerStore;
+  readonly apiServer: AntigravityApiServer;
   private readonly fetchImpl;
   private readonly runtimes;
   private readonly precheckAt;
@@ -323,7 +453,13 @@ declare class AntigravitySession {
   private eligibility;
   constructor(store: AntigravityCredentialStore, fetchImpl?: FetchImpl);
   private runtimeFor;
-  acquire(): Promise<AntigravityLease | undefined>;
+  isArgonCapable(account: StoredAccount): boolean;
+  noteArgonRejected(accountId: string): void;
+  findArgonAccount(exclude?: string | ReadonlySet<string>): Promise<StoredAccount | undefined>;
+  private selectAccountForStrategy;
+  acquire(options?: {
+    model?: string;
+  }): Promise<AntigravityLease | undefined>;
   acquireForAccount(accountId: string): Promise<AntigravityLease | undefined>;
   /**
    * Find the account with the best remaining quota (optionally excluding one account or filtering by min threshold).
@@ -338,6 +474,11 @@ declare class AntigravitySession {
   hasReadyAccount(): Promise<boolean>;
   noteRateLimited(accountId: string): void;
   noteAuthRejected(accountId: string): void;
+  /**
+   * Google disabled this account (`TOS_VIOLATION`). Persist it: token refresh keeps working for a
+   * banned account, so a runtime flag alone would be cleared and the account picked again.
+   */
+  noteBanned(accountId: string): Promise<void>;
   snapshot(): Promise<AntigravityStatus>;
   private summarizeAccounts;
   private precheckAccount;
@@ -346,6 +487,11 @@ declare class AntigravitySession {
   private refreshGrant;
   private refreshGrantForAccount;
   switchAccount(accountId: string): Promise<AntigravityStatus>;
+  /**
+   * The user's off switch for one account. An account that is off is never selected, and the
+   * plugin makes no request for it (no model call, no quota check, no token refresh).
+   */
+  setAccountEnabled(accountId: string, enabled: boolean): Promise<AntigravityStatus>;
   removeAccount(accountId: string): Promise<AntigravityStatus>;
   signIn(): Promise<{
     url: string;
@@ -362,10 +508,30 @@ declare class AntigravitySession {
   private listenForCallback;
   private stopCallbackServer;
   private cachedAdvanced?;
+  private cachedQuotas?;
+  private roundRobinCursor;
   getAdvancedSettings(): Promise<AdvancedSettings>;
   saveAdvancedSettings(settings: Partial<AdvancedSettings>): Promise<AdvancedSettings>;
-  retrieveAllQuotas(): Promise<Record<string, AccountQuotaSummary>>;
+  retrieveAllQuotas(options?: {
+    force?: boolean;
+  }): Promise<Record<string, AccountQuotaSummary>>;
+  private availableModelsCache?;
+  private availableModelsFailedAt;
+  private availableModelsInflight?;
+  /**
+   * The model picker calls this often. A failed upstream fetch backs off for a minute, and
+   * concurrent callers share one fetch, so a flaky upstream never stalls every model lookup.
+   */
+  getAvailableModels(): Promise<ModelCatalogItem[]>;
+  private fetchAvailableModelsFromUpstream;
 }
+//#endregion
+//#region src/image-input.d.ts
+type ImageContentBlock = Extract<ContentBlock, {
+  type: 'image';
+}>;
+type ImageRef = ImageContentBlock['attachment'];
+type ImageAccessResolver = (ref: ImageRef) => Parameters<typeof offloadedImageText>[1];
 //#endregion
 //#region src/adapter.d.ts
 interface AntigravityAdapterOptions {
@@ -373,15 +539,35 @@ interface AntigravityAdapterOptions {
   nativeSearch: boolean;
   streamIdleTimeoutMs?: number;
   resolveAttachments?: () => AttachmentStore | undefined;
+  resolveImageAccess?: ImageAccessResolver;
+  disableImageUpload?: boolean;
+  imageSlidingWindow?: boolean;
+  maxFreshImages?: number;
 }
 declare class AntigravityAdapter extends LlmAdapter {
   private readonly session;
   private readonly options;
+  private readonly badImageIds;
   constructor(session: AntigravitySession, options: AntigravityAdapterOptions);
   providerInfo(provider: string): LlmProviderInfo;
   listModels(provider: string): Promise<readonly LlmModelInfo[]>;
   resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo>;
   stream(options: GenerateOptions): AsyncIterable<StreamChunk>;
+  private assertImageBudget;
+  private idleTimeoutFor;
+  /**
+   * Native bridge: send the request to the local Antigravity Manager (OpenAI-compatible) instead
+   * of Cloud Code Assist. The gateway runs its own account pool and failover, so none of the
+   * direct-path account logic applies here.
+   */
+  private streamViaBridge;
+  /**
+   * Official CLI route: hand the request to Google's own `agy` binary, signed in as the user
+   * (see agy/turn.ts). Text streams as it is written; DSH runs the validated tool calls.
+   */
+  private streamViaAgy;
+  private tryFailoverLease;
+  private streamWithFailover;
   private handleThoughtEvent;
   private handleTextEvent;
   private handleFunctionCallEvent;
@@ -397,8 +583,10 @@ declare function createAntigravityAdapter(session: AntigravitySession, options: 
 declare const WEB2API_ROUTE = "agy-web";
 declare class Web2ApiAdapter extends LlmAdapter {
   private readonly getSettings;
+  private readonly resolveAttachments?;
+  private readonly resolveImageAccess?;
   private readonly client;
-  constructor(getSettings: () => Promise<Web2ApiSettings>);
+  constructor(getSettings: () => Promise<Web2ApiSettings>, resolveAttachments?: (() => AttachmentStore | undefined) | undefined, resolveImageAccess?: ImageAccessResolver | undefined);
   providerInfo(provider: string): LlmProviderInfo;
   listModels(provider: string): Promise<readonly LlmModelInfo[]>;
   resolveModel(provider: string, model: string): Promise<LlmResolvedModelInfo>;

@@ -1,9 +1,11 @@
 import type { Context } from '@deepseek-ai/cordis'
 import type {} from '@deepseek-ai/dsh-attachment'
 import type {} from '@deepseek-ai/dsh-host-webserver'
+import { resolveImageAttachmentAccess } from '@deepseek-ai/dsh-llm'
 import type { AdapterRegistrationHandle } from '@deepseek-ai/dsh-llm'
 import { createAntigravityAdapter } from './adapter.ts'
 import { registerAntigravityAuthRoutes } from './auth-routes.ts'
+import type { ImageAccessResolver } from './image-input.ts'
 import { HARNESS_ROUTE, OAUTH_REFRESH_POLL_MS, WEB2API_ROUTE } from './ids.ts'
 import { Web2ApiAdapter } from './web2api/adapter.ts'
 import { maskDshWebAssembly } from './native-tools.ts'
@@ -74,7 +76,21 @@ export async function syncAuthenticatedRoute(
   web2apiRegistration?: AdapterRegistrationHandle,
 ): Promise<void> {
   try {
-    registration.replace(await session.hasReadyAccount() ? [HARNESS_ROUTE] : [])
+    // With the gateway or agy route, the accounts live elsewhere, so the route needs no direct sign-in.
+    const settings = await session.manager?.read().catch(() => undefined)
+    const bridged = settings !== undefined && (settings.route ?? (settings.enabled ? 'gateway' : 'direct')) !== 'direct'
+    let ready = bridged
+    if (!bridged) {
+      try {
+        ready = await session.hasReadyAccount()
+      } catch (error) {
+        if (isDisposedRegistration(error)) throw error
+        // A credential file this version cannot read must not stop DSH: log it and leave the
+        // Direct route unregistered until the file is fixed.
+        console.error(`[dsh-antigravity-oauth] cannot read the account file, so the Direct route is off: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+    registration.replace(ready ? [HARNESS_ROUTE] : [])
     if (web2apiRegistration) {
       const webSettings = await session.web2api.read()
       web2apiRegistration.replace(webSettings.enabled ? [WEB2API_ROUTE] : [])
@@ -83,13 +99,19 @@ export async function syncAuthenticatedRoute(
     // A short command such as `dsh web --help` disposes the fiber before this
     // async refresh runs. Replacing routes after that is not a load failure.
     if (isDisposedRegistration(error)) return
-    throw error
+    // Nothing here may end the DSH process: this runs unawaited at load time.
+    console.error(`[dsh-antigravity-oauth] route refresh failed: ${error instanceof Error ? error.message : String(error)}`)
   }
 }
 
 export function apply(ctx: Context, config: Config): void {
   console.log('[my-plugins/dsh-antigravity-oauth] loaded')
   const session = new AntigravitySession(new AntigravityCredentialStore())
+  const resolveImageAccess: ImageAccessResolver = (ref) => {
+    const attachments = ctx.get('attachments')
+    if (attachments === undefined) return undefined
+    return resolveImageAttachmentAccess(attachments, hostPath => ctx.get('fs')?.processPathFromHostPath(hostPath), ref)
+  }
   const registration = ctx.llm.registerAdapter(
     [HARNESS_ROUTE],
     createAntigravityAdapter(session, {
@@ -97,13 +119,29 @@ export function apply(ctx: Context, config: Config): void {
       nativeSearch: config.nativeSearch !== false,
       streamIdleTimeoutMs: config.streamIdleTimeoutMs,
       resolveAttachments: () => ctx.get('attachments'),
+      resolveImageAccess,
+      disableImageUpload: config.disableImageUpload === true,
+      imageSlidingWindow: config.imageSlidingWindow !== false,
+      maxFreshImages: config.maxFreshImages ?? 1,
     }),
   )
-  const web2apiAdapter = new Web2ApiAdapter(() => session.web2api.read())
+  const web2apiAdapter = new Web2ApiAdapter(
+    () => session.web2api.read(),
+    () => ctx.get('attachments'),
+    resolveImageAccess,
+  )
   const web2apiRegistration = ctx.llm.registerAdapter([WEB2API_ROUTE], web2apiAdapter)
   const refreshRoutes = (): Promise<void> => syncAuthenticatedRoute(session, registration, web2apiRegistration)
   void refreshRoutes()
   void ensureAntigravityVersion(envProxyFetch)
+  ctx.effect(() => {
+    void session.apiServer.start().catch(err => {
+      console.warn('[dsh-antigravity-oauth] failed to start API server:', err)
+    })
+    return () => {
+      void session.apiServer.stop().catch(() => {})
+    }
+  }, 'dsh-antigravity-oauth: api proxy server')
   ctx.effect(() => {
     const timer = setInterval(() => {
       void session.refreshIfNeeded().catch(() => { /* next poll retries */ })
@@ -118,9 +156,11 @@ export function apply(ctx: Context, config: Config): void {
     ctx.inject(['systemPrompt'], promptCtx => {
       promptCtx.on('system-prompt/assemble', async (_assembly, context, next) => {
         const assembled = await next()
-        return context.agent?.options?.provider === HARNESS_ROUTE
-          ? maskDshWebAssembly(assembled)
-          : assembled
+        if (context.agent?.options?.provider !== HARNESS_ROUTE) return assembled
+        // Native Google search only exists on the direct route; through the bridge, DSH keeps its own web tools.
+        const settings = await session.manager?.read()
+        const direct = settings === undefined || (settings.route ?? (settings.enabled ? 'gateway' : 'direct')) === 'direct'
+        return direct ? maskDshWebAssembly(assembled) : assembled
       })
     })
   }

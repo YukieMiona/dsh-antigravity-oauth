@@ -74,7 +74,7 @@ dsh plugin --profile web remove dsh-antigravity-oauth
 |---|---|
 | 设置入口 | **Antigravity** |
 | Harness 路由 | `agy-google-antigravity` |
-| 公开模型 | `gemini-3.8-flash`、`gemini-3.7-flash`、`gemini-3.5-flash` |
+| 公开模型 | `gemini-4-argon`、`gemini-3.8-flash`、`gemini-3.7-flash`、`gemini-3.5-flash` |
 | 凭据文件 | `$DSH_HOME/.dsh-antigravity-oauth.json`（仅当前用户可读） |
 | 保存的账号 | 多个；在设置里手动切换 |
 | 搜索 | `search_web` → **单独一轮** Cloud Code Assist `googleSearch` |
@@ -105,6 +105,33 @@ dsh plugin --profile web remove dsh-antigravity-oauth
 - 闲置账号的 refresh token 长期有效。打开本设置页时，插件对每个闲置账号**每天最多做一次 token 预检**，不会为闲置账号请求任何 Antigravity 接口；token 失效会标"需要重新登录"。
 - 所有凭据都在一个文件里：`{ version: 2, activeId, accounts: [...] }`。首次迁移会留一份一次性的 `.dsh-antigravity-oauth.json.v1.bak`（仅所有者可读）。回退旧版插件需要用它恢复；删掉多余账号不会把文件改回 v1。
 - 每个账号有自己独立的 Antigravity 请求会话，切换账号不会把 A 号的请求标识带给 B 号。
+
+---
+
+## 请求路由
+
+**设置 → Antigravity → 路由** 决定本提供方如何访问 Google。本地 API 服务使用同一选择。
+
+| 路由 | 由谁发出请求 | 使用的账号 |
+|---|---|---|
+| **直连** | 插件自带的 Cloud Code Assist 客户端 | “账号”页中的账号 |
+| **网关** | 你自己运行的 OpenAI 兼容网关 | 网关自己的账号 |
+| **官方 CLI** | Google 的 `agy` 命令行客户端 | `agy` 登录的账号 |
+
+官方 CLI 路由：
+
+- 从 <https://antigravity.google> 安装 `agy`，在终端运行一次完成登录。“路由”页会显示登录状态、版本和剩余额度。
+- 工具仍由 DSH 执行。插件把 DSH 的系统提示词和工具列表写入认证文件旁 `.dsh-antigravity-oauth.agy-workspace/` 下的 agent 模板。该模板移除 `agy` 的内置工具，并用覆盖所有操作类别的拒绝规则兜底。
+- 每次请求约 5–10 秒；回答大多在末尾一次到达。最多两个请求同时运行，但只有当主机可用内存不少于 700 MB 时才启动第二个（每个 `agy` 进程约占 230 MB），否则请求排队。
+- Google 对某个模型返回 `503 No capacity` 后，该模型的请求在 45 秒内直接失败。收到 `429 RESOURCE_EXHAUSTED` 后，本次运行立即停止，5 分钟内不再向 Google 发送任何模型的请求。
+- 使用该路由时，插件每 30 分钟读取一次 `agy` 版本和额度。额度偏低（每周低于 20%、5 小时低于 15%）或 `agy` 自行更新时，在日志中写入警告。API 服务器的 `/health` 以 `agyStatus` 返回最近一次读数。
+- `agy` 会把每次运行保存为一个会话，位于 `~/.gemini/antigravity-cli`（聊天机器人的用量下每天约 90 MB）。插件在每次运行后删除该次运行的会话；你自己的 `agy` 会话不受影响。
+- 图片以文件形式发送：插件把每张图片写入该请求专用的文件夹，只允许 `agy` 的文件查看器读取这个文件夹，回答结束后删除。如果 `agy` 没有打开图片，这次回答会被丢弃。
+- 请求会快速失败。Google 拒绝模型调用时（例如 `503 No capacity`），插件在几次尝试后停止；`agy` 自身会静默重试约两分钟。本地 API 服务器返回明确的 HTTP 状态：503 `model_capacity_exhausted` 或 `server_busy`、504 `upstream_timeout`、400 `image_input_not_supported`、502 `image_not_read`。
+- `agy` 对 Gemini 3.8 Flash 的单个请求限制约为 195K 输入 token（在 1.5.9 上实测：193,111 token 可以运行，约 197,000 失败）。这是 CLI 自身的限制，各推理强度相同；通过 `agy` 无法使用 Gemini 的 1M 窗口。插件按 token（英文、代码、中文各不相同）计算每个请求，最多发送约 185K token，超出部分从最早的轮次开始省略并附说明；如果 `agy` 仍然拒绝，就减少轮次后重试。插件报告 192K 窗口和 8K 输出预留，DSH 的压缩约在 123K token 开始。如果请求仍然放不下，DSH 收到 `CONTEXT_WINDOW_EXCEEDED`。
+- 插件为它启动的 `agy` 进程关闭后台自动更新（`AGY_CLI_DISABLE_AUTO_UPDATE=true`），因此两次请求之间版本不会改变。要更新时，在终端运行 `agy update`。您自己启动的 `agy` 仍会自动更新。版本不在本路由验证过的版本线（1.5.x）内时，“路由”页会给出提示。
+
+被 Google 因违反服务条款停用的账号会标记为 **已被 Google 停用（违反条款）**，之后不再被选用。
 
 ---
 

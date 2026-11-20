@@ -4,13 +4,17 @@ import type {
   CcaGenerateInput,
   CcaSession,
   ChatGenerateInput,
+  ChatWireModelId,
   FunctionToolDeclaration,
 } from './types.ts'
 
 const INT63_MASK = (1n << 63n) - 1n
 const RANDOM_BOUND = 9_000_000_000_000_000_000n
 
-const WIRE_PROFILES: Record<string, { modelEnum?: string, maxOutputTokens: number }> = {
+const WIRE_PROFILES: Record<ChatWireModelId, { modelEnum?: string, maxOutputTokens: number }> = {
+  'gemini-4-argon-low': { maxOutputTokens: 65_536 },
+  'gemini-4-argon-medium': { maxOutputTokens: 65_536 },
+  'gemini-4-argon-high': { maxOutputTokens: 65_536 },
   'gemini-3.5-flash-extra-low': { modelEnum: 'MODEL_PLACEHOLDER_M187', maxOutputTokens: 65_536 },
   'gemini-3.5-flash-low': { modelEnum: 'MODEL_PLACEHOLDER_M20', maxOutputTokens: 65_536 },
   'gemini-3-flash-agent': { modelEnum: 'MODEL_PLACEHOLDER_M132', maxOutputTokens: 65_536 },
@@ -61,7 +65,7 @@ export function advanceEnvelope(
 ): RequestEnvelope {
   session.stepIndex += 1
   const step = session.stepIndex
-  const profile = WIRE_PROFILES[wireModelId]
+  const profile = (WIRE_PROFILES as Record<string, { modelEnum?: string, maxOutputTokens: number } | undefined>)[wireModelId]
   const labels: Record<string, string> = {
     last_step_index: String(step - 1),
     trajectory_id: session.trajectoryId,

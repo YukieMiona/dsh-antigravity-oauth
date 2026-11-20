@@ -4,18 +4,27 @@ import type {} from '@deepseek-ai/dsh-host-webserver'
 import {
   ACCOUNT_QUOTAS_PATH,
   ADVANCED_SETTINGS_PATH,
+  API_SERVER_PATH,
   ACCOUNT_REMOVE_PATH,
   ACCOUNT_SWITCH_PATH,
+  ACCOUNT_SET_ENABLED_PATH,
+  ACCOUNT_TOGGLE_ARGON_PATH,
   AUTH_COMPLETE_PATH,
   AUTH_LOGIN_PATH,
   AUTH_LOGOUT_PATH,
   AUTH_STATUS_PATH,
+  AVAILABLE_MODELS_PATH,
+  MANAGER_SETTINGS_PATH,
+  MANAGER_TEST_PATH,
   WEB2API_SETTINGS_PATH,
   WEB2API_TEST_PATH,
 } from './ids.ts'
 import { isSafeAuthUrl, safeMessage } from './redact.ts'
 import type { AntigravitySession } from './session.ts'
 import { NETWORK_PATH } from './network.ts'
+import { probeBridge } from './manager/probe.ts'
+import { checkAgy } from './agy/run.ts'
+import { normalizeBaseUrl, viewOf } from './manager/store.ts'
 
 function trustedRequest(req: IncomingMessage): boolean {
   const remote = req.socket.remoteAddress
@@ -217,6 +226,84 @@ export function registerAntigravityAuthRoutes(
       }),
       ctx.webServer.register({
         kind: 'exact',
+        path: ACCOUNT_SET_ENABLED_PATH,
+        handler: async (req, res) => {
+          if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+          if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
+          try {
+            const body = await readJson(req) as Record<string, unknown>
+            if (typeof body.id !== 'string' || body.id.length === 0 || typeof body.enabled !== 'boolean') {
+              throw new Error('expected { "id": "...", "enabled": true | false }')
+            }
+            const account = await session.setAccountEnabled(body.id, body.enabled)
+            await notify()
+            json(res, 200, { ok: true, account })
+          } catch (error) { json(res, 400, { error: safeMessage(error) }) }
+        },
+      }),
+      ctx.webServer.register({
+        kind: 'exact',
+        path: ACCOUNT_TOGGLE_ARGON_PATH,
+        handler: async (req, res) => {
+          if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+          if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
+          try {
+            const body = await readJson(req)
+            const id = typeof (body as Record<string, unknown>).id === 'string'
+              ? (body as Record<string, unknown>).id as string
+              : ''
+            if (id.length === 0) throw new Error('expected { "id": "..." }')
+            const acc = await session.store.get(id)
+            if (!acc) throw new Error('account not found')
+            const nextVal = acc.hasArgon !== true
+            await session.store.update(id, { hasArgon: nextVal })
+            await notify()
+            json(res, 200, { ok: true, hasArgon: nextVal, account: await session.snapshot() })
+          } catch (error) { json(res, 400, { error: safeMessage(error) }) }
+        },
+      }),
+      ctx.webServer.register({
+        kind: 'exact',
+        path: MANAGER_SETTINGS_PATH,
+        handler: async (req, res) => {
+          if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
+          try {
+            if (req.method === 'GET') return json(res, 200, viewOf(await session.manager.read()))
+            if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+            if (req.headers['content-type']?.split(';')[0] !== 'application/json') {
+              return json(res, 415, { error: 'application/json required' })
+            }
+            const saved = await session.manager.save(await readJson(req))
+            // The model route depends on the bridge switch, so refresh it before answering.
+            await notify()
+            json(res, 200, viewOf(saved))
+          } catch (error) {
+            json(res, 400, { error: safeMessage(error) })
+          }
+        },
+      }),
+      ctx.webServer.register({
+        kind: 'exact',
+        path: MANAGER_TEST_PATH,
+        handler: async (req, res) => {
+          if (req.method !== 'POST') return json(res, 405, { error: 'method not allowed' })
+          if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
+          try {
+            const body = await readJson(req) as Record<string, unknown>
+            const stored = await session.manager.read()
+            const baseUrl = body.baseUrl === undefined ? stored.baseUrl : normalizeBaseUrl(body.baseUrl)
+            // An empty key field in the UI means "use the saved key", so the key never has to round-trip.
+            const apiKey = typeof body.apiKey === 'string' && body.apiKey.trim().length > 0 ? body.apiKey.trim() : stored.apiKey
+            // Gateway and agy checks are independent; run them side by side.
+            const [bridge, agy] = await Promise.all([probeBridge({ baseUrl, apiKey }), checkAgy(stored.agyPath)])
+            json(res, 200, { ...bridge, agy })
+          } catch (error) {
+            json(res, 400, { error: safeMessage(error) })
+          }
+        },
+      }),
+      ctx.webServer.register({
+        kind: 'exact',
         path: ACCOUNT_QUOTAS_PATH,
         handler: async (req, res) => {
           if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
@@ -247,6 +334,7 @@ export function registerAntigravityAuthRoutes(
             try {
               const body = await readJson(req)
               const settings = await session.saveAdvancedSettings(body as any)
+              await notify()
               json(res, 200, { ok: true, settings })
             } catch (err: unknown) {
               json(res, 500, { error: safeMessage(err) })
@@ -254,6 +342,49 @@ export function registerAntigravityAuthRoutes(
             return
           }
           json(res, 405, { error: 'method not allowed' })
+        },
+      }),
+      ctx.webServer.register({
+        kind: 'exact',
+        path: API_SERVER_PATH,
+        handler: async (req, res) => {
+          if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
+          if (req.method === 'GET') {
+            try {
+              const settings = await session.apiServerStore.read()
+              const status = session.apiServer.getStatus()
+              json(res, 200, { ok: true, settings, status })
+            } catch (err: unknown) {
+              json(res, 500, { error: safeMessage(err) })
+            }
+            return
+          }
+          if (req.method === 'POST') {
+            try {
+              const body = await readJson(req)
+              const settings = await session.apiServerStore.save(body)
+              const status = await session.apiServer.start()
+              json(res, 200, { ok: true, settings, status })
+            } catch (err: unknown) {
+              json(res, 500, { error: safeMessage(err) })
+            }
+            return
+          }
+          json(res, 405, { error: 'method not allowed' })
+        },
+      }),
+      ctx.webServer.register({
+        kind: 'exact',
+        path: AVAILABLE_MODELS_PATH,
+        handler: async (req, res) => {
+          if (req.method !== 'GET') return json(res, 405, { error: 'method not allowed' })
+          if (!trustedRequest(req)) return json(res, 403, { error: 'forbidden' })
+          try {
+            const models = await session.getAvailableModels()
+            json(res, 200, { ok: true, models })
+          } catch (err: unknown) {
+            json(res, 500, { error: safeMessage(err) })
+          }
         },
       }),
       ctx.webServer.register({

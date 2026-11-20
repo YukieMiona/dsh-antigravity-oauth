@@ -4,7 +4,8 @@ import { randomUUID } from 'node:crypto'
 import { withFileLock, writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
 import { AUTH_FILENAME } from './ids.ts'
-import type { AntigravityGrant } from './types.ts'
+import { DEFAULT_ENABLED_MODELS, isPublicModelId } from './models.ts'
+import type { AntigravityGrant, PublicModelId } from './types.ts'
 import { isRecord } from './types.ts'
 
 const AUTH_FORMAT_VERSION = 2
@@ -13,13 +14,14 @@ const BACKUP_SUFFIX = '.v1.bak'
 const MAX_ACCOUNTS = 10
 const MIGRATED_ACCOUNT_ID = 'acc_default'
 const OAUTH_FIELDS = new Set(['type', 'access', 'refresh', 'expires', 'projectId', 'email'])
-const ACCOUNT_FIELDS = new Set([...OAUTH_FIELDS, 'id', 'addedAt'])
+const ACCOUNT_FIELDS = new Set([...OAUTH_FIELDS, 'id', 'addedAt', 'hasArgon', 'bannedAt', 'disabled'])
 
 export interface AdvancedSettings {
   defaultReasoningEffort: 'low' | 'medium' | 'high'
   modelContextWindow: number
   switchingStrategy: 'failover_429' | 'proactive_threshold' | 'round_robin' | 'manual'
   proactiveThreshold: number
+  enabledModels?: PublicModelId[]
 }
 
 export const DEFAULT_ADVANCED_SETTINGS: AdvancedSettings = {
@@ -27,9 +29,14 @@ export const DEFAULT_ADVANCED_SETTINGS: AdvancedSettings = {
   modelContextWindow: 1_048_576,
   switchingStrategy: 'failover_429',
   proactiveThreshold: 20,
+  enabledModels: [...DEFAULT_ENABLED_MODELS],
 }
 
-export type StoredAccount = AntigravityGrant & { id: string, addedAt?: string }
+/**
+ * `bannedAt`: when Google disabled this account for a ToS violation. Token refreshes still succeed, so it must persist.
+ * `disabled`: the user turned the account off; the plugin sends nothing to Google for it.
+ */
+export type StoredAccount = AntigravityGrant & { id: string, addedAt?: string, hasArgon?: boolean, bannedAt?: string, disabled?: boolean }
 
 interface AuthDocument {
   version: typeof AUTH_FORMAT_VERSION
@@ -90,11 +97,18 @@ export function parseAntigravityOAuth(raw: unknown, filename: string): Antigravi
   }
 }
 
+/**
+ * Fields this version does not know (written by a newer or older plugin version) are kept as they
+ * are and written back. Rejecting them made a downgraded plugin stop DSH at every start
+ * ("account contains an unknown field", 2026-11-17).
+ */
+function unknownFields(raw: Record<string, unknown>, known: ReadonlySet<string>): Record<string, unknown> {
+  return Object.fromEntries(Object.entries(raw).filter(([key]) => !known.has(key)))
+}
+
 function parseAccount(raw: unknown, filename: string): StoredAccount {
   if (!isRecord(raw)) throw new Error(`dsh-antigravity-oauth: ${filename} account must be an object`)
-  if (Object.keys(raw).some(key => !ACCOUNT_FIELDS.has(key))) {
-    throw new Error(`dsh-antigravity-oauth: ${filename} account contains an unknown field`)
-  }
+  const extra = unknownFields(raw, ACCOUNT_FIELDS)
   const grant = parseAntigravityOAuth({
     type: raw.type,
     access: raw.access,
@@ -109,10 +123,23 @@ function parseAccount(raw: unknown, filename: string): StoredAccount {
   if (raw.addedAt !== undefined && typeof raw.addedAt !== 'string') {
     throw new Error(`dsh-antigravity-oauth: ${filename} account addedAt must be a string`)
   }
+  if (raw.hasArgon !== undefined && typeof raw.hasArgon !== 'boolean') {
+    throw new Error(`dsh-antigravity-oauth: ${filename} account hasArgon must be a boolean`)
+  }
+  if (raw.bannedAt !== undefined && typeof raw.bannedAt !== 'string') {
+    throw new Error(`dsh-antigravity-oauth: ${filename} account bannedAt must be a string`)
+  }
+  if (raw.disabled !== undefined && typeof raw.disabled !== 'boolean') {
+    throw new Error(`dsh-antigravity-oauth: ${filename} account disabled must be a boolean`)
+  }
   return {
+    ...extra,
     ...grant,
     id: raw.id,
     ...typeof raw.addedAt === 'string' ? { addedAt: raw.addedAt } : {},
+    ...typeof raw.hasArgon === 'boolean' ? { hasArgon: raw.hasArgon } : {},
+    ...typeof raw.bannedAt === 'string' ? { bannedAt: raw.bannedAt } : {},
+    ...raw.disabled === true ? { disabled: true } : {},
   }
 }
 
@@ -145,9 +172,7 @@ function parseDocument(text: string, filename: string): ParsedDocument {
   if (value.version !== AUTH_FORMAT_VERSION) {
     throw new Error(`dsh-antigravity-oauth: ${filename} has unsupported auth format version ${String(value.version)}`)
   }
-  if (Object.keys(value).some(key => key !== 'version' && key !== 'activeId' && key !== 'accounts' && key !== 'advanced')) {
-    throw new Error(`dsh-antigravity-oauth: ${filename} contains an unknown top-level field`)
-  }
+  // Unknown top-level fields (from another plugin version) are ignored rather than fatal.
   if (!Array.isArray(value.accounts)) {
     throw new Error(`dsh-antigravity-oauth: ${filename} accounts must be an array`)
   }
@@ -178,8 +203,8 @@ function parseDocument(text: string, filename: string): ParsedDocument {
       ? rawEffort as AdvancedSettings['defaultReasoningEffort']
       : DEFAULT_ADVANCED_SETTINGS.defaultReasoningEffort
     const rawWindow = Number(value.advanced.modelContextWindow)
-    const modelContextWindow = Number.isFinite(rawWindow) && rawWindow > 0
-      ? rawWindow
+    const modelContextWindow = Number.isFinite(rawWindow) && Math.floor(rawWindow) >= 1
+      ? Math.floor(rawWindow)
       : DEFAULT_ADVANCED_SETTINGS.modelContextWindow
     const rawStrategy = String(value.advanced.switchingStrategy || '')
     const switchingStrategy = ['failover_429', 'proactive_threshold', 'round_robin', 'manual'].includes(rawStrategy)
@@ -189,7 +214,14 @@ function parseDocument(text: string, filename: string): ParsedDocument {
     const proactiveThreshold = Number.isFinite(rawThresh) && rawThresh >= 0 && rawThresh <= 100
       ? rawThresh
       : DEFAULT_ADVANCED_SETTINGS.proactiveThreshold
-    advanced = { defaultReasoningEffort, modelContextWindow, switchingStrategy, proactiveThreshold }
+    let enabledModels: PublicModelId[] = [...(DEFAULT_ADVANCED_SETTINGS.enabledModels ?? ['gemini-3.8-flash'])]
+    if (Array.isArray(value.advanced.enabledModels)) {
+      const filtered = value.advanced.enabledModels.filter((id): id is PublicModelId => isPublicModelId(String(id)))
+      if (filtered.length > 0) {
+        enabledModels = Array.from(new Set(filtered))
+      }
+    }
+    advanced = { defaultReasoningEffort, modelContextWindow, switchingStrategy, proactiveThreshold, enabledModels }
   }
   return { fromV1: false, document: { version: AUTH_FORMAT_VERSION, activeId, accounts, ...advanced ? { advanced } : {} } }
 }
@@ -264,8 +296,10 @@ export class AntigravityCredentialStore {
         || account.refresh === clean.refresh)
       let added: StoredAccount
       if (existing !== undefined) {
+        // Signing in again to an account is a request to use it, so it is turned back on.
+        const { disabled: _wasOff, ...kept } = existing
         const merged = {
-          ...existing,
+          ...kept,
           ...clean,
           id: existing.id,
           ...existing.addedAt === undefined ? {} : { addedAt: existing.addedAt },
@@ -289,7 +323,7 @@ export class AntigravityCredentialStore {
     })
   }
 
-  async update(id: string, patch: Partial<AntigravityGrant>): Promise<StoredAccount> {
+  async update(id: string, patch: Partial<Omit<StoredAccount, 'id'>>): Promise<StoredAccount> {
     return withFileLock(this.filename, async () => {
       const parsed = await this.readParsed()
       if (parsed === undefined) throw new Error('dsh-antigravity-oauth: no accounts are stored')
@@ -342,8 +376,8 @@ export class AntigravityCredentialStore {
         ? rawEffort as AdvancedSettings['defaultReasoningEffort']
         : current.defaultReasoningEffort
       const rawWindow = Number(settings.modelContextWindow ?? current.modelContextWindow)
-      const modelContextWindow = Number.isFinite(rawWindow) && rawWindow > 0
-        ? rawWindow
+      const modelContextWindow = Number.isFinite(rawWindow) && Math.floor(rawWindow) >= 1
+        ? Math.floor(rawWindow)
         : current.modelContextWindow
       const rawStrategy = String(settings.switchingStrategy || current.switchingStrategy)
       const switchingStrategy = ['failover_429', 'proactive_threshold', 'round_robin', 'manual'].includes(rawStrategy)
@@ -353,7 +387,14 @@ export class AntigravityCredentialStore {
       const proactiveThreshold = Number.isFinite(rawThresh) && rawThresh >= 0 && rawThresh <= 100
         ? rawThresh
         : current.proactiveThreshold
-      const nextAdv: AdvancedSettings = { defaultReasoningEffort, modelContextWindow, switchingStrategy, proactiveThreshold }
+      let enabledModels = current.enabledModels ?? [...(DEFAULT_ADVANCED_SETTINGS.enabledModels ?? ['gemini-3.8-flash'])]
+      if (Array.isArray(settings.enabledModels)) {
+        const filtered = settings.enabledModels.filter((id): id is PublicModelId => isPublicModelId(String(id)))
+        if (filtered.length > 0) {
+          enabledModels = Array.from(new Set(filtered))
+        }
+      }
+      const nextAdv: AdvancedSettings = { defaultReasoningEffort, modelContextWindow, switchingStrategy, proactiveThreshold, enabledModels }
       const nextDoc: AuthDocument = parsed === undefined
         ? { version: AUTH_FORMAT_VERSION, accounts: [], advanced: nextAdv }
         : { ...parsed.document, advanced: nextAdv }

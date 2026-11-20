@@ -1,0 +1,66 @@
+import { randomBytes } from 'node:crypto'
+import { isIP } from 'node:net'
+import { readFile } from 'node:fs/promises'
+import { join, resolve } from 'node:path'
+import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
+import { resolveDshHome } from '@deepseek-ai/dsh-home-paths'
+import { API_SERVER_FILENAME, DEFAULT_API_SERVER_HOST, DEFAULT_API_SERVER_PORT } from '../ids.ts'
+import {
+  DEFAULT_API_SERVER_SETTINGS,
+  type ApiServerSettings,
+} from './types.ts'
+
+export function generateApiKey(): string {
+  return `sk-agy-${randomBytes(16).toString('hex')}`
+}
+
+export function sanitizeApiServerSettings(raw: unknown): ApiServerSettings {
+  if (typeof raw !== 'object' || raw === null) {
+    return {
+      ...DEFAULT_API_SERVER_SETTINGS,
+      apiKey: generateApiKey(),
+    }
+  }
+  const data = raw as Record<string, unknown>
+  const enabled = Boolean(data.enabled)
+  // An IP literal or localhost only: a hostname here would make the bind address depend on DNS.
+  const rawHost = typeof data.host === 'string' ? data.host.trim() : ''
+  const host = rawHost === 'localhost' || isIP(rawHost) !== 0 ? rawHost : DEFAULT_API_SERVER_HOST
+  const rawPort = Number(data.port)
+  const port = Number.isInteger(rawPort) && rawPort >= 1024 && rawPort <= 65535
+    ? rawPort
+    : DEFAULT_API_SERVER_PORT
+  const apiKey = typeof data.apiKey === 'string' && data.apiKey.trim().length > 0
+    ? data.apiKey.trim()
+    : generateApiKey()
+
+  const limit = (value: unknown): number => {
+    const n = Number(value)
+    return Number.isInteger(n) && n > 0 && n <= 1_000_000 ? n : 0
+  }
+
+  return { enabled, host, port, apiKey, hourlyLimit: limit(data.hourlyLimit), dailyLimit: limit(data.dailyLimit) }
+}
+
+export class AntigravityApiServerStore {
+  constructor(readonly filename: string) {}
+
+  async read(): Promise<ApiServerSettings> {
+    try {
+      const text = await readFile(this.filename, 'utf-8')
+      return sanitizeApiServerSettings(JSON.parse(text))
+    } catch {
+      return sanitizeApiServerSettings(null)
+    }
+  }
+
+  async save(settings: unknown): Promise<ApiServerSettings> {
+    const sanitized = sanitizeApiServerSettings(settings)
+    await writeFileAtomic(this.filename, JSON.stringify(sanitized, null, 2) + '\n', { mode: 0o600, dirMode: 0o700 })
+    return sanitized
+  }
+}
+
+export function defaultApiServerPath(dshHome?: string): string {
+  return resolve(join(resolveDshHome(dshHome), API_SERVER_FILENAME))
+}

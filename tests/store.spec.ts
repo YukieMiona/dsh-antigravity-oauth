@@ -95,6 +95,22 @@ describe('AntigravityCredentialStore', () => {
     await expect(credentialStore.update('acc_missing', { access: 'x' })).rejects.toThrow(/unknown account/)
   })
 
+  it('keeps fields written by another plugin version instead of refusing the file', async () => {
+    const credentialStore = await store()
+    await credentialStore.add(grant)
+    await writeFile(
+      credentialStore.filename,
+      `${JSON.stringify({ version: 2, activeId: 'acc_a', futureTopLevel: 1, accounts: [{ ...grant, id: 'acc_a', futureField: 'kept', disabled: false }] })}\n`,
+      { mode: 0o600 },
+    )
+    const [account] = await credentialStore.list()
+    expect(account?.id).toBe('acc_a')
+    await credentialStore.update('acc_a', { access: 'a9' })
+    const written = JSON.parse(await readFile(credentialStore.filename, 'utf8'))
+    expect(written.accounts[0].futureField).toBe('kept')
+    expect(written.accounts[0].access).toBe('a9')
+  })
+
   it('fails closed on a v2 document with a dangling activeId', async () => {
     const credentialStore = await store()
     await credentialStore.add(grant)

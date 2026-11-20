@@ -1,5 +1,5 @@
 import type { AdapterRegistrationHandle } from '@deepseek-ai/dsh-llm'
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { syncAuthenticatedRoute } from '../src/index.ts'
 import type { AntigravitySession } from '../src/session.ts'
 
@@ -20,10 +20,40 @@ describe('syncAuthenticatedRoute', () => {
     }))).resolves.toBeUndefined()
   })
 
-  it('still surfaces other replace failures', async () => {
+  it('logs other replace failures instead of throwing, since nothing awaits this at load time', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
     await expect(syncAuthenticatedRoute(session(true), handle(() => {
       throw new Error('duplicate')
-    }))).rejects.toThrow('duplicate')
+    }))).resolves.toBeUndefined()
+    expect(logged.mock.calls.flat().join(' ')).toContain('duplicate')
+    logged.mockRestore()
+  })
+
+  it('keeps DSH running when the account file cannot be read: the Direct route stays off', async () => {
+    const logged = vi.spyOn(console, 'error').mockImplementation(() => {})
+    let routes: string[] | undefined
+    const unreadable = {
+      hasReadyAccount: async () => { throw new Error('dsh-antigravity-oauth: auth.json is not valid JSON') },
+      manager: { read: async () => ({ route: 'direct', enabled: false, baseUrl: '', apiKey: '' }) },
+    } as unknown as AntigravitySession
+    await expect(syncAuthenticatedRoute(unreadable, handle(((next: string[]) => { routes = next }) as () => void))).resolves.toBeUndefined()
+    expect(routes).toEqual([])
+    expect(logged.mock.calls.flat().join(' ')).toContain('not valid JSON')
+    // On the Official CLI route the account file is not needed at all.
+    const viaAgy = { ...unreadable, manager: { read: async () => ({ route: 'agy', enabled: false, baseUrl: '', apiKey: '' }) } } as unknown as AntigravitySession
+    await syncAuthenticatedRoute(viaAgy, handle(((next: string[]) => { routes = next }) as () => void))
+    expect(routes).toEqual(['agy-google-antigravity'])
+    logged.mockRestore()
+  })
+
+  it('mounts the provider route while the bridge is on, even with no ready account', async () => {
+    let routes: string[] | undefined
+    const bridged = {
+      hasReadyAccount: async () => false,
+      manager: { read: async () => ({ enabled: true, baseUrl: 'http://127.0.0.1:8045/v1', apiKey: '' }) },
+    } as unknown as AntigravitySession
+    await syncAuthenticatedRoute(bridged, handle(((next: string[]) => { routes = next }) as () => void))
+    expect(routes).toEqual(['agy-google-antigravity'])
   })
 
   it('mounts or unmounts WEB2API_ROUTE dynamically based on enabled setting', async () => {

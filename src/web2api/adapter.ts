@@ -8,15 +8,19 @@ import type {
   Message,
   StreamChunk,
 } from '@deepseek-ai/dsh-llm'
-import { Web2ApiClient } from './client.ts'
+import type { AttachmentStore } from '@deepseek-ai/dsh-attachment'
+import { resolveImageBlock, type ImageAccessResolver } from '../image-input.ts'
+import { Web2ApiClient, Web2ApiTimeoutError } from './client.ts'
 import {
   DEFAULT_WEB2API_MODELS,
   type OpenAiChatPayload,
+  type OpenAiContentPart,
   type OpenAiMessage,
   type Web2ApiSettings,
 } from './types.ts'
 
 export const WEB2API_ROUTE = 'agy-web'
+const IMAGE_ONLY_PROMPT = 'See the attached image.'
 
 function textOf(blocks: readonly ContentBlock[]): string {
   return blocks
@@ -25,16 +29,52 @@ function textOf(blocks: readonly ContentBlock[]): string {
     .join('')
 }
 
-export function convertMessagesToOpenAi(messages: readonly { role: string, content: readonly ContentBlock[] }[], systemPrompt?: string): OpenAiMessage[] {
+async function userContentOf(
+  blocks: readonly ContentBlock[],
+  attachments?: AttachmentStore,
+  signal?: AbortSignal,
+  resolveAccess?: ImageAccessResolver,
+): Promise<string | OpenAiContentPart[]> {
+  const parts: OpenAiContentPart[] = []
+  for (const block of blocks) {
+    if (block.type === 'text') {
+      if (block.text.length > 0) parts.push({ type: 'text', text: block.text })
+      continue
+    }
+    if (block.type === 'image') {
+      const image = await resolveImageBlock(block, attachments, signal, resolveAccess)
+      parts.push(image.type === 'inline'
+        ? { type: 'image_url', image_url: { url: `data:${image.mimeType};base64,${image.data}` } }
+        : { type: 'text', text: image.text })
+    }
+  }
+  const textParts = parts.filter(part => part.type === 'text')
+  if (textParts.length === parts.length) return textParts.map(part => part.text).join('')
+  // The gateway takes the latest question from text alone, so an image-only message would
+  // otherwise be paired with the previous question.
+  if (textParts.length === 0) parts.unshift({ type: 'text', text: IMAGE_ONLY_PROMPT })
+  return parts
+}
+
+export async function convertMessagesToOpenAi(
+  messages: readonly { role: string, content: readonly ContentBlock[] }[],
+  systemPrompt?: string,
+  attachments?: AttachmentStore,
+  signal?: AbortSignal,
+  resolveAccess?: ImageAccessResolver,
+): Promise<OpenAiMessage[]> {
   const result: OpenAiMessage[] = []
   if (systemPrompt && systemPrompt.trim().length > 0) {
     result.push({ role: 'system', content: systemPrompt.trim() })
   }
 
-  for (const message of messages) {
+  // The gateway uploads every image it receives on each request, and one it rejects would fail
+  // every later turn. Only the newest user message carries image bytes.
+  const newestUser = messages.map(message => message.role).lastIndexOf('user')
+  for (const [index, message] of messages.entries()) {
     if (message.role === 'user') {
-      const text = textOf(message.content)
-      result.push({ role: 'user', content: text })
+      const store = index === newestUser ? attachments : undefined
+      result.push({ role: 'user', content: await userContentOf(message.content, store, signal, resolveAccess) })
     } else if (message.role === 'assistant') {
       const text = textOf(message.content)
       result.push({ role: 'assistant', content: text })
@@ -49,6 +89,8 @@ export class Web2ApiAdapter extends LlmAdapter {
 
   constructor(
     private readonly getSettings: () => Promise<Web2ApiSettings>,
+    private readonly resolveAttachments?: () => AttachmentStore | undefined,
+    private readonly resolveImageAccess?: ImageAccessResolver,
   ) {
     super()
     this.client = new Web2ApiClient(getSettings)
@@ -102,7 +144,13 @@ export class Web2ApiAdapter extends LlmAdapter {
 
     const payload: OpenAiChatPayload = {
       model: options.model,
-      messages: convertMessagesToOpenAi(options.messages, options.system),
+      messages: await convertMessagesToOpenAi(
+        options.messages,
+        options.system,
+        this.resolveAttachments?.(),
+        options.signal,
+        this.resolveImageAccess,
+      ),
       stream: true,
       temperature: options.temperature,
       max_tokens: options.maxTokens,
@@ -172,6 +220,7 @@ export class Web2ApiAdapter extends LlmAdapter {
       }
     } catch (err: unknown) {
       yield* closeCurrentBlock()
+      if (err instanceof Web2ApiTimeoutError) throw new LlmError(err.message, 'TIMEOUT', { cause: err })
       const message = err instanceof Error ? err.message : String(err)
       throw new LlmError(`Web2API streaming error: ${message}`, 'UNKNOWN', { cause: err })
     }

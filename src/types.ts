@@ -27,11 +27,23 @@ export type CcaSession = {
   lastGoodEndpoint: string
 }
 
-export type PublicModelId = 'gemini-3.8-flash' | 'gemini-3.7-flash' | 'gemini-3.5-flash'
+export type PublicModelId =
+  | 'gemini-4-argon'
+  | 'gemini-3.8-flash'
+  | 'gemini-3.7-flash'
+  | 'gemini-3.5-flash'
+  | 'claude-sonnet-4-6'
+  | 'claude-opus-4-6-thinking'
+  | 'gemini-2.5-pro'
+  | 'gpt-oss-120b-medium'
+  | (string & {})
 
 export type ReasoningEffort = 'low' | 'medium' | 'high'
 
 export type ChatWireModelId =
+  | 'gemini-4-argon-low'
+  | 'gemini-4-argon-medium'
+  | 'gemini-4-argon-high'
   | 'gemini-3.8-flash-low'
   | 'gemini-3.8-flash-medium'
   | 'gemini-3.8-flash-high'
@@ -41,14 +53,18 @@ export type ChatWireModelId =
   | 'gemini-3.5-flash-extra-low'
   | 'gemini-3.5-flash-low'
   | 'gemini-3-flash-agent'
+  | (string & {})
 
 export type WireModelId = ChatWireModelId
 
 export type GeminiPart =
   | { text: string, thought?: boolean, thoughtSignature?: string }
   | { functionCall: { name: string, args: Record<string, unknown>, id?: string }, thoughtSignature?: string }
-  | { functionResponse: { name: string, response: Record<string, unknown>, id?: string } }
-  | { inlineData: { mimeType: string, data: string } }
+  | { functionResponse: { name: string, response: Record<string, unknown>, id?: string, parts?: GeminiInlineDataPart[] } }
+  | GeminiInlineDataPart
+
+/** The only part shape Gemini accepts inside `functionResponse.parts`. */
+export type GeminiInlineDataPart = { inlineData: { mimeType: string, data: string } }
 
 export type GeminiContent = {
   role: 'user' | 'model'
@@ -103,6 +119,11 @@ export type AccountSummary = {
   ready: boolean
   limited: boolean
   dead: boolean
+  /** Google disabled the account for a Terms of Service violation; it is never selected. */
+  banned?: boolean
+  /** The user turned the account off: never selected, and no request is made for it. */
+  disabled?: boolean
+  hasArgon?: boolean
 }
 
 export type QuotaBucket = {

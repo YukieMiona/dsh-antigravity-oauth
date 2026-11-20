@@ -14,7 +14,9 @@ export const ACCOUNT_SWITCH_PATH = '/plugins/dsh-antigravity-oauth/auth/accounts
 export const ACCOUNT_REMOVE_PATH = '/plugins/dsh-antigravity-oauth/auth/accounts/remove'
 export const ACCOUNT_QUOTAS_PATH = '/plugins/dsh-antigravity-oauth/auth/accounts/quotas'
 export const ADVANCED_SETTINGS_PATH = '/plugins/dsh-antigravity-oauth/advanced'
+export const AVAILABLE_MODELS_PATH = '/plugins/dsh-antigravity-oauth/models/available'
 export const QUOTA_SUMMARY_PATH = '/v1internal:retrieveUserQuotaSummary'
+export const FETCH_AVAILABLE_MODELS_PATH = '/v1internal:fetchAvailableModels'
 
 export const DAILY_ENDPOINT = 'https://daily-cloudcode-pa.googleapis.com'
 export const SANDBOX_ENDPOINT = 'https://daily-cloudcode-pa.sandbox.googleapis.com'
@@ -37,7 +39,7 @@ export const FREE_TIER_ID = 'free-tier'
 export const ONBOARD_TIMEOUT_MS = 30_000
 export const ONBOARD_POLL_INTERVAL_MS = 1_000
 
-export const DEFAULT_ANTIGRAVITY_VERSION = '2.11.0'
+export const DEFAULT_ANTIGRAVITY_VERSION = '2.29.0'
 export const DEFAULT_ANTIGRAVITY_CL = '963137146'
 
 export const ANTIGRAVITY_VERSION_MANIFEST_URL =
@@ -56,5 +58,17 @@ export const WEB2API_FILENAME = '.dsh-antigravity-oauth.web2api.json'
 export const WEB2API_ROUTE = 'agy-web'
 export const WEB2API_SETTINGS_PATH = '/plugins/dsh-antigravity-oauth/web2api/settings'
 export const WEB2API_TEST_PATH = '/plugins/dsh-antigravity-oauth/web2api/test'
+export const ACCOUNT_SET_ENABLED_PATH = '/plugins/dsh-antigravity-oauth/auth/accounts/set-enabled'
+export const ACCOUNT_TOGGLE_ARGON_PATH = '/plugins/dsh-antigravity-oauth/auth/accounts/toggle-argon'
+export const MANAGER_TEST_PATH = '/plugins/dsh-antigravity-oauth/manager/test'
+export const MANAGER_SETTINGS_PATH = '/plugins/dsh-antigravity-oauth/manager/settings'
+export const MANAGER_FILENAME = '.dsh-antigravity-oauth.manager.json'
+/** Empty directory next to the auth file that agy runs in; it never holds user files. */
+export const AGY_WORKSPACE_DIRNAME = '.dsh-antigravity-oauth.agy-workspace'
+
+export const API_SERVER_FILENAME = '.dsh-antigravity-oauth.api-server.json'
+export const API_SERVER_PATH = '/plugins/dsh-antigravity-oauth/api-server'
+export const DEFAULT_API_SERVER_PORT = 18045
+export const DEFAULT_API_SERVER_HOST = '127.0.0.1'
 
 export const THOUGHT_SIGNATURE_MAX_ENTRIES = 5000

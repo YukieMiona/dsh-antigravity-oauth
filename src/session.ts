@@ -1,4 +1,5 @@
 import { createServer } from 'node:http'
+import { dirname, join } from 'node:path'
 import { existsSync, readFileSync } from 'node:fs'
 import { writeFileAtomic } from '@deepseek-ai/dsh-atomic-write'
 import type { IncomingMessage, ServerResponse } from 'node:http'
@@ -7,6 +8,8 @@ import {
   CALLBACK_PORT,
   CALLBACK_URI,
   CCA_ENDPOINTS,
+  FETCH_AVAILABLE_MODELS_PATH,
+  MANAGER_FILENAME,
   OAUTH_REFRESH_COOLDOWN_MS,
   OAUTH_REFRESH_SOON_MS,
   PRECHECK_INTERVAL_MS,
@@ -39,8 +42,11 @@ import type {
 } from './types.ts'
 import { AntigravityNetwork } from './network.ts'
 import { AntigravityWeb2ApiStore } from './web2api/store.ts'
+import { AntigravityApiServerStore, AntigravityApiServer } from './api-server/index.ts'
+import { AntigravityManagerStore } from './manager/store.ts'
 import { evaluateQuotaMetrics } from './quota-core.ts'
 import { antigravityUserAgent, ensureAntigravityVersion } from './user-agent.ts'
+import { DEFAULT_CATALOG_MODELS, type ModelCatalogItem } from './models.ts'
 
 export type FetchImpl = typeof fetch
 
@@ -62,6 +68,7 @@ type AccountRuntime = {
   limitedUntil?: number
   limitedStrikes?: number
   dead?: boolean
+  argonIneligible?: boolean
 }
 
 
@@ -153,11 +160,20 @@ export class ThoughtSignatureStore implements ReadonlyMap<string, string> {
   }
 }
 
+
+/** An account the plugin may send requests for: not turned off by the user, not disabled by Google. */
+function isUsable(account: StoredAccount): boolean {
+  return account.disabled !== true && account.bannedAt === undefined
+}
+
 export class AntigravitySession {
   readonly store: AntigravityCredentialStore
   readonly thoughtSignatures: ThoughtSignatureStore
   readonly network: AntigravityNetwork
   readonly web2api: AntigravityWeb2ApiStore
+  readonly apiServerStore: AntigravityApiServerStore
+  readonly manager: AntigravityManagerStore
+  readonly apiServer: AntigravityApiServer
   private readonly fetchImpl: FetchImpl
   private readonly runtimes = new Map<string, AccountRuntime>()
   private readonly precheckAt = new Map<string, number>()
@@ -178,8 +194,12 @@ export class AntigravitySession {
     this.store = store
     this.network = new AntigravityNetwork(store.filename + '.network.json')
     this.web2api = new AntigravityWeb2ApiStore(store.filename + '.web2api.json')
+    this.apiServerStore = new AntigravityApiServerStore(store.filename + '.api-server.json')
+    // Next to the auth file. String() keeps minimal test stores (no filename) constructible.
+    this.manager = new AntigravityManagerStore(join(dirname(String(store.filename)), MANAGER_FILENAME))
     this.fetchImpl = fetchImpl ?? this.network.fetch
     this.thoughtSignatures = new ThoughtSignatureStore(store.filename + '.signatures.json')
+    this.apiServer = new AntigravityApiServer(this, this.apiServerStore)
   }
 
   private runtimeFor(accountId: string): AccountRuntime {
@@ -191,21 +211,155 @@ export class AntigravitySession {
     return runtime
   }
 
-  async acquire(): Promise<AntigravityLease | undefined> {
-    const grant = await this.refreshGrant()
-    if (grant === undefined || grant.projectId === undefined) return undefined
+  isArgonCapable(account: StoredAccount): boolean {
+    return account.hasArgon === true && this.runtimes.get(account.id)?.argonIneligible !== true
+  }
+
+  noteArgonRejected(accountId: string): void {
+    this.runtimeFor(accountId).argonIneligible = true
+  }
+
+  async findArgonAccount(exclude?: string | ReadonlySet<string>): Promise<StoredAccount | undefined> {
+    const excluded = typeof exclude === 'string' ? new Set([exclude]) : exclude
+    const all = await this.store.list()
+    const requireExplicit = all.some(account => account.hasArgon === true)
+    const now = Date.now()
+    const available = all.filter(account => {
+      if (account.projectId === undefined) return false
+      if (account.hasArgon === false) return false
+      if (requireExplicit && account.hasArgon !== true) return false
+      if (excluded?.has(account.id)) return false
+      const runtime = this.runtimes.get(account.id)
+      if (runtime?.dead || account.bannedAt !== undefined || account.disabled === true) return false
+      if (runtime?.argonIneligible) return false
+      if (runtime?.limitedUntil !== undefined && runtime.limitedUntil > now) return false
+      return true
+    })
+    if (available.length === 0) return undefined
     const active = await this.store.active()
-    if (active === undefined) return undefined
-    const runtime = this.runtimeFor(active.id)
-    return {
-      oauth: { ...grant, projectId: grant.projectId },
-      accountId: active.id,
-      ...grant.email === undefined ? {} : { email: grant.email },
-      cca: runtime.cca,
+    if (excluded && excluded.size > 0) {
+      const activeMatch = active !== undefined ? available.find(a => a.id === active.id) : undefined
+      return activeMatch ?? available[0]
     }
+    const adv = await this.getAdvancedSettings().catch(() => ({ switchingStrategy: 'failover_429', proactiveThreshold: 20 } as AdvancedSettings))
+    return this.selectAccountForStrategy(available, active, adv.switchingStrategy, adv.proactiveThreshold)
+  }
+
+  private async selectAccountForStrategy(
+    candidates: StoredAccount[],
+    active: StoredAccount | undefined,
+    strategy: AdvancedSettings['switchingStrategy'],
+    threshold: number,
+  ): Promise<StoredAccount | undefined> {
+    if (candidates.length === 0) return undefined
+    if (candidates.length === 1) return candidates[0]
+
+    // 1. Manual strategy: keep active account if present in candidates; otherwise first candidate
+    if (strategy === 'manual') {
+      const activeMatch = active !== undefined ? candidates.find(a => a.id === active.id) : undefined
+      return activeMatch ?? candidates[0]
+    }
+
+    // 2. Round-Robin strategy: rotate in memory across candidates without disk write storms
+    if (strategy === 'round_robin') {
+      const activeIndex = active !== undefined ? candidates.findIndex(a => a.id === active.id) : -1
+      const offset = (this.roundRobinCursor++) % candidates.length
+      const index = (activeIndex + 1 + offset) % candidates.length
+      return candidates[index]!
+    }
+
+    // 3. Proactive Threshold strategy: check active account's quota score; if below threshold, pick best
+    if (strategy === 'proactive_threshold') {
+      const activeMatch = active !== undefined ? candidates.find(a => a.id === active.id) : undefined
+      if (activeMatch !== undefined) {
+        try {
+          const summaries = await this.retrieveAllQuotas()
+          const activeSummary = summaries[activeMatch.id]
+          const metrics = activeSummary?.ok && activeSummary.groups ? evaluateQuotaMetrics(activeSummary) : undefined
+          const currentScore = metrics?.score ?? 100
+          if (currentScore < threshold) {
+            let bestAccount = candidates.find(a => a.id !== activeMatch.id)
+            let bestScore = -1
+            for (const cand of candidates) {
+              if (cand.id === activeMatch.id) continue
+              const s = summaries[cand.id]
+              const m = s?.ok && s.groups ? evaluateQuotaMetrics(s)?.score ?? 50 : 50
+              if (m > bestScore) {
+                bestScore = m
+                bestAccount = cand
+              }
+            }
+            if (bestAccount !== undefined && bestScore > currentScore) {
+              await Promise.resolve(this.store.setActive(bestAccount.id)).catch(() => {})
+              return bestAccount
+            }
+          }
+        } catch {}
+        return activeMatch
+      }
+    }
+
+    // 4. Default ('failover_429'): keep active if candidate, otherwise first available candidate
+    const activeHealthy = active !== undefined ? candidates.find(a => a.id === active.id) : undefined
+    return activeHealthy ?? candidates[0]
+  }
+
+  async acquire(options?: { model?: string }): Promise<AntigravityLease | undefined> {
+    if (options?.model === 'gemini-4-argon') {
+      const excluded = new Set<string>()
+      while (true) {
+        const argonAccount = await this.findArgonAccount(excluded)
+        if (argonAccount === undefined) break
+        const lease = await this.acquireForAccount(argonAccount.id)
+        if (lease !== undefined) return lease
+        excluded.add(argonAccount.id)
+      }
+      // If all Argon-capable accounts are in cooldown or previously rejected, still try the first
+      // ready Argon-marked account before giving up so stream() surfaces the real HTTP error rather than MISSING_CREDENTIAL.
+      const all = await this.store.list()
+      const explicitArgon = all.filter(a => a.projectId !== undefined && a.hasArgon === true && a.bannedAt === undefined && a.disabled !== true)
+      for (const candidate of explicitArgon) {
+        if (excluded.has(candidate.id)) continue
+        const lease = await this.acquireForAccount(candidate.id)
+        if (lease !== undefined) return lease
+      }
+      if (explicitArgon.length > 0) return undefined
+    }
+    const all = await this.store.list()
+    const active = await this.store.active()
+    const now = Date.now()
+    const readyAccounts = all.filter(account => {
+      if (account.projectId === undefined) return false
+      const runtime = this.runtimes.get(account.id)
+      if (runtime?.dead || account.bannedAt !== undefined || account.disabled === true) return false
+      if (runtime?.limitedUntil !== undefined && runtime.limitedUntil > now) return false
+      return true
+    })
+    const adv = await this.getAdvancedSettings().catch(() => ({ switchingStrategy: 'failover_429', proactiveThreshold: 20 } as AdvancedSettings))
+    const excluded = new Set<string>()
+    while (true) {
+      const candidates = readyAccounts.filter(a => !excluded.has(a.id))
+      if (candidates.length === 0) break
+      const selectedAccount = await this.selectAccountForStrategy(candidates, active, adv.switchingStrategy, adv.proactiveThreshold)
+      if (selectedAccount === undefined) break
+      const grant = await this.refreshGrantForAccount(selectedAccount.id)
+      if (grant !== undefined && grant.projectId !== undefined) {
+        const runtime = this.runtimeFor(selectedAccount.id)
+        return {
+          oauth: { ...grant, projectId: grant.projectId },
+          accountId: selectedAccount.id,
+          ...grant.email === undefined ? {} : { email: grant.email },
+          cca: runtime.cca,
+        }
+      }
+      excluded.add(selectedAccount.id)
+    }
+    return undefined
   }
 
   async acquireForAccount(accountId: string): Promise<AntigravityLease | undefined> {
+    // Test doubles of the store may not implement `get`.
+    if (typeof this.store.get === 'function' && (await this.store.get(accountId).catch(() => undefined))?.disabled === true) return undefined
     const grant = await this.refreshGrantForAccount(accountId)
     if (grant === undefined || grant.projectId === undefined) return undefined
     const runtime = this.runtimeFor(accountId)
@@ -230,7 +384,7 @@ export class AntigravitySession {
     // Filter out dead or rate-limited accounts
     const available = ready.filter(account => {
       const runtime = this.runtimes.get(account.id)
-      if (runtime?.dead) return false
+      if (runtime?.dead || account.bannedAt !== undefined || account.disabled === true) return false
       if (runtime?.limitedUntil !== undefined && runtime.limitedUntil > now) return false
       return true
     })
@@ -266,7 +420,7 @@ export class AntigravitySession {
       if (account.id === excludeAccountId) return false
       if (account.projectId === undefined) return false
       const runtime = this.runtimes.get(account.id)
-      if (runtime?.dead === true) return false
+      if (runtime?.dead === true || account.bannedAt !== undefined || account.disabled === true) return false
       if (runtime?.limitedUntil !== undefined && runtime.limitedUntil > now) return false
       return true
     })
@@ -274,7 +428,7 @@ export class AntigravitySession {
 
   async hasReadyAccount(): Promise<boolean> {
     const accounts = await this.store.list()
-    return accounts.some(account => account.projectId !== undefined)
+    return accounts.some(account => account.projectId !== undefined && account.bannedAt === undefined && account.disabled !== true)
   }
 
   noteRateLimited(accountId: string): void {
@@ -289,6 +443,26 @@ export class AntigravitySession {
 
   noteAuthRejected(accountId: string): void {
     this.runtimeFor(accountId).dead = true
+  }
+
+  /**
+   * Google disabled this account (`TOS_VIOLATION`). Persist it: token refresh keeps working for a
+   * banned account, so a runtime flag alone would be cleared and the account picked again.
+   */
+  async noteBanned(accountId: string): Promise<void> {
+    this.runtimeFor(accountId).dead = true
+    const account = await this.store.get(accountId).catch(() => undefined)
+    if (account === undefined) return
+    if (account.bannedAt === undefined) {
+      console.warn(`[dsh-antigravity-oauth] account ${account.email ?? accountId} disabled by Google (ToS); it will no longer be used`)
+      await this.store.update(accountId, { bannedAt: new Date().toISOString() }).catch(() => undefined)
+    }
+    // A banned account must not stay "current" in the UI; hand that role to a healthy one if any.
+    const active = await this.store.active().catch(() => undefined)
+    if (active?.id === accountId) {
+      const next = await this.findBestAccount({ excludeId: accountId }).catch(() => undefined)
+      if (next !== undefined) await this.switchAccount(next.id).catch(() => undefined)
+    }
   }
 
   async snapshot(): Promise<AntigravityStatus> {
@@ -319,6 +493,7 @@ export class AntigravitySession {
     const now = Date.now()
     for (const account of all) {
       if (account.id === active?.id) continue
+      if (!isUsable(account)) continue
       if (account.expires >= now - OAUTH_REFRESH_SOON_MS) continue
       if ((this.precheckAt.get(account.id) ?? 0) > now - PRECHECK_INTERVAL_MS) continue
       this.precheckAt.set(account.id, now)
@@ -337,7 +512,10 @@ export class AntigravitySession {
         ...Number.isNaN(account.expires) ? {} : { expiresAt: new Date(account.expires).toISOString() },
         ready: account.projectId !== undefined,
         limited: runtime?.limitedUntil !== undefined && runtime.limitedUntil > now,
-        dead: runtime?.dead === true,
+        dead: runtime?.dead === true || account.bannedAt !== undefined,
+        ...account.bannedAt === undefined ? {} : { banned: true },
+        ...account.disabled === true ? { disabled: true } : {},
+        ...account.hasArgon === undefined ? {} : { hasArgon: account.hasArgon },
       }
     })
   }
@@ -379,6 +557,8 @@ export class AntigravitySession {
   private async refreshGrantForAccount(accountId: string, now = Date.now()): Promise<AntigravityGrant | undefined> {
     const target = await this.store.get(accountId)
     if (target === undefined) return undefined
+    // No request to Google for an account the user turned off or Google disabled.
+    if (!isUsable(target)) return undefined
     if (now < target.expires - OAUTH_REFRESH_SOON_MS) return target
     if (now - (this.refreshAttempts.get(target.id) ?? 0) < OAUTH_REFRESH_COOLDOWN_MS) return target
     this.refreshAttempts.set(target.id, now)
@@ -396,7 +576,31 @@ export class AntigravitySession {
   }
 
   async switchAccount(accountId: string): Promise<AntigravityStatus> {
+    if ((await this.store.get(accountId).catch(() => undefined))?.disabled === true) {
+      throw new Error('This account is turned off. Turn it on before you select it.')
+    }
     await this.store.setActive(accountId)
+    return this.snapshot()
+  }
+
+  /**
+   * The user's off switch for one account. An account that is off is never selected, and the
+   * plugin makes no request for it (no model call, no quota check, no token refresh).
+   */
+  async setAccountEnabled(accountId: string, enabled: boolean): Promise<AntigravityStatus> {
+    await this.store.update(accountId, { disabled: !enabled })
+    this.cachedQuotas = undefined
+    if (!enabled) {
+      // The current role moves to an account that can still be used, if there is one.
+      const active = await this.store.active().catch(() => undefined)
+      if (active?.id === accountId) {
+        const next = await this.findBestAccount({ excludeId: accountId }).catch(() => undefined)
+          ?? await this.findFailoverAccount(accountId).catch(() => undefined)
+          // A rate-limited account is still a better current account than one that is off.
+          ?? (await this.store.list()).find(account => account.id !== accountId && isUsable(account) && account.projectId !== undefined)
+        if (next !== undefined) await this.store.setActive(next.id)
+      }
+    }
     return this.snapshot()
   }
 
@@ -467,8 +671,8 @@ export class AntigravitySession {
       // Eligibility failed for the freshly added account. Keep a working
       // account active instead of stranding requests on the broken one.
       const active = await this.store.active()
-      if (active?.projectId === undefined) {
-        const ready = accounts.find(account => account.projectId !== undefined)
+      if (active?.projectId === undefined || !isUsable(active)) {
+        const ready = accounts.find(account => account.projectId !== undefined && isUsable(account))
         if (ready !== undefined) await this.store.setActive(ready.id)
       }
       this.login = { status: 'idle' }
@@ -532,6 +736,7 @@ export class AntigravitySession {
     this.operation = undefined
     this.cancellation = undefined
     this.listening = undefined
+    await this.apiServer.stop().catch(() => undefined)
     await this.network.dispose()
   }
 
@@ -682,6 +887,8 @@ export class AntigravitySession {
   }
 
   private cachedAdvanced?: AdvancedSettings
+  private cachedQuotas?: { timestamp: number, data: Record<string, AccountQuotaSummary> }
+  private roundRobinCursor = 0
 
   async getAdvancedSettings(): Promise<AdvancedSettings> {
     if (this.cachedAdvanced) return this.cachedAdvanced
@@ -695,8 +902,11 @@ export class AntigravitySession {
     return saved
   }
 
-  async retrieveAllQuotas(): Promise<Record<string, AccountQuotaSummary>> {
-    const accounts = await this.store.list()
+  async retrieveAllQuotas(options?: { force?: boolean }): Promise<Record<string, AccountQuotaSummary>> {
+    if (options?.force !== true && this.cachedQuotas && Date.now() - this.cachedQuotas.timestamp < 60_000) {
+      return this.cachedQuotas.data
+    }
+    const accounts = (await this.store.list()).filter(account => account.disabled !== true)
     const result: Record<string, AccountQuotaSummary> = {}
     await Promise.all(accounts.map(async account => {
       try {
@@ -722,6 +932,7 @@ export class AntigravitySession {
                 'User-Agent': antigravityUserAgent(),
               },
               body,
+              signal: AbortSignal.timeout(5000),
             })
             if (resp.ok) {
               data = await resp.json()
@@ -753,6 +964,111 @@ export class AntigravitySession {
         result[account.id] = { accountId: account.id, email: account.email, ok: false, error: safeMessage(err) }
       }
     }))
+    this.cachedQuotas = { timestamp: Date.now(), data: result }
     return result
+  }
+
+  private availableModelsCache?: { models: ModelCatalogItem[]; fetchedAt: number }
+  private availableModelsFailedAt = 0
+  private availableModelsInflight?: Promise<ModelCatalogItem[]>
+
+  /**
+   * The model picker calls this often. A failed upstream fetch backs off for a minute, and
+   * concurrent callers share one fetch, so a flaky upstream never stalls every model lookup.
+   */
+  async getAvailableModels(): Promise<ModelCatalogItem[]> {
+    const now = Date.now()
+    const fallback = (): ModelCatalogItem[] => this.availableModelsCache?.models ?? [...DEFAULT_CATALOG_MODELS]
+    if (this.availableModelsCache && now - this.availableModelsCache.fetchedAt < 300_000) {
+      return this.availableModelsCache.models
+    }
+    if (now - this.availableModelsFailedAt < 60_000) return fallback()
+    this.availableModelsInflight ??= (async () => {
+      try {
+        const fetched = await this.fetchAvailableModelsFromUpstream().catch(() => null)
+        if (fetched && fetched.length > 0) {
+          this.availableModelsCache = { models: fetched, fetchedAt: Date.now() }
+          return fetched
+        }
+        this.availableModelsFailedAt = Date.now()
+        return fallback()
+      } finally {
+        this.availableModelsInflight = undefined
+      }
+    })()
+    return this.availableModelsInflight
+  }
+
+  private async fetchAvailableModelsFromUpstream(): Promise<ModelCatalogItem[] | null> {
+    const current = await this.store.active()
+    const active = current !== undefined && isUsable(current) && current.projectId !== undefined
+      ? current
+      : (await this.store.list()).find(account => isUsable(account) && account.projectId !== undefined)
+    if (!active) return null
+    let access = active.access
+    if (Date.now() >= active.expires - 30_000) {
+      try {
+        const refreshed = await refreshAccessToken(active, this.fetchImpl)
+        await this.store.update(active.id, {
+          access: refreshed.access,
+          refresh: refreshed.refresh,
+          expires: refreshed.expires,
+        })
+        access = refreshed.access
+      } catch {}
+    }
+    const body = JSON.stringify({ project: active.projectId || 'aicode-consumers' })
+    let data: any = null
+    for (const endpoint of CCA_ENDPOINTS) {
+      try {
+        const resp = await this.fetchImpl(`${endpoint}${FETCH_AVAILABLE_MODELS_PATH}`, {
+          method: 'POST',
+          headers: {
+            Authorization: `Bearer ${access}`,
+            'Content-Type': 'application/json',
+            'User-Agent': antigravityUserAgent(),
+          },
+          body,
+          signal: AbortSignal.timeout(5000),
+        })
+        if (resp.ok) {
+          data = await resp.json()
+          break
+        }
+      } catch {}
+    }
+    if (!data || typeof data !== 'object') return null
+    const rawModels = typeof data.models === 'object' && data.models !== null ? data.models : {}
+    const list: ModelCatalogItem[] = []
+
+    // Ensure default gemini-3.8-flash entry
+    list.push({
+      id: 'gemini-3.8-flash',
+      name: 'Gemini 3.8 Flash',
+      contextWindow: 1_048_576,
+      maxTokens: 65_536,
+      supportsImages: true,
+      supportsThinking: true,
+    })
+
+    for (const [id, info] of Object.entries(rawModels)) {
+      if (!info || typeof info !== 'object') continue
+      const rec = info as any
+      if (rec.isInternal || id.startsWith('chat_') || id.startsWith('tab_')) continue
+      if (id === 'gemini-3.8-flash' || list.some(m => m.id === id)) continue
+      const contextWindow = Number(rec.maxTokens ?? rec.inputTokenLimit ?? rec.contextWindow) || 1048576
+      const maxTokens = Number(rec.maxOutputTokens ?? rec.outputTokenLimit) || 65536
+      list.push({
+        id,
+        name: typeof rec.displayName === 'string' && rec.displayName.length > 0 ? rec.displayName : id,
+        description: typeof rec.description === 'string' ? rec.description : undefined,
+        contextWindow,
+        maxTokens,
+        supportsImages: Boolean(rec.supportsImages),
+        supportsThinking: Boolean(rec.supportsThinking),
+        thinkingBudget: typeof rec.thinkingBudget === 'number' ? rec.thinkingBudget : undefined,
+      })
+    }
+    return list
   }
 }
