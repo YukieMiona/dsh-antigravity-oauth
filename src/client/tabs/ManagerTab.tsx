@@ -5,7 +5,7 @@ import type { BridgeProbeResult } from '../../manager/probe.ts'
 import { REASONING_EFFORTS, routeChatModel } from '../../models.ts'
 import { AGY_TESTED_LINE, isTestedAgyVersion } from '../../agy/version.ts'
 
-export type BridgePatch = { route?: RouteKind, enabled?: boolean, baseUrl?: string, apiKey?: string }
+export type BridgePatch = { route?: RouteKind, enabled?: boolean, baseUrl?: string, apiKey?: string, agyTitles?: boolean }
 
 export interface ManagerTabProps {
   t: (key: AntigravityKey, params?: Record<string, unknown>) => string
@@ -161,6 +161,20 @@ export function ManagerTab({ t, settings, enabledModels, save, test }: ManagerTa
                 : agy.installed ? t('agyNotSignedIn') : t('agyNotInstalled')}
           />
         </div>
+        {route === 'agy' ? (
+          <label className="dsh-agy-option">
+            <input
+              type="checkbox"
+              checked={settings.agyTitles !== false}
+              disabled={busy}
+              onChange={event => { void persist({ agyTitles: event.target.checked }) }}
+            />
+            <span className="dsh-agy-option-text">
+              <span className="dsh-agy-option-name">{t('agyTitles')}</span>
+              <span className="dsh-agy-option-desc">{t('agyTitlesDesc')}</span>
+            </span>
+          </label>
+        ) : null}
         {agy?.version !== undefined && !isTestedAgyVersion(agy.version) ? (
           <p className="dsh-agy-callout is-warn" role="status">{t('agyUntested', { version: agy.version, tested: AGY_TESTED_LINE })}</p>
         ) : null}

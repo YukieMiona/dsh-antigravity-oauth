@@ -730,6 +730,10 @@ export class AntigravityAdapter extends LlmAdapter {
     targetModel: string,
     settings: ManagerSettings,
   ): AsyncIterable<StreamChunk> {
+    if (options.purpose === 'session-title' && settings.agyTitles === false) {
+      // Background requests use the same Google window as chats; DSH keeps its own title.
+      throw new LlmError('Antigravity CLI: session titles are turned off on this route (Settings → Antigravity → Route)', 'UNSUPPORTED')
+    }
     const effort = effortOf(options)
     const hasImages = this.options.disableImageUpload !== true
       && options.messages.some(m => m.content.some(b => b.type === 'image' && b.offloaded !== true))
