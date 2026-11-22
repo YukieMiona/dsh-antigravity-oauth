@@ -320,7 +320,7 @@ process.stdin.on('end', () => {
   })
 
   it('stops a run whose answer has not started at the deadline, and lets agy retry nothing', async () => {
-    const silent = await fakeAgy(`process.stdin.resume()`, 'agy-silent')
+    const silent = await fakeAgy(`process.stdin.resume(); setInterval(() => {}, 1000)`, 'agy-silent')
     const started = Date.now()
     await expect(runAgy({ binary: silent, cwd: join(dir, 'ws'), model: 'm', prompt: 'x', deadlineAt: Date.now() + 800 })).rejects.toMatchObject({ kind: 'deadline' })
     expect(Date.now() - started).toBeLessThan(4_000)
