@@ -4,7 +4,7 @@ import { isPublicModelId, isReasoningEffort, publicModel, routeChatModel, thinki
 import { isAccountBannedError } from '../ban.ts'
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
 import { lastAgyReading } from '../agy/quota-watch.ts'
-import { AgyError, CAPACITY_COOLDOWN_MS, rateLimitRetryAfter } from '../agy/run.ts'
+import { AgyError, CAPACITY_COOLDOWN_MS, rateLimitRetryAfter, stopAgySpare } from '../agy/run.ts'
 import { agyTurn, agyWorkspace, type AgyImage } from '../agy/turn.ts'
 import { chatCompletionsUrl, type ManagerSettings } from '../manager/store.ts'
 import type { AntigravitySession } from '../session.ts'
@@ -397,6 +397,8 @@ export class AntigravityApiServer {
   }
 
   async stop(): Promise<void> {
+    // A spare agy waits only for this server's requests.
+    stopAgySpare()
     if (this.server) {
       const srv = this.server
       // close() alone waits for every keep-alive socket and open SSE stream, which can be forever.
@@ -556,6 +558,8 @@ export class AntigravityApiServer {
       signal,
       queueTimeoutMs: AGY_QUEUE_TIMEOUT_MS,
       maxUpstreamAttempts: AGY_MAX_UPSTREAM_ATTEMPTS,
+      // API clients send short, self-contained requests; a started spare agy takes them.
+      warm: true,
       ...hints,
       ...onActivity === undefined ? {} : { onActivity },
       loadImage: async block => {

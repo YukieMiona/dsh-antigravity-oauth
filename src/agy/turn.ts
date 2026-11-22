@@ -13,6 +13,8 @@ import {
   parseAnswer,
   splitConversation,
   ToolCallFilter,
+  WARM_TEMPLATE_BODY,
+  warmMessage,
   type ImageBlock,
 } from './prompt.ts'
 import { AgyError, streamAgy, type AgyResult, type AgyUsage } from './run.ts'
@@ -44,6 +46,11 @@ export interface AgyTurnOptions {
   deadlineAt?: number
   /** See `AgyRunOptions.interactive`. */
   interactive?: boolean
+  /**
+   * Send a request that fits one user message with a fixed template, so a started spare agy
+   * process can take it (no start-up on the request path). Larger requests and images do not.
+   */
+  warm?: boolean
 }
 
 /**
@@ -154,7 +161,7 @@ export async function* agyTurn(options: AgyTurnOptions): AsyncGenerator<AgyTurnE
     const cwd = images.dir ?? options.workspace
     const { body, tools } = buildTemplateBody(options.request, withImages)
     const bodyTokens = estimateTokens(body)
-    const runOnce = (agent: string, recent: string) => streamAgy({
+    const runOnce = (agent: string, recent: string, warm: boolean) => streamAgy({
       binary: options.binary,
       cwd,
       model: options.model,
@@ -171,6 +178,7 @@ export async function* agyTurn(options: AgyTurnOptions): AsyncGenerator<AgyTurnE
       ...options.maxUpstreamAttempts === undefined ? {} : { maxUpstreamAttempts: options.maxUpstreamAttempts },
       ...options.deadlineAt === undefined ? {} : { deadlineAt: options.deadlineAt },
       ...options.interactive === true ? { interactive: true } : {},
+      ...warm ? { warm: true } : {},
     })
     const filter = new ToolCallFilter()
     let streamed = ''
@@ -178,19 +186,39 @@ export async function* agyTurn(options: AgyTurnOptions): AsyncGenerator<AgyTurnE
     let result: AgyResult | undefined
     // agy refuses an input above its cap before the model runs. The estimate is conservative,
     // but if agy still refuses, older turns are dropped and the request is sent again.
-    for (let attempt = 0; ; attempt++) {
+    const imageText = (block: ImageBlock): string => images.text.get(block) ?? `[Image: ${imageName(block)} (not attached)]`
+    const warm = options.warm === true && !withImages ? warmMessage(options.request.messages, body, imageText) : undefined
+    // Attempt -1 is the warm run; if agy refuses it as too large, the usual path follows.
+    for (let attempt = warm === undefined ? 0 : -1; ; attempt++) {
+      if (attempt < 0) {
+        const agent = await ensureTemplate(cwd, WARM_TEMPLATE_BODY)
+        try {
+          for await (const event of runOnce(agent, warm!, true)) {
+            if (event.type === 'result') { result = event.result; break }
+            const visible = filter.feed(event.text)
+            if (visible.length === 0) continue
+            streamed += visible
+            yield { type: 'text', text: visible }
+          }
+          break
+        } catch (error) {
+          if (!(error instanceof AgyError && error.kind === 'too-large' && streamed.length === 0)) throw error
+          console.warn('[dsh-antigravity-oauth] agy: warm request over the CLI\'s cap; sending it the usual way')
+          continue
+        }
+      }
       const share = TOO_LARGE_SHARES[attempt]!
       const conversation = splitConversation(
         options.request.messages,
         MESSAGE_BUDGET_TOKENS,
         recentTokens => Math.max(0, Math.floor((AGY_MAX_INPUT_TOKENS - AGY_OVERHEAD_TOKENS - bodyTokens - recentTokens) * share)),
-        block => images.text.get(block) ?? `[Image: ${imageName(block)} (not attached)]`,
+        imageText,
       )
       const agent = await ensureTemplate(cwd, conversation.earlier.length === 0
         ? body
         : `${body}\n\n# Earlier conversation (oldest first)\n\n${conversation.earlier}\n\n(End of the earlier conversation. The latest turns arrive in the user message.)`, withImages)
       try {
-        for await (const event of runOnce(agent, conversation.recent)) {
+        for await (const event of runOnce(agent, conversation.recent, false)) {
           if (event.type === 'result') { result = event.result; break }
           const visible = filter.feed(event.text)
           if (visible.length === 0) continue

@@ -92,6 +92,11 @@ export interface AgyRunOptions {
   deadlineAt?: number
   /** Wait in the queue ahead of requests that are not interactive. */
   interactive?: boolean
+  /**
+   * Use the started spare process when one with the same arguments is waiting, and start the next
+   * spare after a successful run. Only for runs whose arguments repeat (a fixed agent template).
+   */
+  warm?: boolean
 }
 
 export type AgyErrorKind =
@@ -444,6 +449,100 @@ async function readFrom(file: string, offset: number): Promise<{ text: string, o
 }
 
 /**
+ * A started agy process that waits for its message. agy spends 2-5 s after start on its own setup
+ * (language server, sign-in, four `loadCodeAssist` calls and a model list) before it reads stdin;
+ * a spare does that before the request arrives, and its run is only the model call. Each spare
+ * serves one message and exits, so no history passes between requests. Only one spare waits, and
+ * it is stopped after a quiet time: an idle agy polls Google every few minutes.
+ */
+interface Spare {
+  key: string
+  child: ReturnType<typeof spawn>
+  log: string
+  spawnAt: number
+  stdout: string[]
+  stderr: string[]
+  onStdout: (chunk: unknown) => void
+  onStderr: (chunk: unknown) => void
+  onError: () => void
+  idle: ReturnType<typeof setTimeout>
+}
+export const AGY_SPARE_IDLE_MS = 5 * 60_000
+let spare: Spare | undefined
+
+const spareKey = (options: AgyRunOptions): string =>
+  JSON.stringify([options.binary, options.cwd, options.model, options.effort ?? '', options.agent ?? ''])
+
+function dropSpare(stale: Spare): void {
+  clearTimeout(stale.idle)
+  stale.child.stdin?.destroy()
+  stopChild(stale.child)
+  void unlink(stale.log).catch(() => undefined)
+}
+
+/** Stop the waiting spare, if any (API server stop, tests). */
+export function stopAgySpare(): void {
+  const stale = spare
+  spare = undefined
+  if (stale !== undefined) dropSpare(stale)
+}
+
+/** For tests: whether a spare is waiting. */
+export function hasAgySpare(): boolean {
+  return spare !== undefined
+}
+
+async function startSpare(options: AgyRunOptions): Promise<void> {
+  if (spare !== undefined || options.allowWorkspaceRead === true) return
+  // Its start-up makes calls to Google; never during a hold, and never at the cost of memory.
+  if (rateLimitRetryAfter() > 0 || quotaRetryAfter(options.model) > 0) return
+  if (memoryProbe() < AGY_SECOND_SLOT_MIN_AVAILABLE_BYTES) return
+  const log = join(await agyLogDir(), `run-${randomUUID()}.log`)
+  if (spare !== undefined) return
+  const child = spawn(options.binary, agyArgs(options, log), { cwd: options.cwd, env: agyEnv(), stdio: ['pipe', 'pipe', 'pipe'] })
+  const started: Spare = {
+    key: spareKey(options),
+    child,
+    log,
+    spawnAt: Date.now(),
+    stdout: [],
+    stderr: [],
+    onStdout: chunk => { started.stdout.push(String(chunk)) },
+    onStderr: chunk => { started.stderr.push(String(chunk)) },
+    onError: () => { if (spare === started) spare = undefined },
+    idle: setTimeout(() => { if (spare === started) stopAgySpare() }, AGY_SPARE_IDLE_MS),
+  }
+  started.idle.unref()
+  child.stdout!.on('data', started.onStdout)
+  child.stderr!.on('data', started.onStderr)
+  child.on('error', started.onError)
+  child.once('close', () => {
+    if (spare !== started) return
+    spare = undefined
+    clearTimeout(started.idle)
+    void unlink(log).catch(() => undefined)
+  })
+  child.stdin!.on('error', () => { /* a spare that is stopped before use */ })
+  spare = started
+}
+
+/** The waiting spare for these arguments, detached from its buffers; undefined when there is none. */
+function takeSpare(options: AgyRunOptions): Spare | undefined {
+  const found = spare
+  if (found === undefined) return undefined
+  spare = undefined
+  clearTimeout(found.idle)
+  if (found.key !== spareKey(options) || found.child.exitCode !== null || found.child.signalCode !== null) {
+    dropSpare(found)
+    return undefined
+  }
+  found.child.stdout!.off('data', found.onStdout)
+  found.child.stderr!.off('data', found.onStderr)
+  found.child.off('error', found.onError)
+  return found
+}
+
+/**
  * Run one agy turn and yield answer text as it streams, then the final result.
  * The prompt travels on stdin, so its size is not bound by the argument-length limit.
  */
@@ -501,13 +600,17 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
   let retries = 0
   let usage: AgyUsage | undefined
   let outcome = 'stopped'
+  let warmRun = false
+  /** agy's own `duration_seconds`: the model call, without start-up. */
+  let modelSeconds: number | undefined
   const onAbort = (): void => { if (child !== undefined) stopChild(child) }
   try {
     // The signal may have fired while this request waited for its turn.
     if (options.signal?.aborted) throw new AgyError('aborted', 'aborted')
     const late = unreachable(acquired)
     if (late !== undefined) throw deadlineError(late)
-    logFile = join(await agyLogDir(), `run-${randomUUID()}.log`)
+    const taken = options.warm === true ? takeSpare(options) : undefined
+    logFile = taken?.log ?? join(await agyLogDir(), `run-${randomUUID()}.log`)
     const log = logFile
     const queue: AgyEvent[] = []
     let wake: (() => void) | undefined
@@ -540,8 +643,10 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
       firstOutputAt ??= Date.now()
     }
 
+    // For a spare, timing starts when the request takes it; its own start-up is off the request path.
     spawnAt = Date.now()
-    child = spawn(options.binary, agyArgs(options, log), { cwd: options.cwd, env: agyEnv(), stdio: ['pipe', 'pipe', 'pipe'] })
+    warmRun = taken !== undefined
+    child = taken?.child ?? spawn(options.binary, agyArgs(options, log), { cwd: options.cwd, env: agyEnv(), stdio: ['pipe', 'pipe', 'pipe'] })
     const running = child
     options.signal?.addEventListener('abort', onAbort, { once: true })
     if (deadlineAt !== undefined) {
@@ -593,7 +698,7 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
       ))
     })
     running.stderr!.on('data', chunk => { stderr += String(chunk) })
-    running.stdout!.on('data', chunk => {
+    const onStdout = (chunk: unknown): void => {
       stdout += String(chunk)
       let newline: number
       while ((newline = stdout.indexOf('\n')) >= 0) {
@@ -624,6 +729,7 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
           const r = event.result
           if (typeof r.error === 'string' && r.error.length > 0) resultError = r.error
           if (r.usage !== undefined) usage = r.usage as AgyUsage
+          if (typeof r.duration_seconds === 'number') modelSeconds = r.duration_seconds
           if (r.status === 'SUCCESS') firstOutputAt ??= Date.now()
           result = {
             status: String(r.status ?? ''),
@@ -634,7 +740,13 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
           }
         }
       }
-    })
+    }
+    running.stdout!.on('data', onStdout)
+    // Output and errors that a spare wrote while it waited.
+    if (taken !== undefined) {
+      stderr += taken.stderr.join('')
+      for (const chunk of taken.stdout) onStdout(chunk)
+    }
     running.on('close', code => {
       void (async () => {
         await followLog()
@@ -684,10 +796,11 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
     if (spawnAt !== undefined) {
       const since = (at: number | undefined, from: number | undefined): number | undefined =>
         at === undefined || from === undefined ? undefined : at - from
-      console.info(`[dsh-antigravity-oauth] agy run model=${options.model}${options.effort === undefined ? '' : `/${options.effort}`}`
+      console.info(`[dsh-antigravity-oauth] agy run agy-model=${options.model}${options.effort === undefined ? '' : `/${options.effort}`}`
         + ` status=${outcome} queue=${seconds(acquired - entered)} setup=${seconds(since(sentAt, spawnAt))}`
         + ` google=${seconds(since(googleAt, sentAt))} first=${seconds(since(firstOutputAt, spawnAt))}`
-        + ` total=${seconds(Date.now() - spawnAt)} retries=${retries} in=${usage?.input_tokens ?? '-'} out=${usage?.output_tokens ?? '-'}`
+        + ` total=${seconds(Date.now() - spawnAt)} model=${usage === undefined || modelSeconds === undefined ? '-' : `${modelSeconds.toFixed(1)}s`}`
+        + ` retries=${retries} in=${usage?.input_tokens ?? '-'} cached=${usage?.cache_read_tokens ?? '-'} out=${usage?.output_tokens ?? '-'}${warmRun ? ' warm' : ''}`
         + `${options.interactive === true ? ' interactive' : ''}${deadlineAt === undefined ? '' : ` deadline=${seconds(deadlineAt - entered)}`}`)
     }
     const forget = conversationId
@@ -708,6 +821,7 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
     } else {
       cleanUp()
     }
+    if (options.warm === true && outcome === 'ok') void startSpare(options).catch(() => undefined)
   }
 }
 

@@ -200,6 +200,34 @@ export function splitConversation(
   }
 }
 
+/**
+ * Fixed agent template for warm runs: the same template every time, so a started spare agy process
+ * (see run.ts) can serve the request. The request's own instructions travel in the user message.
+ */
+export const WARM_TEMPLATE_BODY = [
+  'You are the language model behind an API.',
+  'Each user message starts with your instructions for this request (role, system instructions, tools and how to call them),',
+  'followed by the conversation as tagged turns under "# Conversation".',
+  'Treat that first part as your system instructions, and write the next assistant turn.',
+].join(' ')
+
+/**
+ * The whole request as one user message for the warm template: the template body first, then
+ * every turn. Undefined when it does not fit the message budget whole; such a request takes the
+ * usual path, with older turns in the template.
+ */
+export function warmMessage(
+  messages: GenerateOptions['messages'],
+  body: string,
+  imageText?: ImageText,
+  budgetTokens = MESSAGE_BUDGET_TOKENS,
+): string | undefined {
+  const rendered = messages.map(message => renderMessage(message, imageText)).filter((m): m is string => m !== undefined)
+  const tokens = estimateTokens(body) + rendered.reduce((sum, piece) => sum + estimateTokens(piece) + 1, 0) + 50
+  if (tokens > budgetTokens) return undefined
+  return `${body}\n\n# Conversation\n\n${rendered.join('\n\n')}`
+}
+
 /** The conversation as one user message, without template overflow. */
 export function buildConversation(messages: GenerateOptions['messages'], budgetTokens = MESSAGE_BUDGET_TOKENS): string {
   return splitConversation(messages, budgetTokens, 0).recent

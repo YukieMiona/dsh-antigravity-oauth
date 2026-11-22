@@ -11,8 +11,10 @@ import {
   parseAnswer,
   splitConversation,
   ToolCallFilter,
+  warmMessage,
+  WARM_TEMPLATE_BODY,
 } from '../src/agy/prompt.ts'
-import { AgyError, agyArgs, agyEnv, agySettings, checkAgy, classifyRateLimit, expectedFirstOutputMs, forgetConversation, formatWait, glogTime, holdAfter, parseAgyQuota, parseDuration, quotaRetryAfter, rateLimitRetryAfter, recordFirstOutput, resetCapacityCooldown, runAgy, setMemoryProbe, streamAgy } from '../src/agy/run.ts'
+import { AgyError, agyArgs, agyEnv, agySettings, checkAgy, classifyRateLimit, expectedFirstOutputMs, forgetConversation, formatWait, glogTime, hasAgySpare, holdAfter, stopAgySpare, parseAgyQuota, parseDuration, quotaRetryAfter, rateLimitRetryAfter, recordFirstOutput, resetCapacityCooldown, runAgy, setMemoryProbe, streamAgy } from '../src/agy/run.ts'
 import { checkAgyWatch, isQuotaLow, resetAgyWatch } from '../src/agy/quota-watch.ts'
 import { agyTurn } from '../src/agy/turn.ts'
 import { ensureTemplate, templateDir, templateName } from '../src/agy/template.ts'
@@ -144,6 +146,7 @@ describe('agy runner against a fake binary', () => {
   let dir: string
   beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'agy-fake-')) })
   afterEach(async () => {
+    stopAgySpare()
     resetCapacityCooldown()
     resetAgyWatch()
     setMemoryProbe()
@@ -332,6 +335,45 @@ process.stdin.on('end', () => {
     expect(Date.now() - begun).toBeLessThan(3_000)
   })
 
+  it('serves a warm request from a started spare, which then answers without its own start-up', async () => {
+    setMemoryProbe(() => 2 * 1024 ** 3)
+    const order = join(dir, 'spare.log')
+    const binary = await fakeAgy(`
+const fs = require('node:fs')
+fs.appendFileSync(${JSON.stringify(order)}, 'start ' + process.pid + '\\n')
+let buf = ''
+process.stdin.on('data', d => {
+  buf += d
+  if (!buf.includes('\\n')) return
+  fs.appendFileSync(${JSON.stringify(order)}, 'message ' + process.pid + '\\n')
+  console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'ok' } }))
+  process.exit(0)
+})`, 'agy-spare')
+    const options = { binary, cwd: join(dir, 'ws'), model: 'm', agent: 'fixed', prompt: 'x', warm: true }
+    await expect(runAgy(options)).resolves.toMatchObject({ response: 'ok' })
+    await vi.waitFor(() => expect(hasAgySpare()).toBe(true))
+    await expect(runAgy(options)).resolves.toMatchObject({ response: 'ok' })
+    const lines = (await readFile(order, 'utf8')).trim().split('\n')
+    const [first, spare] = [lines[0]!.split(' ')[1], lines[2]!.split(' ')[1]]
+    // The second request went to the spare that was started before it, not to a new process.
+    expect(lines.slice(0, 4)).toEqual([`start ${first}`, `message ${first}`, `start ${spare}`, `message ${spare}`])
+    // A spare for other arguments is not used; it is stopped instead.
+    await vi.waitFor(() => expect(hasAgySpare()).toBe(true))
+    await expect(runAgy({ ...options, model: 'other' })).resolves.toMatchObject({ response: 'ok' })
+    stopAgySpare()
+    expect(hasAgySpare()).toBe(false)
+  })
+
+  it('starts no spare without memory to spare or for a run that is not warm', async () => {
+    const ok = await fakeAgy(`process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'ok' } })))`, 'agy-nospare')
+    setMemoryProbe(() => 100 * 1024 ** 2)
+    await runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'm', prompt: 'x', warm: true })
+    setMemoryProbe(() => 2 * 1024 ** 3)
+    await runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'm', prompt: 'x' })
+    await new Promise(resolve => setTimeout(resolve, 200))
+    expect(hasAgySpare()).toBe(false)
+  })
+
   it('writes one timing line per run, without prompt text', async () => {
     const binary = await fakeAgy(`
 const fs = require('node:fs')
@@ -343,7 +385,7 @@ process.stdin.on('end', () => {
   fs.appendFileSync(log, stamp(t) + 'server.go:1858] Sending user message to conversation c\\n')
   setTimeout(() => {
     fs.appendFileSync(log, stamp(new Date()) + 'http_helpers.go:771] URL: https://x/v1internal:streamGenerateContent?alt=sse\\n')
-    console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'ok', usage: { input_tokens: 370, output_tokens: 2 } } }))
+    console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'ok', duration_seconds: 2.5, usage: { input_tokens: 370, output_tokens: 2, cache_read_tokens: 40 } } }))
   }, 300)
 })`, 'agy-timed')
     const lines: string[] = []
@@ -356,7 +398,7 @@ process.stdin.on('end', () => {
     }
     const run = lines.filter(line => line.includes('agy run'))
     expect(run).toHaveLength(1)
-    expect(run[0]).toMatch(/model=m\/low status=ok queue=\d+\.\ds setup=\d+\.\ds google=0\.[2-9]s first=\d+\.\ds total=\d+\.\ds retries=0 in=370 out=2 interactive/)
+    expect(run[0]).toMatch(/agy-model=m\/low status=ok queue=\d+\.\ds setup=\d+\.\ds google=0\.[2-9]s first=\d+\.\ds total=\d+\.\ds model=2\.5s retries=0 in=370 cached=40 out=2 interactive/)
     expect(run[0]).not.toContain('SECRET')
   })
 
@@ -686,5 +728,20 @@ describe('glogTime', () => {
     // Just before midnight belongs to the day before.
     expect(glogTime('I1121 23:59:59.900000       1 server.go:1] x', ref)).toBe(new Date(2026, 10, 21, 23, 59, 59, 900).getTime())
     expect(glogTime('not a glog line', ref)).toBeUndefined()
+  })
+})
+
+describe('warmMessage', () => {
+  const msg = (text: string) => ({ role: 'user' as const, content: [{ type: 'text' as const, text }] })
+  it('puts the template body and every turn into one message when it fits', () => {
+    const message = warmMessage([msg('hello'), msg('Say OK.')], 'BODY')
+    expect(message).toMatch(/^BODY\n\n# Conversation\n\n/)
+    expect(message).toContain('hello')
+    expect(message).toContain('Say OK.')
+    expect(WARM_TEMPLATE_BODY).toContain('# Conversation')
+  })
+  it('leaves a request that does not fit whole to the usual path', () => {
+    expect(warmMessage([msg('x'.repeat(400_000))], 'BODY')).toBeUndefined()
+    expect(warmMessage([msg('short')], 'B'.repeat(400_000))).toBeUndefined()
   })
 })
