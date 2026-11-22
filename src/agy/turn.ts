@@ -40,6 +40,10 @@ export interface AgyTurnOptions {
   loadImage?: AgyImageLoader
   queueTimeoutMs?: number
   maxUpstreamAttempts?: number
+  /** See `AgyRunOptions.deadlineAt`. */
+  deadlineAt?: number
+  /** See `AgyRunOptions.interactive`. */
+  interactive?: boolean
 }
 
 /**
@@ -165,6 +169,8 @@ export async function* agyTurn(options: AgyTurnOptions): AsyncGenerator<AgyTurnE
       ...options.onActivity === undefined ? {} : { onActivity: options.onActivity },
       ...options.queueTimeoutMs === undefined ? {} : { queueTimeoutMs: options.queueTimeoutMs },
       ...options.maxUpstreamAttempts === undefined ? {} : { maxUpstreamAttempts: options.maxUpstreamAttempts },
+      ...options.deadlineAt === undefined ? {} : { deadlineAt: options.deadlineAt },
+      ...options.interactive === true ? { interactive: true } : {},
     })
     const filter = new ToolCallFilter()
     let streamed = ''

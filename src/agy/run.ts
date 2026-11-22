@@ -84,6 +84,14 @@ export interface AgyRunOptions {
    * once this many attempts have failed; the reason comes from agy's run log.
    */
   maxUpstreamAttempts?: number
+  /**
+   * Epoch ms by which the caller needs the first answer text. A request that cannot make it
+   * (judged from recent runs) fails at once with `deadline`, without a call to Google; a run still
+   * going at the deadline is stopped. agy does not retry a refused call for such a request.
+   */
+  deadlineAt?: number
+  /** Wait in the queue ahead of requests that are not interactive. */
+  interactive?: boolean
 }
 
 export type AgyErrorKind =
@@ -105,6 +113,8 @@ export type AgyErrorKind =
   | 'too-large'
   /** Google answered 429 RESOURCE_EXHAUSTED; the account is held back for a while. */
   | 'rate-limited'
+  /** The caller's deadline cannot be met, or passed while the request waited or ran. */
+  | 'deadline'
 
 export class AgyError extends Error {
   /** `retryAfterMs`: how long the plugin holds requests back after this error, when it does. */
@@ -122,7 +132,7 @@ export class AgyError extends Error {
 export const AGY_MAX_PARALLEL = 2
 export const AGY_SECOND_SLOT_MIN_AVAILABLE_BYTES = 700 * 1024 * 1024
 let running = 0
-const waiting: Array<() => void> = []
+const waiting: Array<{ grant: () => void, interactive: boolean }> = []
 
 /** Memory the kernel can give to a new process (`MemAvailable`), in bytes. */
 function availableMemory(): number {
@@ -148,11 +158,11 @@ function canStart(): boolean {
 function pump(): void {
   while (waiting.length > 0 && canStart()) {
     running += 1
-    waiting.shift()!()
+    waiting.shift()!.grant()
   }
 }
 
-async function acquireTurn(signal?: AbortSignal, timeoutMs?: number): Promise<() => void> {
+async function acquireTurn(signal?: AbortSignal, timeoutMs?: number, interactive = false): Promise<() => void> {
   if (signal?.aborted) throw new AgyError('aborted', 'aborted')
   if (waiting.length === 0 && canStart()) {
     running += 1
@@ -160,7 +170,7 @@ async function acquireTurn(signal?: AbortSignal, timeoutMs?: number): Promise<()
     await new Promise<void>((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | undefined
       const leave = (error: AgyError): void => {
-        const at = waiting.indexOf(grant)
+        const at = waiting.indexOf(entry)
         if (at < 0) return
         waiting.splice(at, 1)
         cleanup()
@@ -172,7 +182,11 @@ async function acquireTurn(signal?: AbortSignal, timeoutMs?: number): Promise<()
         signal?.removeEventListener('abort', onAbort)
       }
       const grant = (): void => { cleanup(); resolve() }
-      waiting.push(grant)
+      const entry = { grant, interactive }
+      // An interactive request goes ahead of every waiting request that is not interactive.
+      const ahead = interactive ? waiting.findIndex(other => !other.interactive) : -1
+      if (ahead < 0) waiting.push(entry)
+      else waiting.splice(ahead, 0, entry)
       signal?.addEventListener('abort', onAbort, { once: true })
       if (timeoutMs !== undefined) {
         timer = setTimeout(() => leave(new AgyError(
@@ -316,7 +330,51 @@ export function resetCapacityCooldown(): void {
   rateLimitedUntil = 0
   rateLimitStreak = 0
   lastRateLimitAt = 0
+  firstOutputSamples = []
 }
+
+/**
+ * How long recent runs took from their start to the first model output. Almost all of it is
+ * Google's wait before it answers (measured 2026-11-22: 18-48 s for "Say OK." with no thinking,
+ * against about 3 s of agy start-up), so it predicts the next run well enough to refuse a request
+ * whose deadline is nearer.
+ */
+const FIRST_OUTPUT_SAMPLES = 9
+const FIRST_OUTPUT_SAMPLE_TTL_MS = 15 * 60_000
+const FIRST_OUTPUT_MIN_SAMPLES = 3
+let firstOutputSamples: Array<{ at: number, ms: number }> = []
+
+function noteFirstOutput(ms: number, now = Date.now()): void {
+  firstOutputSamples.push({ at: now, ms })
+  if (firstOutputSamples.length > FIRST_OUTPUT_SAMPLES) firstOutputSamples.shift()
+}
+
+/** Median time to the first model output over recent runs; undefined with too few recent runs. */
+export function expectedFirstOutputMs(now = Date.now()): number | undefined {
+  firstOutputSamples = firstOutputSamples.filter(sample => now - sample.at <= FIRST_OUTPUT_SAMPLE_TTL_MS)
+  if (firstOutputSamples.length < FIRST_OUTPUT_MIN_SAMPLES) return undefined
+  const sorted = firstOutputSamples.map(sample => sample.ms).sort((a, b) => a - b)
+  return sorted[Math.floor(sorted.length / 2)]!
+}
+
+/** For tests: record a run that took `ms` to its first output. */
+export function recordFirstOutput(ms: number, now = Date.now()): void {
+  noteFirstOutput(ms, now)
+}
+
+/** The local time of a glog line (`I1122 00:46:59.504335 ...`), on the day nearest to `ref`. */
+export function glogTime(line: string, ref: number): number | undefined {
+  const match = /^[IWEF]\d{4} (\d\d):(\d\d):(\d\d)\.(\d{3})/.exec(line)
+  if (match === null) return undefined
+  const at = new Date(ref)
+  at.setHours(Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4]))
+  let time = at.getTime()
+  if (time < ref - 12 * 3_600_000) time += 24 * 3_600_000
+  if (time > ref + 12 * 3_600_000) time -= 24 * 3_600_000
+  return time
+}
+
+const seconds = (ms: number | undefined): string => ms === undefined ? '-' : `${(ms / 1000).toFixed(1)}s`
 
 /** stderr carries glog noise ("logging before google.Init"); keep only lines a user can act on. */
 function usefulStderr(stderr: string): string {
@@ -403,16 +461,52 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
   if (holdOff > 0) {
     throw new AgyError(`Google had no capacity for ${options.model} a moment ago; the next attempt is in ${holdOff} s`, 'capacity')
   }
+  const entered = Date.now()
+  const { deadlineAt } = options
+  const deadlineError = (why: string): AgyError => new AgyError(`no answer can start within this request's deadline (${why})`, 'deadline')
+  /** Why the deadline cannot be met from `now`; undefined when it still can. */
+  const unreachable = (now: number): string | undefined => {
+    if (deadlineAt === undefined) return undefined
+    const left = deadlineAt - now
+    if (left <= 0) return 'it has passed'
+    const expected = expectedFirstOutputMs(now)
+    return expected !== undefined && expected > left ? `recent answers took ${seconds(expected)} to start, ${seconds(left)} is left` : undefined
+  }
+  const early = unreachable(entered)
+  if (early !== undefined) throw deadlineError(early)
   await mkdir(options.cwd, { recursive: true, mode: 0o700 })
-  const release = await acquireTurn(options.signal, options.queueTimeoutMs)
+  const queueLimit = deadlineAt === undefined
+    ? options.queueTimeoutMs
+    : Math.min(options.queueTimeoutMs ?? Number.MAX_SAFE_INTEGER, Math.max(0, deadlineAt - Date.now()))
+  let release: () => void
+  try {
+    release = await acquireTurn(options.signal, queueLimit, options.interactive === true)
+  } catch (error) {
+    if (error instanceof AgyError && error.kind === 'busy' && deadlineAt !== undefined && Date.now() >= deadlineAt - 100) {
+      throw deadlineError('it passed in the queue')
+    }
+    throw error
+  }
+  const acquired = Date.now()
   let child: ReturnType<typeof spawn> | undefined
   let poll: ReturnType<typeof setInterval> | undefined
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined
   let logFile: string | undefined
   let conversationId: string | undefined
+  // Timing for one log line per run; no prompt text.
+  let spawnAt: number | undefined
+  let sentAt: number | undefined
+  let googleAt: number | undefined
+  let firstOutputAt: number | undefined
+  let retries = 0
+  let usage: AgyUsage | undefined
+  let outcome = 'stopped'
   const onAbort = (): void => { if (child !== undefined) stopChild(child) }
   try {
     // The signal may have fired while this request waited for its turn.
     if (options.signal?.aborted) throw new AgyError('aborted', 'aborted')
+    const late = unreachable(acquired)
+    if (late !== undefined) throw deadlineError(late)
     logFile = join(await agyLogDir(), `run-${randomUUID()}.log`)
     const log = logFile
     const queue: AgyEvent[] = []
@@ -432,23 +526,56 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
     const finish = (error?: Error): void => {
       if (finished !== undefined) return
       finished = error === undefined ? {} : { error }
+      outcome = error === undefined ? 'ok' : error instanceof AgyError ? error.kind : 'failed'
+      // Image runs are slower and would make text requests look later than they are.
+      if (options.allowWorkspaceRead !== true && spawnAt !== undefined) {
+        if (error === undefined && firstOutputAt !== undefined) noteFirstOutput(firstOutputAt - spawnAt)
+        // A run stopped at its deadline took at least this long.
+        if (error instanceof AgyError && error.kind === 'deadline') noteFirstOutput(Date.now() - spawnAt)
+      }
       notify()
     }
+    const sawOutput = (): void => {
+      sawModelOutput = true
+      firstOutputAt ??= Date.now()
+    }
 
+    spawnAt = Date.now()
     child = spawn(options.binary, agyArgs(options, log), { cwd: options.cwd, env: agyEnv(), stdio: ['pipe', 'pipe', 'pipe'] })
     const running = child
     options.signal?.addEventListener('abort', onAbort, { once: true })
+    if (deadlineAt !== undefined) {
+      // Only the start of the answer has a deadline; an answer that has begun runs to its end.
+      deadlineTimer = setTimeout(() => {
+        if (gaveUp !== undefined || sawModelOutput) return
+        gaveUp = deadlineError('it passed before Google answered')
+        stopChild(running)
+      }, Math.max(0, deadlineAt - Date.now()))
+    }
 
     // agy reports refused model calls only in its log, so follow it while the run is quiet.
     // Reads are chained, so the final read after exit waits for one that is in progress.
     let logOffset = 0
+    let partialLine = ''
     let logChain: Promise<void> = Promise.resolve()
     const readLog = async (): Promise<void> => {
       const chunk = await readFrom(log, logOffset)
       logOffset = chunk.offset
-      for (const match of chunk.text.matchAll(RETRY_LINE)) {
+      // Only whole lines: a read can end in the middle of one.
+      const text = partialLine + chunk.text
+      const end = text.lastIndexOf('\n')
+      partialLine = text.slice(end + 1)
+      if (end < 0) return
+      const lines = text.slice(0, end)
+      for (const line of lines.split('\n')) {
+        if (sentAt === undefined && line.includes('Sending user message')) sentAt = glogTime(line, spawnAt!)
+        else if (googleAt === undefined && line.includes('streamGenerateContent')) googleAt = glogTime(line, spawnAt!)
+      }
+      for (const match of lines.matchAll(RETRY_LINE)) {
+        retries += 1
         lastRefusal = match[2]!
-        const limit = RATE_LIMITED.test(lastRefusal) ? 1 : options.maxUpstreamAttempts
+        // A request with a deadline has no time for agy's retries.
+        const limit = RATE_LIMITED.test(lastRefusal) || deadlineAt !== undefined ? 1 : options.maxUpstreamAttempts
         if (gaveUp === undefined && limit !== undefined && Number(match[1]) >= limit) {
           gaveUp = upstreamError(lastRefusal, options.model)
           stopChild(running)
@@ -480,12 +607,12 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
         const id = step?.conversation_id ?? event.result?.conversation_id
         if (typeof id === 'string' && id.length > 0) conversationId = id
         if (step?.step_type === 'agent_response' && typeof step.text_delta === 'string' && step.text_delta.length > 0) {
-          sawModelOutput = true
+          sawOutput()
           queue.push({ type: 'text', text: step.text_delta })
           notify()
         }
         if (step?.step_type === 'tool') {
-          sawModelOutput = true
+          sawOutput()
           if (step.state === 'DONE' && /^(read_file|view_file)$/.test(String(step.tool_name))) {
             readsDone += 1
             const parameters = step.tool_info?.parameters ?? {}
@@ -496,6 +623,8 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
         if (event.event === 'result' && event.result) {
           const r = event.result
           if (typeof r.error === 'string' && r.error.length > 0) resultError = r.error
+          if (r.usage !== undefined) usage = r.usage as AgyUsage
+          if (r.status === 'SUCCESS') firstOutputAt ??= Date.now()
           result = {
             status: String(r.status ?? ''),
             response: typeof r.response === 'string' ? r.response : '',
@@ -550,7 +679,17 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
     }
   } finally {
     clearInterval(poll)
+    clearTimeout(deadlineTimer)
     options.signal?.removeEventListener('abort', onAbort)
+    if (spawnAt !== undefined) {
+      const since = (at: number | undefined, from: number | undefined): number | undefined =>
+        at === undefined || from === undefined ? undefined : at - from
+      console.info(`[dsh-antigravity-oauth] agy run model=${options.model}${options.effort === undefined ? '' : `/${options.effort}`}`
+        + ` status=${outcome} queue=${seconds(acquired - entered)} setup=${seconds(since(sentAt, spawnAt))}`
+        + ` google=${seconds(since(googleAt, sentAt))} first=${seconds(since(firstOutputAt, spawnAt))}`
+        + ` total=${seconds(Date.now() - spawnAt)} retries=${retries} in=${usage?.input_tokens ?? '-'} out=${usage?.output_tokens ?? '-'}`
+        + `${options.interactive === true ? ' interactive' : ''}${deadlineAt === undefined ? '' : ` deadline=${seconds(deadlineAt - entered)}`}`)
+    }
     const forget = conversationId
     const log = logFile
     const cleanUp = (): void => {
