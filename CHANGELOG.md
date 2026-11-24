@@ -4,6 +4,8 @@ This file records completed features, fixes, and process milestones in `YukieMio
 
 ## Unreleased
 
+## v0.2.6 (2026-11-24)
+
 - API server (Official CLI route): a request that fits one user message whole (instructions and every turn, up to the 36K-token message budget, no images) goes to a started spare `agy` process with a fixed agent template. `agy`'s own start-up (2-3 s: language server, sign-in, five calls to Google) is then off the request path: measured 2026-11-22 with a 15K-token request, setup 1.9-2.8 s cold, 0.0-0.1 s warm. Each spare answers one request and exits, so no history passes between requests. One spare waits at most, only while 700 MB of memory is available and no 429 hold is active, and it stops after 5 idle minutes. Larger requests and image requests take the usual path. DSH chats are unchanged.
 - Official CLI: the per-run log line also gives `agy`'s own model time (`model=`) and cached input tokens (`cached=`), and marks runs served by a spare (`warm`).
 - Official CLI: one log line per run, without prompt text: queue wait, local start-up, Google's wait before it answers (from `agy`'s own log), time to the first output, total time, `agy` retries and tokens. Measured on 2026-11-22: start-up about 3 s, Google's wait 18-48 s for "Say OK." with no thinking.
