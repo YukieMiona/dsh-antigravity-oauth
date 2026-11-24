@@ -4,7 +4,8 @@ import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it } from 'vitest'
 import { AntigravityApiServer, AntigravityApiServerStore } from '../src/api-server/index.ts'
-import { resetCapacityCooldown } from '../src/agy/run.ts'
+import { AgyError, resetCapacityCooldown } from '../src/agy/run.ts'
+import { agyHintsOf, httpFailureOf } from '../src/api-server/server.ts'
 import type { AntigravitySession } from '../src/session.ts'
 import type { CcaEvent, ChatGenerateInput } from '../src/types.ts'
 
@@ -404,5 +405,28 @@ process.stdin.on('end', () => console.log(JSON.stringify({ event: 'result', resu
     } finally {
       await new Promise(resolve => gateway.close(resolve))
     }
+  })
+})
+
+describe('httpFailureOf for a 429 on the Official CLI route', () => {
+  it('sends the hold of this error as Retry-After', () => {
+    expect(httpFailureOf(new AgyError('quota spent', 'rate-limited', 3 * 3_600_000))).toMatchObject({ status: 429, code: 'rate_limit_exceeded', retryAfter: 3 * 3_600 })
+    expect(httpFailureOf(new AgyError('limited', 'rate-limited', 60_000)).retryAfter).toBe(60)
+    expect(httpFailureOf(new AgyError('limited', 'rate-limited')).retryAfter).toBe(1)
+  })
+})
+
+describe('request hints for the Official CLI route', () => {
+  it('reads X-Request-Deadline-Ms and X-Priority, and ignores values that do not parse', () => {
+    expect(agyHintsOf({ 'x-request-deadline-ms': '16000', 'x-priority': 'Interactive' }, 1_000)).toEqual({ deadlineAt: 17_000, interactive: true })
+    // Never longer than the server's own first-event limit.
+    expect(agyHintsOf({ 'x-request-deadline-ms': '9999999' }, 0)).toEqual({ deadlineAt: 120_000 })
+    expect(agyHintsOf({ 'x-request-deadline-ms': 'soon', 'x-priority': 'background' }, 0)).toEqual({})
+    expect(agyHintsOf({ 'x-request-deadline-ms': '-5' }, 0)).toEqual({})
+    expect(agyHintsOf({}, 0)).toEqual({})
+  })
+
+  it('answers an unreachable deadline with 503 deadline_unreachable', () => {
+    expect(httpFailureOf(new AgyError('no answer can start within this request\'s deadline', 'deadline'))).toMatchObject({ status: 503, code: 'deadline_unreachable' })
   })
 })

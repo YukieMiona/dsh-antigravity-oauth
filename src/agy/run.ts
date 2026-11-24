@@ -84,6 +84,19 @@ export interface AgyRunOptions {
    * once this many attempts have failed; the reason comes from agy's run log.
    */
   maxUpstreamAttempts?: number
+  /**
+   * Epoch ms by which the caller needs the first answer text. A request that cannot make it
+   * (judged from recent runs) fails at once with `deadline`, without a call to Google; a run still
+   * going at the deadline is stopped. agy does not retry a refused call for such a request.
+   */
+  deadlineAt?: number
+  /** Wait in the queue ahead of requests that are not interactive. */
+  interactive?: boolean
+  /**
+   * Use the started spare process when one with the same arguments is waiting, and start the next
+   * spare after a successful run. Only for runs whose arguments repeat (a fixed agent template).
+   */
+  warm?: boolean
 }
 
 export type AgyErrorKind =
@@ -105,9 +118,12 @@ export type AgyErrorKind =
   | 'too-large'
   /** Google answered 429 RESOURCE_EXHAUSTED; the account is held back for a while. */
   | 'rate-limited'
+  /** The caller's deadline cannot be met, or passed while the request waited or ran. */
+  | 'deadline'
 
 export class AgyError extends Error {
-  constructor(message: string, readonly kind: AgyErrorKind) {
+  /** `retryAfterMs`: how long the plugin holds requests back after this error, when it does. */
+  constructor(message: string, readonly kind: AgyErrorKind, readonly retryAfterMs?: number) {
     super(message)
     this.name = 'AgyError'
   }
@@ -121,7 +137,7 @@ export class AgyError extends Error {
 export const AGY_MAX_PARALLEL = 2
 export const AGY_SECOND_SLOT_MIN_AVAILABLE_BYTES = 700 * 1024 * 1024
 let running = 0
-const waiting: Array<() => void> = []
+const waiting: Array<{ grant: () => void, interactive: boolean }> = []
 
 /** Memory the kernel can give to a new process (`MemAvailable`), in bytes. */
 function availableMemory(): number {
@@ -147,11 +163,11 @@ function canStart(): boolean {
 function pump(): void {
   while (waiting.length > 0 && canStart()) {
     running += 1
-    waiting.shift()!()
+    waiting.shift()!.grant()
   }
 }
 
-async function acquireTurn(signal?: AbortSignal, timeoutMs?: number): Promise<() => void> {
+async function acquireTurn(signal?: AbortSignal, timeoutMs?: number, interactive = false): Promise<() => void> {
   if (signal?.aborted) throw new AgyError('aborted', 'aborted')
   if (waiting.length === 0 && canStart()) {
     running += 1
@@ -159,7 +175,7 @@ async function acquireTurn(signal?: AbortSignal, timeoutMs?: number): Promise<()
     await new Promise<void>((resolve, reject) => {
       let timer: ReturnType<typeof setTimeout> | undefined
       const leave = (error: AgyError): void => {
-        const at = waiting.indexOf(grant)
+        const at = waiting.indexOf(entry)
         if (at < 0) return
         waiting.splice(at, 1)
         cleanup()
@@ -171,7 +187,11 @@ async function acquireTurn(signal?: AbortSignal, timeoutMs?: number): Promise<()
         signal?.removeEventListener('abort', onAbort)
       }
       const grant = (): void => { cleanup(); resolve() }
-      waiting.push(grant)
+      const entry = { grant, interactive }
+      // An interactive request goes ahead of every waiting request that is not interactive.
+      const ahead = interactive ? waiting.findIndex(other => !other.interactive) : -1
+      if (ahead < 0) waiting.push(entry)
+      else waiting.splice(ahead, 0, entry)
       signal?.addEventListener('abort', onAbort, { once: true })
       if (timeoutMs !== undefined) {
         timer = setTimeout(() => leave(new AgyError(
@@ -204,23 +224,162 @@ export function capacityRetryAfter(options: Pick<AgyRunOptions, 'model' | 'effor
 }
 
 /**
- * After a 429, no request goes to Google for this long, for any model. A 429 with quota left is
- * how Google answers traffic it is limiting; agy's own retries (eight in about two minutes)
- * would only send more of it, so the run stops at the first 429 and the account rests.
+ * Google answers 429 for two reasons, and the plugin holds back differently for each.
+ *
+ * - Short-window limit (for example `RESOURCE_EXHAUSTED ... (e.g. check quota)` with quota left):
+ *   Google is limiting the traffic of the signed-in account. Every model runs on that one account,
+ *   so no request goes to Google for any model: the delay Google tells, but at least 60 s, doubled
+ *   for each further 429 in a row, at most 5 min. agy's own retries (eight in about two minutes)
+ *   would only send more of the same traffic, so the run stops at the first 429.
+ * - Spent quota (for example "Individual quota reached. Resets in 96h12m27s"): only that model
+ *   rests, until the reset Google tells, or for 30 min when it tells none.
+ *
+ * The same split as gemini-cli's `TerminalQuotaError` and `RetryableQuotaError`
+ * (`packages/core/src/utils/googleQuotaErrors.ts`).
  */
-export const RATE_LIMIT_HOLD_MS = 5 * 60_000
+export const RATE_LIMIT_BASE_HOLD_MS = 60_000
+export const RATE_LIMIT_MAX_HOLD_MS = 5 * 60_000
+export const QUOTA_SPENT_HOLD_MS = 30 * 60_000
+const QUOTA_SPENT_MAX_HOLD_MS = 8 * 24 * 3_600_000
+/** A 429 this long after the previous one starts a new row: the hold is the base hold again. */
+const RATE_LIMIT_STREAK_RESET_MS = 15 * 60_000
 let rateLimitedUntil = 0
+let rateLimitStreak = 0
+let lastRateLimitAt = 0
+const quotaSpentUntil = new Map<string, number>()
 
-/** Seconds until requests go to Google again after a 429; 0 when not held back. */
+export interface RateLimit {
+  kind: 'short-window' | 'quota-spent'
+  /** The delay or reset time that Google named, when it named one. */
+  delayMs?: number
+}
+
+const RATE_LIMITED = /RESOURCE_EXHAUSTED|code 429/i
+const DURATION = String.raw`((?:\d+(?:\.\d+)?(?:ms|h|m|s))+)`
+const TOLD_DELAY = [
+  new RegExp(String.raw`\bresets?\s+(?:after|in)\s+` + DURATION, 'i'),
+  new RegExp(String.raw`\bretry\s+(?:after|in)\s+` + DURATION, 'i'),
+  new RegExp(String.raw`"?(?:retryDelay|quotaResetDelay)"?\s*[:=]\s*"?` + DURATION, 'i'),
+]
+/** Wording that means the quota is spent, not that traffic is limited for a moment. */
+const QUOTA_SPENT = /quota_exhausted|quota\s+(?:exhausted|reached)|individual\s+quota|exhausted\s+your\s+capacity|out\s+of\s+quota|insufficient\s+quota|enable\s+overages|daily\s+limit|per\s*day\b|PerDay/i
+
+/** Milliseconds in a Go-style duration such as `1h2m3.5s` or `500ms`; undefined when it is not one. */
+export function parseDuration(text: string): number | undefined {
+  const unit: Record<string, number> = { h: 3_600_000, m: 60_000, s: 1_000, ms: 1 }
+  let total = 0
+  let matched = ''
+  for (const part of text.matchAll(/(\d+(?:\.\d+)?)(ms|h|m|s)/g)) {
+    total += Number(part[1]) * unit[part[2]!]!
+    matched += part[0]
+  }
+  return matched.length > 0 && matched === text ? Math.round(total) : undefined
+}
+
+/** Sort a refusal reason into a 429 class; undefined when the reason is not a 429. */
+export function classifyRateLimit(reason: string): RateLimit | undefined {
+  if (!RATE_LIMITED.test(reason)) return undefined
+  let delayMs: number | undefined
+  for (const pattern of TOLD_DELAY) {
+    const found = pattern.exec(reason)?.[1]
+    delayMs = found === undefined ? undefined : parseDuration(found)
+    if (delayMs !== undefined) break
+  }
+  // A reset that is far away is a spent quota, whatever the wording; "reset after 0s" is not.
+  const spent = delayMs === undefined ? QUOTA_SPENT.test(reason) : delayMs > RATE_LIMIT_MAX_HOLD_MS || (delayMs > 0 && QUOTA_SPENT.test(reason))
+  return { kind: spent ? 'quota-spent' : 'short-window', ...delayMs === undefined ? {} : { delayMs } }
+}
+
+/** Short text for a wait: `45 s`, `12 min`, `3 h 5 min`, `4 d 2 h`. */
+export function formatWait(ms: number): string {
+  const s = Math.max(1, Math.ceil(ms / 1000))
+  if (s < 120) return `${s} s`
+  const min = Math.round(s / 60)
+  if (min < 120) return `${min} min`
+  const h = Math.floor(min / 60)
+  if (h < 48) return `${h} h ${min % 60} min`
+  return `${Math.floor(h / 24)} d ${h % 24} h`
+}
+
+/** Record a 429 and return how long it holds requests back. Exported for tests. */
+export function holdAfter(limit: RateLimit, model: string, now = Date.now()): number {
+  if (limit.kind === 'quota-spent') {
+    const hold = Math.min(QUOTA_SPENT_MAX_HOLD_MS, limit.delayMs ?? QUOTA_SPENT_HOLD_MS)
+    quotaSpentUntil.set(model, Math.max(quotaSpentUntil.get(model) ?? 0, now + hold))
+    return hold
+  }
+  if (now - lastRateLimitAt > RATE_LIMIT_STREAK_RESET_MS) rateLimitStreak = 0
+  rateLimitStreak += 1
+  lastRateLimitAt = now
+  const backoff = RATE_LIMIT_BASE_HOLD_MS * 2 ** Math.min(rateLimitStreak - 1, 8)
+  const hold = Math.min(RATE_LIMIT_MAX_HOLD_MS, Math.max(limit.delayMs ?? 0, backoff))
+  rateLimitedUntil = Math.max(rateLimitedUntil, now + hold)
+  return hold
+}
+
+/** Seconds until requests for any model go to Google again after a short-window 429; 0 when not held back. */
 export function rateLimitRetryAfter(now = Date.now()): number {
   return rateLimitedUntil > now ? Math.ceil((rateLimitedUntil - now) / 1000) : 0
+}
+
+/** Seconds until `model` is tried again after its quota was spent; 0 when it is not held back. */
+export function quotaRetryAfter(model: string, now = Date.now()): number {
+  const until = quotaSpentUntil.get(model) ?? 0
+  return until > now ? Math.ceil((until - now) / 1000) : 0
 }
 
 /** For tests: forget every capacity refusal and 429. */
 export function resetCapacityCooldown(): void {
   capacityUntil.clear()
+  quotaSpentUntil.clear()
   rateLimitedUntil = 0
+  rateLimitStreak = 0
+  lastRateLimitAt = 0
+  firstOutputSamples = []
 }
+
+/**
+ * How long recent runs took from their start to the first model output. Almost all of it is
+ * Google's wait before it answers (measured 2026-11-22: 18-48 s for "Say OK." with no thinking,
+ * against about 3 s of agy start-up), so it predicts the next run well enough to refuse a request
+ * whose deadline is nearer.
+ */
+const FIRST_OUTPUT_SAMPLES = 9
+const FIRST_OUTPUT_SAMPLE_TTL_MS = 15 * 60_000
+const FIRST_OUTPUT_MIN_SAMPLES = 3
+let firstOutputSamples: Array<{ at: number, ms: number }> = []
+
+function noteFirstOutput(ms: number, now = Date.now()): void {
+  firstOutputSamples.push({ at: now, ms })
+  if (firstOutputSamples.length > FIRST_OUTPUT_SAMPLES) firstOutputSamples.shift()
+}
+
+/** Median time to the first model output over recent runs; undefined with too few recent runs. */
+export function expectedFirstOutputMs(now = Date.now()): number | undefined {
+  firstOutputSamples = firstOutputSamples.filter(sample => now - sample.at <= FIRST_OUTPUT_SAMPLE_TTL_MS)
+  if (firstOutputSamples.length < FIRST_OUTPUT_MIN_SAMPLES) return undefined
+  const sorted = firstOutputSamples.map(sample => sample.ms).sort((a, b) => a - b)
+  return sorted[Math.floor(sorted.length / 2)]!
+}
+
+/** For tests: record a run that took `ms` to its first output. */
+export function recordFirstOutput(ms: number, now = Date.now()): void {
+  noteFirstOutput(ms, now)
+}
+
+/** The local time of a glog line (`I1122 00:46:59.504335 ...`), on the day nearest to `ref`. */
+export function glogTime(line: string, ref: number): number | undefined {
+  const match = /^[IWEF]\d{4} (\d\d):(\d\d):(\d\d)\.(\d{3})/.exec(line)
+  if (match === null) return undefined
+  const at = new Date(ref)
+  at.setHours(Number(match[1]), Number(match[2]), Number(match[3]), Number(match[4]))
+  let time = at.getTime()
+  if (time < ref - 12 * 3_600_000) time += 24 * 3_600_000
+  if (time > ref + 12 * 3_600_000) time -= 24 * 3_600_000
+  return time
+}
+
+const seconds = (ms: number | undefined): string => ms === undefined ? '-' : `${(ms / 1000).toFixed(1)}s`
 
 /** stderr carries glog noise ("logging before google.Init"); keep only lines a user can act on. */
 function usefulStderr(stderr: string): string {
@@ -252,11 +411,15 @@ const RETRY_LINE = /Run: attempt (\d+) failed \((.*)\), retrying in/g
 /** agy's message when the input does not fit the model's window (agy 1.5.9). */
 const TOO_LARGE = /maxMessageTokens must be positive|exceeds? (the )?(context|token) (window|limit)/i
 
-const RATE_LIMITED = /RESOURCE_EXHAUSTED|code 429/i
-
+/** The error for a refused model call. A 429 also starts its hold, so call this once for each run. */
 function upstreamError(reason: string, model: string): AgyError {
-  if (RATE_LIMITED.test(reason)) {
-    return new AgyError(`Google refused the request with 429 (${reason.slice(0, 200)}); no requests for ${RATE_LIMIT_HOLD_MS / 60_000} min`, 'rate-limited')
+  const limit = classifyRateLimit(reason)
+  if (limit !== undefined) {
+    const hold = holdAfter(limit, model)
+    const detail = reason.slice(0, 200)
+    return limit.kind === 'quota-spent'
+      ? new AgyError(`Google says the quota for ${model} is used up (${detail}); ${model} rests for ${formatWait(hold)}`, 'rate-limited', hold)
+      : new AgyError(`Google is limiting requests (${detail}); no requests for ${formatWait(hold)}`, 'rate-limited', hold)
   }
   const capacity = /UNAVAILABLE|code 503|No capacity/i.test(reason)
   return new AgyError(
@@ -286,6 +449,100 @@ async function readFrom(file: string, offset: number): Promise<{ text: string, o
 }
 
 /**
+ * A started agy process that waits for its message. agy spends 2-5 s after start on its own setup
+ * (language server, sign-in, four `loadCodeAssist` calls and a model list) before it reads stdin;
+ * a spare does that before the request arrives, and its run is only the model call. Each spare
+ * serves one message and exits, so no history passes between requests. Only one spare waits, and
+ * it is stopped after a quiet time: an idle agy polls Google every few minutes.
+ */
+interface Spare {
+  key: string
+  child: ReturnType<typeof spawn>
+  log: string
+  spawnAt: number
+  stdout: string[]
+  stderr: string[]
+  onStdout: (chunk: unknown) => void
+  onStderr: (chunk: unknown) => void
+  onError: () => void
+  idle: ReturnType<typeof setTimeout>
+}
+export const AGY_SPARE_IDLE_MS = 5 * 60_000
+let spare: Spare | undefined
+
+const spareKey = (options: AgyRunOptions): string =>
+  JSON.stringify([options.binary, options.cwd, options.model, options.effort ?? '', options.agent ?? ''])
+
+function dropSpare(stale: Spare): void {
+  clearTimeout(stale.idle)
+  stale.child.stdin?.destroy()
+  stopChild(stale.child)
+  void unlink(stale.log).catch(() => undefined)
+}
+
+/** Stop the waiting spare, if any (API server stop, tests). */
+export function stopAgySpare(): void {
+  const stale = spare
+  spare = undefined
+  if (stale !== undefined) dropSpare(stale)
+}
+
+/** For tests: whether a spare is waiting. */
+export function hasAgySpare(): boolean {
+  return spare !== undefined
+}
+
+async function startSpare(options: AgyRunOptions): Promise<void> {
+  if (spare !== undefined || options.allowWorkspaceRead === true) return
+  // Its start-up makes calls to Google; never during a hold, and never at the cost of memory.
+  if (rateLimitRetryAfter() > 0 || quotaRetryAfter(options.model) > 0) return
+  if (memoryProbe() < AGY_SECOND_SLOT_MIN_AVAILABLE_BYTES) return
+  const log = join(await agyLogDir(), `run-${randomUUID()}.log`)
+  if (spare !== undefined) return
+  const child = spawn(options.binary, agyArgs(options, log), { cwd: options.cwd, env: agyEnv(), stdio: ['pipe', 'pipe', 'pipe'] })
+  const started: Spare = {
+    key: spareKey(options),
+    child,
+    log,
+    spawnAt: Date.now(),
+    stdout: [],
+    stderr: [],
+    onStdout: chunk => { started.stdout.push(String(chunk)) },
+    onStderr: chunk => { started.stderr.push(String(chunk)) },
+    onError: () => { if (spare === started) spare = undefined },
+    idle: setTimeout(() => { if (spare === started) stopAgySpare() }, AGY_SPARE_IDLE_MS),
+  }
+  started.idle.unref()
+  child.stdout!.on('data', started.onStdout)
+  child.stderr!.on('data', started.onStderr)
+  child.on('error', started.onError)
+  child.once('close', () => {
+    if (spare !== started) return
+    spare = undefined
+    clearTimeout(started.idle)
+    void unlink(log).catch(() => undefined)
+  })
+  child.stdin!.on('error', () => { /* a spare that is stopped before use */ })
+  spare = started
+}
+
+/** The waiting spare for these arguments, detached from its buffers; undefined when there is none. */
+function takeSpare(options: AgyRunOptions): Spare | undefined {
+  const found = spare
+  if (found === undefined) return undefined
+  spare = undefined
+  clearTimeout(found.idle)
+  if (found.key !== spareKey(options) || found.child.exitCode !== null || found.child.signalCode !== null) {
+    dropSpare(found)
+    return undefined
+  }
+  found.child.stdout!.off('data', found.onStdout)
+  found.child.stderr!.off('data', found.onStderr)
+  found.child.off('error', found.onError)
+  return found
+}
+
+/**
  * Run one agy turn and yield answer text as it streams, then the final result.
  * The prompt travels on stdin, so its size is not bound by the argument-length limit.
  */
@@ -293,23 +550,67 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
   if (options.signal?.aborted) throw new AgyError('aborted', 'aborted')
   const resting = rateLimitRetryAfter()
   if (resting > 0) {
-    throw new AgyError(`Google answered 429 a moment ago; requests resume in ${resting} s`, 'rate-limited')
+    throw new AgyError(`Google answered 429 a moment ago; requests resume in ${formatWait(resting * 1000)}`, 'rate-limited', resting * 1000)
+  }
+  const spent = quotaRetryAfter(options.model)
+  if (spent > 0) {
+    throw new AgyError(`the quota for ${options.model} is used up; it is tried again in ${formatWait(spent * 1000)}`, 'rate-limited', spent * 1000)
   }
   const holdOff = capacityRetryAfter(options)
   if (holdOff > 0) {
     throw new AgyError(`Google had no capacity for ${options.model} a moment ago; the next attempt is in ${holdOff} s`, 'capacity')
   }
+  const entered = Date.now()
+  const { deadlineAt } = options
+  const deadlineError = (why: string): AgyError => new AgyError(`no answer can start within this request's deadline (${why})`, 'deadline')
+  /** Why the deadline cannot be met from `now`; undefined when it still can. */
+  const unreachable = (now: number): string | undefined => {
+    if (deadlineAt === undefined) return undefined
+    const left = deadlineAt - now
+    if (left <= 0) return 'it has passed'
+    const expected = expectedFirstOutputMs(now)
+    return expected !== undefined && expected > left ? `recent answers took ${seconds(expected)} to start, ${seconds(left)} is left` : undefined
+  }
+  const early = unreachable(entered)
+  if (early !== undefined) throw deadlineError(early)
   await mkdir(options.cwd, { recursive: true, mode: 0o700 })
-  const release = await acquireTurn(options.signal, options.queueTimeoutMs)
+  const queueLimit = deadlineAt === undefined
+    ? options.queueTimeoutMs
+    : Math.min(options.queueTimeoutMs ?? Number.MAX_SAFE_INTEGER, Math.max(0, deadlineAt - Date.now()))
+  let release: () => void
+  try {
+    release = await acquireTurn(options.signal, queueLimit, options.interactive === true)
+  } catch (error) {
+    if (error instanceof AgyError && error.kind === 'busy' && deadlineAt !== undefined && Date.now() >= deadlineAt - 100) {
+      throw deadlineError('it passed in the queue')
+    }
+    throw error
+  }
+  const acquired = Date.now()
   let child: ReturnType<typeof spawn> | undefined
   let poll: ReturnType<typeof setInterval> | undefined
+  let deadlineTimer: ReturnType<typeof setTimeout> | undefined
   let logFile: string | undefined
   let conversationId: string | undefined
+  // Timing for one log line per run; no prompt text.
+  let spawnAt: number | undefined
+  let sentAt: number | undefined
+  let googleAt: number | undefined
+  let firstOutputAt: number | undefined
+  let retries = 0
+  let usage: AgyUsage | undefined
+  let outcome = 'stopped'
+  let warmRun = false
+  /** agy's own `duration_seconds`: the model call, without start-up. */
+  let modelSeconds: number | undefined
   const onAbort = (): void => { if (child !== undefined) stopChild(child) }
   try {
     // The signal may have fired while this request waited for its turn.
     if (options.signal?.aborted) throw new AgyError('aborted', 'aborted')
-    logFile = join(await agyLogDir(), `run-${randomUUID()}.log`)
+    const late = unreachable(acquired)
+    if (late !== undefined) throw deadlineError(late)
+    const taken = options.warm === true ? takeSpare(options) : undefined
+    logFile = taken?.log ?? join(await agyLogDir(), `run-${randomUUID()}.log`)
     const log = logFile
     const queue: AgyEvent[] = []
     let wake: (() => void) | undefined
@@ -328,23 +629,58 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
     const finish = (error?: Error): void => {
       if (finished !== undefined) return
       finished = error === undefined ? {} : { error }
+      outcome = error === undefined ? 'ok' : error instanceof AgyError ? error.kind : 'failed'
+      // Image runs are slower and would make text requests look later than they are.
+      if (options.allowWorkspaceRead !== true && spawnAt !== undefined) {
+        if (error === undefined && firstOutputAt !== undefined) noteFirstOutput(firstOutputAt - spawnAt)
+        // A run stopped at its deadline took at least this long.
+        if (error instanceof AgyError && error.kind === 'deadline') noteFirstOutput(Date.now() - spawnAt)
+      }
       notify()
     }
+    const sawOutput = (): void => {
+      sawModelOutput = true
+      firstOutputAt ??= Date.now()
+    }
 
-    child = spawn(options.binary, agyArgs(options, log), { cwd: options.cwd, env: agyEnv(), stdio: ['pipe', 'pipe', 'pipe'] })
+    // For a spare, timing starts when the request takes it; its own start-up is off the request path.
+    spawnAt = Date.now()
+    warmRun = taken !== undefined
+    child = taken?.child ?? spawn(options.binary, agyArgs(options, log), { cwd: options.cwd, env: agyEnv(), stdio: ['pipe', 'pipe', 'pipe'] })
     const running = child
     options.signal?.addEventListener('abort', onAbort, { once: true })
+    if (deadlineAt !== undefined) {
+      // Only the start of the answer has a deadline; an answer that has begun runs to its end.
+      deadlineTimer = setTimeout(() => {
+        if (gaveUp !== undefined || sawModelOutput) return
+        gaveUp = deadlineError('it passed before Google answered')
+        stopChild(running)
+      }, Math.max(0, deadlineAt - Date.now()))
+    }
 
     // agy reports refused model calls only in its log, so follow it while the run is quiet.
     // Reads are chained, so the final read after exit waits for one that is in progress.
     let logOffset = 0
+    let partialLine = ''
     let logChain: Promise<void> = Promise.resolve()
     const readLog = async (): Promise<void> => {
       const chunk = await readFrom(log, logOffset)
       logOffset = chunk.offset
-      for (const match of chunk.text.matchAll(RETRY_LINE)) {
+      // Only whole lines: a read can end in the middle of one.
+      const text = partialLine + chunk.text
+      const end = text.lastIndexOf('\n')
+      partialLine = text.slice(end + 1)
+      if (end < 0) return
+      const lines = text.slice(0, end)
+      for (const line of lines.split('\n')) {
+        if (sentAt === undefined && line.includes('Sending user message')) sentAt = glogTime(line, spawnAt!)
+        else if (googleAt === undefined && line.includes('streamGenerateContent')) googleAt = glogTime(line, spawnAt!)
+      }
+      for (const match of lines.matchAll(RETRY_LINE)) {
+        retries += 1
         lastRefusal = match[2]!
-        const limit = RATE_LIMITED.test(lastRefusal) ? 1 : options.maxUpstreamAttempts
+        // A request with a deadline has no time for agy's retries.
+        const limit = RATE_LIMITED.test(lastRefusal) || deadlineAt !== undefined ? 1 : options.maxUpstreamAttempts
         if (gaveUp === undefined && limit !== undefined && Number(match[1]) >= limit) {
           gaveUp = upstreamError(lastRefusal, options.model)
           stopChild(running)
@@ -362,7 +698,7 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
       ))
     })
     running.stderr!.on('data', chunk => { stderr += String(chunk) })
-    running.stdout!.on('data', chunk => {
+    const onStdout = (chunk: unknown): void => {
       stdout += String(chunk)
       let newline: number
       while ((newline = stdout.indexOf('\n')) >= 0) {
@@ -376,12 +712,12 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
         const id = step?.conversation_id ?? event.result?.conversation_id
         if (typeof id === 'string' && id.length > 0) conversationId = id
         if (step?.step_type === 'agent_response' && typeof step.text_delta === 'string' && step.text_delta.length > 0) {
-          sawModelOutput = true
+          sawOutput()
           queue.push({ type: 'text', text: step.text_delta })
           notify()
         }
         if (step?.step_type === 'tool') {
-          sawModelOutput = true
+          sawOutput()
           if (step.state === 'DONE' && /^(read_file|view_file)$/.test(String(step.tool_name))) {
             readsDone += 1
             const parameters = step.tool_info?.parameters ?? {}
@@ -392,6 +728,9 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
         if (event.event === 'result' && event.result) {
           const r = event.result
           if (typeof r.error === 'string' && r.error.length > 0) resultError = r.error
+          if (r.usage !== undefined) usage = r.usage as AgyUsage
+          if (typeof r.duration_seconds === 'number') modelSeconds = r.duration_seconds
+          if (r.status === 'SUCCESS') firstOutputAt ??= Date.now()
           result = {
             status: String(r.status ?? ''),
             response: typeof r.response === 'string' ? r.response : '',
@@ -401,7 +740,13 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
           }
         }
       }
-    })
+    }
+    running.stdout!.on('data', onStdout)
+    // Output and errors that a spare wrote while it waited.
+    if (taken !== undefined) {
+      stderr += taken.stderr.join('')
+      for (const chunk of taken.stdout) onStdout(chunk)
+    }
     running.on('close', code => {
       void (async () => {
         await followLog()
@@ -437,18 +782,27 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
         if (finished.error instanceof AgyError && finished.error.kind === 'capacity') {
           capacityUntil.set(capacityKey(options), Date.now() + CAPACITY_COOLDOWN_MS)
         }
-        if (finished.error instanceof AgyError && finished.error.kind === 'rate-limited') {
-          rateLimitedUntil = Math.max(rateLimitedUntil, Date.now() + RATE_LIMIT_HOLD_MS)
-        }
         if (finished.error !== undefined) throw finished.error
         capacityUntil.delete(capacityKey(options))
+        rateLimitStreak = 0
         return
       }
       await new Promise<void>(resolve => { wake = resolve })
     }
   } finally {
     clearInterval(poll)
+    clearTimeout(deadlineTimer)
     options.signal?.removeEventListener('abort', onAbort)
+    if (spawnAt !== undefined) {
+      const since = (at: number | undefined, from: number | undefined): number | undefined =>
+        at === undefined || from === undefined ? undefined : at - from
+      console.info(`[dsh-antigravity-oauth] agy run agy-model=${options.model}${options.effort === undefined ? '' : `/${options.effort}`}`
+        + ` status=${outcome} queue=${seconds(acquired - entered)} setup=${seconds(since(sentAt, spawnAt))}`
+        + ` google=${seconds(since(googleAt, sentAt))} first=${seconds(since(firstOutputAt, spawnAt))}`
+        + ` total=${seconds(Date.now() - spawnAt)} model=${usage === undefined || modelSeconds === undefined ? '-' : `${modelSeconds.toFixed(1)}s`}`
+        + ` retries=${retries} in=${usage?.input_tokens ?? '-'} cached=${usage?.cache_read_tokens ?? '-'} out=${usage?.output_tokens ?? '-'}${warmRun ? ' warm' : ''}`
+        + `${options.interactive === true ? ' interactive' : ''}${deadlineAt === undefined ? '' : ` deadline=${seconds(deadlineAt - entered)}`}`)
+    }
     const forget = conversationId
     const log = logFile
     const cleanUp = (): void => {
@@ -467,6 +821,7 @@ export async function* streamAgy(options: AgyRunOptions): AsyncGenerator<AgyEven
     } else {
       cleanUp()
     }
+    if (options.warm === true && outcome === 'ok') void startSpare(options).catch(() => undefined)
   }
 }
 

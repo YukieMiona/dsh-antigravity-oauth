@@ -4,7 +4,7 @@ import { isPublicModelId, isReasoningEffort, publicModel, routeChatModel, thinki
 import { isAccountBannedError } from '../ban.ts'
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
 import { lastAgyReading } from '../agy/quota-watch.ts'
-import { AgyError, CAPACITY_COOLDOWN_MS, rateLimitRetryAfter } from '../agy/run.ts'
+import { AgyError, CAPACITY_COOLDOWN_MS, rateLimitRetryAfter, stopAgySpare } from '../agy/run.ts'
 import { agyTurn, agyWorkspace, type AgyImage } from '../agy/turn.ts'
 import { chatCompletionsUrl, type ManagerSettings } from '../manager/store.ts'
 import type { AntigravitySession } from '../session.ts'
@@ -130,6 +130,25 @@ export const AGY_QUEUE_TIMEOUT_MS = 20_000
 /** Refused model calls after which the Official CLI route gives up (agy alone would retry for two minutes). */
 export const AGY_MAX_UPSTREAM_ATTEMPTS = 3
 
+/** What a client may tell the Official CLI route about one request. */
+export interface AgyRequestHints {
+  /** Epoch ms by which the client needs the answer to start (`X-Request-Deadline-Ms`: a budget in ms from now). */
+  deadlineAt?: number
+  /** `X-Priority: interactive`: wait in the queue ahead of other requests. */
+  interactive?: boolean
+}
+
+/** Read `X-Request-Deadline-Ms` and `X-Priority`; a value that does not parse is ignored. */
+export function agyHintsOf(headers: Record<string, string | string[] | undefined>, now = Date.now()): AgyRequestHints {
+  const first = (value: string | string[] | undefined): string | undefined => Array.isArray(value) ? value[0] : value
+  const budget = Number(first(headers['x-request-deadline-ms'])?.trim())
+  const priority = first(headers['x-priority'])?.trim().toLowerCase()
+  return {
+    ...Number.isFinite(budget) && budget > 0 ? { deadlineAt: now + Math.min(budget, FIRST_EVENT_DEADLINE_MS) } : {},
+    ...priority === 'interactive' ? { interactive: true } : {},
+  }
+}
+
 export interface HttpFailure { status: number, message: string, type: string, code?: string, /** Seconds for a `Retry-After` header. */ retryAfter?: number }
 
 /** The HTTP answer for a failed completion: a client must be able to tell "try later" from "do not retry". */
@@ -144,7 +163,9 @@ export function httpFailureOf(error: unknown, timedOut = false): HttpFailure {
       case 'not-signed-in': return { status: 503, message, type: 'server_error', code: 'agy_unavailable' }
       case 'image-rejected': return { status: 400, message, type: 'invalid_request_error', code: 'image_input_not_supported' }
       case 'image-unread': return { status: 502, message, type: 'upstream_error', code: 'image_not_read' }
-      case 'rate-limited': return { status: 429, message, type: 'rate_limit_error', code: 'rate_limit_exceeded', retryAfter: Math.max(1, rateLimitRetryAfter()) }
+      case 'rate-limited': return { status: 429, message, type: 'rate_limit_error', code: 'rate_limit_exceeded', retryAfter: Math.max(1, Math.ceil((error.retryAfterMs ?? rateLimitRetryAfter() * 1000) / 1000)) }
+      // Answered at once, before any call to Google, so a client can use its fallback right away.
+      case 'deadline': return { status: 503, message, type: 'server_error', code: 'deadline_unreachable' }
       case 'too-large': return { status: 400, message, type: 'invalid_request_error', code: 'context_length_exceeded' }
       case 'upstream':
         return /\b429\b|RESOURCE_EXHAUSTED|quota/i.test(message)
@@ -376,6 +397,8 @@ export class AntigravityApiServer {
   }
 
   async stop(): Promise<void> {
+    // A spare agy waits only for this server's requests.
+    stopAgySpare()
     if (this.server) {
       const srv = this.server
       // close() alone waits for every keep-alive socket and open SSE stream, which can be forever.
@@ -517,6 +540,7 @@ export class AntigravityApiServer {
     body: any,
     signal: AbortSignal,
     onActivity?: () => void,
+    hints: AgyRequestHints = {},
   ): AsyncIterable<any> {
     const images: OpenAiImages = new Map()
     const request = openAiToRequest(body, images)
@@ -534,6 +558,9 @@ export class AntigravityApiServer {
       signal,
       queueTimeoutMs: AGY_QUEUE_TIMEOUT_MS,
       maxUpstreamAttempts: AGY_MAX_UPSTREAM_ATTEMPTS,
+      // API clients send short, self-contained requests; a started spare agy takes them.
+      warm: true,
+      ...hints,
       ...onActivity === undefined ? {} : { onActivity },
       loadImage: async block => {
         if (!fresh.has(block)) return `[Earlier image: ${block.attachment?.name ?? 'image'} (already answered)]`
@@ -701,7 +728,7 @@ export class AntigravityApiServer {
 
     try {
       const source: AsyncIterable<any> = viaAgy
-        ? this.agyEvents(routeSettings.agyPath, publicId, effort, body, abortController.signal, touch)
+        ? this.agyEvents(routeSettings.agyPath, publicId, effort, body, abortController.signal, touch, agyHintsOf(req.headers, startedAt))
         : await this.openWithFailover(publicId, input, lease, abortController.signal)
       // Read the first event before any header goes out, so a failure still gets an HTTP status.
       const iterator = source[Symbol.asyncIterator]()

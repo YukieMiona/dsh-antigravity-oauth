@@ -2,7 +2,7 @@ import { chmod, mkdir, mkdtemp, readdir, readFile, rm, stat, writeFile } from 'n
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
-import { afterEach, beforeEach, describe, expect, it } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import {
   buildConversation,
   buildTemplateBody,
@@ -11,8 +11,10 @@ import {
   parseAnswer,
   splitConversation,
   ToolCallFilter,
+  warmMessage,
+  WARM_TEMPLATE_BODY,
 } from '../src/agy/prompt.ts'
-import { AgyError, agyArgs, agyEnv, agySettings, checkAgy, forgetConversation, parseAgyQuota, resetCapacityCooldown, runAgy, setMemoryProbe, streamAgy } from '../src/agy/run.ts'
+import { AgyError, agyArgs, agyEnv, agySettings, checkAgy, classifyRateLimit, expectedFirstOutputMs, forgetConversation, formatWait, glogTime, hasAgySpare, holdAfter, stopAgySpare, parseAgyQuota, parseDuration, quotaRetryAfter, rateLimitRetryAfter, recordFirstOutput, resetCapacityCooldown, runAgy, setMemoryProbe, streamAgy } from '../src/agy/run.ts'
 import { checkAgyWatch, isQuotaLow, resetAgyWatch } from '../src/agy/quota-watch.ts'
 import { agyTurn } from '../src/agy/turn.ts'
 import { ensureTemplate, templateDir, templateName } from '../src/agy/template.ts'
@@ -144,6 +146,7 @@ describe('agy runner against a fake binary', () => {
   let dir: string
   beforeEach(async () => { dir = await mkdtemp(join(tmpdir(), 'agy-fake-')) })
   afterEach(async () => {
+    stopAgySpare()
     resetCapacityCooldown()
     resetAgyWatch()
     setMemoryProbe()
@@ -226,18 +229,28 @@ setInterval(() => { n += 1; fs.appendFileSync(log, 'E1115 run.go:316] Run: attem
     await expect(runAgy({ binary: refused, cwd: join(dir, 'ws'), model: 'm', prompt: 'x', maxUpstreamAttempts: 2 })).rejects.toMatchObject({ kind: 'upstream' })
   })
 
-  it('stops at the first 429 and sends nothing to Google for a while after it', async () => {
+  it('stops at the first 429 and sends nothing to Google, for any model, for 60 s after a short-window limit', async () => {
     const limited = await fakeAgy(RETRYING.replace('REASON', 'RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. check quota).'), 'agy-429')
     const started = Date.now()
     // agy alone would retry eight times; the plugin stops at the first 429 even with a higher limit.
-    await expect(runAgy({ binary: limited, cwd: join(dir, 'ws'), model: 'm', prompt: 'x', maxUpstreamAttempts: 5 })).rejects.toMatchObject({ kind: 'rate-limited' })
+    await expect(runAgy({ binary: limited, cwd: join(dir, 'ws'), model: 'm', prompt: 'x', maxUpstreamAttempts: 5 })).rejects.toMatchObject({ kind: 'rate-limited', retryAfterMs: 60_000 })
     expect(Date.now() - started).toBeLessThan(4_000)
     const spawned = join(dir, 'spawned-429')
     const ok = await fakeAgy(`require('node:fs').writeFileSync(${JSON.stringify(spawned)}, 'yes'); process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'ok' } })))`, 'agy-after-429')
-    // Every model is held back, not only the one that got the 429.
+    // Every model runs on the one signed-in account, so every model is held back.
     await expect(runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'other', prompt: 'x' })).rejects.toMatchObject({ kind: 'rate-limited', message: expect.stringContaining('resume in') })
     await expect(readFile(spawned, 'utf8')).rejects.toThrow()
     resetCapacityCooldown()
+    await expect(runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'other', prompt: 'x' })).resolves.toMatchObject({ response: 'ok' })
+  })
+
+  it('holds back only the model whose quota is spent, until the reset Google names', async () => {
+    const spent = await fakeAgy(RETRYING.replace('REASON', 'RESOURCE_EXHAUSTED (code 429): Individual quota reached. Resets in 3h0m0s'), 'agy-spent')
+    await expect(runAgy({ binary: spent, cwd: join(dir, 'ws'), model: 'm', prompt: 'x', maxUpstreamAttempts: 5 })).rejects.toMatchObject({ kind: 'rate-limited', retryAfterMs: 3 * 3_600_000, message: expect.stringContaining('used up') })
+    expect(rateLimitRetryAfter()).toBe(0)
+    expect(quotaRetryAfter('m')).toBeGreaterThan(3 * 3_600 - 10)
+    const ok = await fakeAgy(`process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'ok' } })))`, 'agy-ok')
+    await expect(runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'm', effort: 'high', prompt: 'x' })).rejects.toMatchObject({ kind: 'rate-limited', message: expect.stringContaining('used up') })
     await expect(runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'other', prompt: 'x' })).resolves.toMatchObject({ response: 'ok' })
   })
 
@@ -268,6 +281,125 @@ process.stdin.on('end', () => {
     await expect(first).resolves.toMatchObject({ response: 'slow' })
     // Requests that left the queue do not block the ones behind them.
     await expect(runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'm', prompt: 'x', queueTimeoutMs: 2_000 })).resolves.toMatchObject({ response: 'ok' })
+  })
+
+  it('puts an interactive request ahead of waiting requests that are not interactive', async () => {
+    setMemoryProbe(() => 0)
+    const order = join(dir, 'priority.log')
+    const marker = (name: string, ms: number) => `
+const fs = require('node:fs')
+process.stdin.resume()
+process.stdin.on('end', () => {
+  fs.appendFileSync(${JSON.stringify(order)}, '${name}\\n')
+  setTimeout(() => console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: '${name}' } })), ${ms})
+})`
+    const slow = await fakeAgy(marker('first', 400), 'agy-first')
+    const background = await fakeAgy(marker('background', 10), 'agy-background')
+    const interactive = await fakeAgy(marker('interactive', 10), 'agy-interactive')
+    const first = runAgy({ binary: slow, cwd: join(dir, 'ws'), model: 'm', prompt: 'x' })
+    await new Promise(resolve => setTimeout(resolve, 50))
+    const later = runAgy({ binary: background, cwd: join(dir, 'ws'), model: 'm', prompt: 'x' })
+    const urgent = runAgy({ binary: interactive, cwd: join(dir, 'ws'), model: 'm', prompt: 'x', interactive: true })
+    await Promise.all([first, later, urgent])
+    expect((await readFile(order, 'utf8')).trim().split('\n')).toEqual(['first', 'interactive', 'background'])
+  })
+
+  it('refuses a request at once when recent answers started later than its deadline allows', async () => {
+    const spawned = join(dir, 'spawned-deadline')
+    const ok = await fakeAgy(`require('node:fs').writeFileSync(${JSON.stringify(spawned)}, 'yes'); process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'ok' } })))`, 'agy-deadline-ok')
+    // Too few recent runs to judge: the request goes ahead.
+    recordFirstOutput(30_000)
+    await expect(runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'm', prompt: 'x', deadlineAt: Date.now() + 16_000 })).resolves.toMatchObject({ response: 'ok' })
+    await rm(spawned, { force: true })
+    resetCapacityCooldown()
+    for (let i = 0; i < 3; i++) recordFirstOutput(30_000)
+    expect(expectedFirstOutputMs()).toBe(30_000)
+    const started = Date.now()
+    await expect(runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'm', prompt: 'x', deadlineAt: Date.now() + 16_000 })).rejects.toMatchObject({ kind: 'deadline' })
+    expect(Date.now() - started).toBeLessThan(500)
+    await expect(readFile(spawned, 'utf8')).rejects.toThrow()
+    // A request with more time still goes.
+    await expect(runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'm', prompt: 'x', deadlineAt: Date.now() + 60_000 })).resolves.toMatchObject({ response: 'ok' })
+  })
+
+  it('stops a run whose answer has not started at the deadline, and lets agy retry nothing', async () => {
+    const silent = await fakeAgy(`process.stdin.resume(); setInterval(() => {}, 1000)`, 'agy-silent')
+    const started = Date.now()
+    await expect(runAgy({ binary: silent, cwd: join(dir, 'ws'), model: 'm', prompt: 'x', deadlineAt: Date.now() + 800 })).rejects.toMatchObject({ kind: 'deadline' })
+    expect(Date.now() - started).toBeLessThan(4_000)
+    // agy refuses every 0.8 s; with a deadline the plugin gives up after the first refusal, not the fifth.
+    const slowRefusals = await fakeAgy(RETRYING.replace('REASON', 'UNAVAILABLE (code 503): No capacity').replace('}, 40)', '}, 800)'), 'agy-503-slow')
+    const begun = Date.now()
+    await expect(runAgy({ binary: slowRefusals, cwd: join(dir, 'ws'), model: 'm2', prompt: 'x', maxUpstreamAttempts: 5, deadlineAt: Date.now() + 10_000 }))
+      .rejects.toMatchObject({ kind: 'capacity' })
+    expect(Date.now() - begun).toBeLessThan(3_000)
+  })
+
+  it('serves a warm request from a started spare, which then answers without its own start-up', async () => {
+    setMemoryProbe(() => 2 * 1024 ** 3)
+    const order = join(dir, 'spare.log')
+    const binary = await fakeAgy(`
+const fs = require('node:fs')
+fs.appendFileSync(${JSON.stringify(order)}, 'start ' + process.pid + '\\n')
+let buf = ''
+process.stdin.on('data', d => {
+  buf += d
+  if (!buf.includes('\\n')) return
+  fs.appendFileSync(${JSON.stringify(order)}, 'message ' + process.pid + '\\n')
+  console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'ok' } }))
+  process.exit(0)
+})`, 'agy-spare')
+    const options = { binary, cwd: join(dir, 'ws'), model: 'm', agent: 'fixed', prompt: 'x', warm: true }
+    await expect(runAgy(options)).resolves.toMatchObject({ response: 'ok' })
+    await vi.waitFor(() => expect(hasAgySpare()).toBe(true))
+    await expect(runAgy(options)).resolves.toMatchObject({ response: 'ok' })
+    const lines = (await readFile(order, 'utf8')).trim().split('\n')
+    const [first, spare] = [lines[0]!.split(' ')[1], lines[2]!.split(' ')[1]]
+    // The second request went to the spare that was started before it, not to a new process.
+    expect(lines.slice(0, 4)).toEqual([`start ${first}`, `message ${first}`, `start ${spare}`, `message ${spare}`])
+    // A spare for other arguments is not used; it is stopped instead.
+    await vi.waitFor(() => expect(hasAgySpare()).toBe(true))
+    await expect(runAgy({ ...options, model: 'other' })).resolves.toMatchObject({ response: 'ok' })
+    stopAgySpare()
+    expect(hasAgySpare()).toBe(false)
+  })
+
+  it('starts no spare without memory to spare or for a run that is not warm', async () => {
+    const ok = await fakeAgy(`process.stdin.resume(); process.stdin.on('end', () => console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'ok' } })))`, 'agy-nospare')
+    setMemoryProbe(() => 100 * 1024 ** 2)
+    await runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'm', prompt: 'x', warm: true })
+    setMemoryProbe(() => 2 * 1024 ** 3)
+    await runAgy({ binary: ok, cwd: join(dir, 'ws'), model: 'm', prompt: 'x' })
+    await new Promise(resolve => setTimeout(resolve, 200))
+    expect(hasAgySpare()).toBe(false)
+  })
+
+  it('writes one timing line per run, without prompt text', async () => {
+    const binary = await fakeAgy(`
+const fs = require('node:fs')
+const log = process.argv[process.argv.indexOf('--log-file') + 1]
+process.stdin.resume()
+process.stdin.on('end', () => {
+  const t = new Date(); const p = n => String(n).padStart(2, '0')
+  const stamp = d => 'I1122 ' + p(d.getHours()) + ':' + p(d.getMinutes()) + ':' + p(d.getSeconds()) + '.' + String(d.getMilliseconds()).padStart(3, '0') + '000       1 '
+  fs.appendFileSync(log, stamp(t) + 'server.go:1858] Sending user message to conversation c\\n')
+  setTimeout(() => {
+    fs.appendFileSync(log, stamp(new Date()) + 'http_helpers.go:771] URL: https://x/v1internal:streamGenerateContent?alt=sse\\n')
+    console.log(JSON.stringify({ event: 'result', result: { status: 'SUCCESS', response: 'ok', duration_seconds: 2.5, usage: { input_tokens: 370, output_tokens: 2, cache_read_tokens: 40 } } }))
+  }, 300)
+})`, 'agy-timed')
+    const lines: string[] = []
+    const info = vi.spyOn(console, 'info').mockImplementation((line: unknown) => { lines.push(String(line)) })
+    try {
+      await runAgy({ binary, cwd: join(dir, 'ws'), model: 'm', effort: 'low', prompt: 'SECRET PROMPT', interactive: true })
+      await new Promise(resolve => setTimeout(resolve, 900))
+    } finally {
+      info.mockRestore()
+    }
+    const run = lines.filter(line => line.includes('agy run'))
+    expect(run).toHaveLength(1)
+    expect(run[0]).toMatch(/agy-model=m\/low status=ok queue=\d+\.\ds setup=\d+\.\ds google=0\.[2-9]s first=\d+\.\ds total=\d+\.\ds model=2\.5s retries=0 in=370 cached=40 out=2 interactive/)
+    expect(run[0]).not.toContain('SECRET')
   })
 
   it('runs a second agy beside the first only while the host has memory to spare', async () => {
@@ -536,5 +668,80 @@ else console.log(${JSON.stringify(JSON.stringify(usage))})`)
     expect(await checkAgy(signedIn)).toEqual({ installed: true, signedIn: true, models: ['gemini-3.8-flash-low'] })
     const signedOut = await fakeAgy(`console.log('Error: Please sign in to view available models.')`)
     expect(await checkAgy(signedOut)).toMatchObject({ installed: true, signedIn: false })
+  })
+})
+
+describe('429 classes and holds', () => {
+  afterEach(() => resetCapacityCooldown())
+
+  it('sorts a 429 into a short-window limit or a spent quota', () => {
+    expect(classifyRateLimit('PERMISSION_DENIED (code 403): denied')).toBeUndefined()
+    expect(classifyRateLimit('RESOURCE_EXHAUSTED (code 429): Resource has been exhausted (e.g. check quota).')).toEqual({ kind: 'short-window' })
+    expect(classifyRateLimit('code 429: Please retry in 3.5s')).toEqual({ kind: 'short-window', delayMs: 3_500 })
+    expect(classifyRateLimit('RESOURCE_EXHAUSTED (code 429): {"@type":"type.googleapis.com/google.rpc.RetryInfo","retryDelay":"30s"}')).toEqual({ kind: 'short-window', delayMs: 30_000 })
+    expect(classifyRateLimit('RESOURCE_EXHAUSTED (code 429): Individual quota reached. Resets in 96h12m27s')).toEqual({ kind: 'quota-spent', delayMs: (96 * 3_600 + 12 * 60 + 27) * 1_000 })
+    expect(classifyRateLimit('code 429: You have exhausted your capacity on this model. Your quota will reset after 2h1m5s.')).toEqual({ kind: 'quota-spent', delayMs: (2 * 3_600 + 65) * 1_000 })
+    expect(classifyRateLimit('RESOURCE_EXHAUSTED (code 429): QUOTA_EXHAUSTED')).toEqual({ kind: 'quota-spent' })
+    // A reset at once is a burst limit, whatever the wording.
+    expect(classifyRateLimit('RESOURCE_EXHAUSTED (code 429): quota exhausted, reset after 0s')).toEqual({ kind: 'short-window', delayMs: 0 })
+    // A reset far away is a spent quota.
+    expect(classifyRateLimit('code 429: retry in 20m0s')).toEqual({ kind: 'quota-spent', delayMs: 20 * 60_000 })
+  })
+
+  it('reads Go durations and writes short waits', () => {
+    expect(parseDuration('1h2m3.5s')).toBe(3_723_500)
+    expect(parseDuration('500ms')).toBe(500)
+    expect(parseDuration('soon')).toBeUndefined()
+    expect(formatWait(45_000)).toBe('45 s')
+    expect(formatWait(12 * 60_000)).toBe('12 min')
+    expect(formatWait((3 * 60 + 5) * 60_000)).toBe('3 h 5 min')
+    expect(formatWait((4 * 24 + 2) * 3_600_000)).toBe('4 d 2 h')
+  })
+
+  it('holds the whole account after a short-window 429: at least 60 s, doubled in a row, at most 5 min', () => {
+    const t0 = 1_000_000_000
+    expect(holdAfter({ kind: 'short-window', delayMs: 3_000 }, 'm', t0)).toBe(60_000)
+    expect(rateLimitRetryAfter(t0)).toBe(60)
+    expect(holdAfter({ kind: 'short-window' }, 'm', t0 + 61_000)).toBe(120_000)
+    expect(holdAfter({ kind: 'short-window' }, 'm', t0 + 182_000)).toBe(240_000)
+    expect(holdAfter({ kind: 'short-window' }, 'm', t0 + 423_000)).toBe(300_000)
+    // A long told delay is kept, within the cap.
+    expect(holdAfter({ kind: 'short-window', delayMs: 290_000 }, 'm', t0 + 724_000)).toBe(300_000)
+    // After a quiet time the row starts again.
+    expect(holdAfter({ kind: 'short-window', delayMs: 90_000 }, 'm', t0 + 724_000 + 16 * 60_000)).toBe(90_000)
+    expect(quotaRetryAfter('m', t0)).toBe(0)
+  })
+
+  it('holds one model after a spent quota, for 30 min when Google names no reset', () => {
+    const t0 = 1_000_000_000
+    expect(holdAfter({ kind: 'quota-spent' }, 'm', t0)).toBe(30 * 60_000)
+    expect(quotaRetryAfter('m', t0)).toBe(30 * 60)
+    expect(quotaRetryAfter('other', t0)).toBe(0)
+    expect(rateLimitRetryAfter(t0)).toBe(0)
+  })
+})
+
+describe('glogTime', () => {
+  it('reads the time of a glog line on the day nearest to the reference', () => {
+    const ref = new Date(2026, 10, 22, 0, 0, 5).getTime()
+    expect(glogTime('I1122 00:00:07.250000       1 server.go:1] x', ref)).toBe(new Date(2026, 10, 22, 0, 0, 7, 250).getTime())
+    // Just before midnight belongs to the day before.
+    expect(glogTime('I1121 23:59:59.900000       1 server.go:1] x', ref)).toBe(new Date(2026, 10, 21, 23, 59, 59, 900).getTime())
+    expect(glogTime('not a glog line', ref)).toBeUndefined()
+  })
+})
+
+describe('warmMessage', () => {
+  const msg = (text: string) => ({ role: 'user' as const, content: [{ type: 'text' as const, text }] })
+  it('puts the template body and every turn into one message when it fits', () => {
+    const message = warmMessage([msg('hello'), msg('Say OK.')], 'BODY')
+    expect(message).toMatch(/^BODY\n\n# Conversation\n\n/)
+    expect(message).toContain('hello')
+    expect(message).toContain('Say OK.')
+    expect(WARM_TEMPLATE_BODY).toContain('# Conversation')
+  })
+  it('leaves a request that does not fit whole to the usual path', () => {
+    expect(warmMessage([msg('x'.repeat(400_000))], 'BODY')).toBeUndefined()
+    expect(warmMessage([msg('short')], 'B'.repeat(400_000))).toBeUndefined()
   })
 })

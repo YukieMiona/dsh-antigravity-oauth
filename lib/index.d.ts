@@ -378,6 +378,11 @@ interface ManagerSettings {
   apiKey: string;
   /** Path of the official Antigravity CLI binary used by the `agy` route. */
   agyPath: string;
+  /**
+   * On the `agy` route, send DSH's session-title requests to Google. Off: the plugin refuses them
+   * without a model call and DSH keeps its own title (the first words of the first prompt).
+   */
+  agyTitles: boolean;
 }
 declare class AntigravityManagerStore {
   readonly filename: string;

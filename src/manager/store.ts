@@ -20,6 +20,11 @@ export interface ManagerSettings {
   apiKey: string
   /** Path of the official Antigravity CLI binary used by the `agy` route. */
   agyPath: string
+  /**
+   * On the `agy` route, send DSH's session-title requests to Google. Off: the plugin refuses them
+   * without a model call and DSH keeps its own title (the first words of the first prompt).
+   */
+  agyTitles: boolean
 }
 
 /** What the settings UI may see: the key itself never leaves the server. */
@@ -27,6 +32,7 @@ export interface ManagerSettingsView {
   route: RouteKind
   enabled: boolean
   agyPath: string
+  agyTitles: boolean
   baseUrl: string
   hasApiKey: boolean
   apiKeyHint: string
@@ -40,6 +46,7 @@ export const DEFAULT_MANAGER_SETTINGS: ManagerSettings = {
   baseUrl: '',
   apiKey: '',
   agyPath: DEFAULT_AGY_PATH,
+  agyTitles: true,
 }
 
 function isRouteKind(value: unknown): value is RouteKind {
@@ -92,6 +99,7 @@ function parseStored(raw: unknown): ManagerSettings {
     baseUrl,
     apiKey: typeof data.apiKey === 'string' ? data.apiKey.trim() : '',
     agyPath,
+    agyTitles: data.agyTitles !== false,
   }
 }
 
@@ -100,6 +108,7 @@ export function viewOf(settings: ManagerSettings): ManagerSettingsView {
     route: settings.route,
     enabled: settings.enabled,
     agyPath: settings.agyPath,
+    agyTitles: settings.agyTitles,
     baseUrl: settings.baseUrl,
     hasApiKey: settings.apiKey.length > 0,
     apiKeyHint: settings.apiKey.length >= 8 ? `…${settings.apiKey.slice(-4)}` : '',
@@ -148,6 +157,7 @@ export class AntigravityManagerStore {
       baseUrl: data.baseUrl === undefined ? current.baseUrl : normalizeBaseUrl(data.baseUrl),
       apiKey: typeof data.apiKey === 'string' ? data.apiKey.trim() : current.apiKey,
       agyPath: data.agyPath === undefined ? current.agyPath : normalizeAgyPath(data.agyPath),
+      agyTitles: typeof data.agyTitles === 'boolean' ? data.agyTitles : current.agyTitles,
     }
     await writeFileAtomic(this.filename, JSON.stringify(next, null, 2) + '\n', { mode: 0o600, dirMode: 0o700 })
     this.cached = { settings: next, at: Date.now() }

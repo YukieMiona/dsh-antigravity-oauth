@@ -1,4 +1,4 @@
-import { mkdtemp, readFile, rm, stat } from 'node:fs/promises'
+import { mkdtemp, readFile, rm, stat, writeFile } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import type { GenerateOptions, StreamChunk } from '@deepseek-ai/dsh-llm'
@@ -14,7 +14,7 @@ import {
 import { probeBridge } from '../src/manager/probe.ts'
 import { AntigravityManagerStore, normalizeBaseUrl, viewOf } from '../src/manager/store.ts'
 
-const settings = { route: 'gateway' as const, enabled: true, baseUrl: 'http://127.0.0.1:8045/v1', apiKey: 'sk-fixture-key', agyPath: '/opt/fixture/agy' }
+const settings = { route: 'gateway' as const, enabled: true, baseUrl: 'http://127.0.0.1:8045/v1', apiKey: 'sk-fixture-key', agyPath: '/opt/fixture/agy', agyTitles: true }
 
 function msg(role: string, content: unknown[], extra: Record<string, unknown> = {}) {
   return { id: `${role}-${Math.random()}`, role, source: { kind: role }, content, ...extra }
@@ -56,6 +56,17 @@ describe('AntigravityManagerStore', () => {
     expect((await stat(file)).mode & 0o777).toBe(0o600)
     expect((await store.save({ apiKey: '' })).apiKey).toBe('')
     expect(JSON.parse(await readFile(file, 'utf8')).enabled).toBe(true)
+  })
+
+  it('sends session titles on the agy route by default, and keeps the switch across patches', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'agy-mgr-'))
+    const file = join(dir, 'm.json')
+    await writeFile(file, JSON.stringify({ route: 'agy', agyPath: '/opt/agy' }))
+    const store = new AntigravityManagerStore(file)
+    expect((await store.read()).agyTitles).toBe(true)
+    expect((await store.save({ agyTitles: false })).agyTitles).toBe(false)
+    expect((await store.save({ route: 'agy' })).agyTitles).toBe(false)
+    expect(viewOf(await store.read()).agyTitles).toBe(false)
   })
 
   it('rejects unsafe gateway URLs and masks the key in the UI view', () => {
@@ -209,6 +220,14 @@ describe('AntigravityAdapter bridge routing', () => {
     expect((await agy.resolveModel('agy-google-antigravity', 'gemini-3.8-flash')).context?.contextWindow).toBe(196_608)
     const direct = createAntigravityAdapter({ ...base, manager: { read: async () => ({ ...settings, route: 'direct', enabled: false }) } } as never, { nativeTools: true, nativeSearch: true })
     expect((await direct.resolveModel('agy-google-antigravity', 'gemini-3.8-flash')).context?.contextWindow).toBe(1_048_576)
+  })
+
+  it('refuses a session-title request on the agy route without starting agy when titles are off', async () => {
+    const base = { thoughtSignatures: new Map(), getAdvancedSettings: async () => ({ modelContextWindow: 1_048_576, defaultReasoningEffort: 'medium' }) }
+    const adapter = createAntigravityAdapter({ ...base, manager: { read: async () => ({ ...settings, route: 'agy', enabled: false, agyTitles: false }) } } as never, { nativeTools: true, nativeSearch: true })
+    // The fixture binary does not exist: reaching agy would fail with MISSING_CREDENTIAL instead.
+    await expect(collect(adapter.stream({ provider: 'agy-google-antigravity', model: 'gemini-3.8-flash', purpose: 'session-title', messages: [msg('user', [{ type: 'text', text: 'hi' }])] } as unknown as GenerateOptions)))
+      .rejects.toMatchObject({ code: 'UNSUPPORTED' })
   })
 
   it('leaves DSH a compaction budget on every route and window (DSH default headroom 64K)', async () => {
