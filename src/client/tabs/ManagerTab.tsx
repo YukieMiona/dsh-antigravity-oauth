@@ -5,7 +5,7 @@ import type { BridgeProbeResult } from '../../manager/probe.ts'
 import { REASONING_EFFORTS, routeChatModel } from '../../models.ts'
 import { AGY_TESTED_LINE, isTestedAgyVersion } from '../../agy/version.ts'
 
-export type BridgePatch = { route?: RouteKind, enabled?: boolean, baseUrl?: string, apiKey?: string, agyTitles?: boolean }
+export type BridgePatch = { route?: RouteKind, enabled?: boolean, baseUrl?: string, apiKey?: string, agyTitles?: boolean, agyPromptRewrite?: boolean }
 
 export interface ManagerTabProps {
   t: (key: AntigravityKey, params?: Record<string, unknown>) => string
@@ -172,6 +172,20 @@ export function ManagerTab({ t, settings, enabledModels, save, test }: ManagerTa
             <span className="dsh-agy-option-text">
               <span className="dsh-agy-option-name">{t('agyTitles')}</span>
               <span className="dsh-agy-option-desc">{t('agyTitlesDesc')}</span>
+            </span>
+          </label>
+        ) : null}
+        {route === 'agy' ? (
+          <label className="dsh-agy-option">
+            <input
+              type="checkbox"
+              checked={settings.agyPromptRewrite === true}
+              disabled={busy}
+              onChange={event => { void persist({ agyPromptRewrite: event.target.checked }) }}
+            />
+            <span className="dsh-agy-option-text">
+              <span className="dsh-agy-option-name">{t('agyPromptRewrite')}</span>
+              <span className="dsh-agy-option-desc">{t('agyPromptRewriteDesc', { count: settings.agyPromptRewriteRules ?? 0 })}</span>
             </span>
           </label>
         ) : null}

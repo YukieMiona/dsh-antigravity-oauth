@@ -52,6 +52,7 @@ import {
   withSearchContinueGuidance,
 } from './search-turn.ts'
 import type { AntigravitySession } from './session.ts'
+import { rewritesFor } from './agy/prompt-rewrite.ts'
 import { isAccountBannedError } from './ban.ts'
 import { streamBridge, toBridgeMessages, toBridgeTools, type BridgeRequest } from './manager/bridge.ts'
 import type { ManagerSettings } from './manager/store.ts'
@@ -754,6 +755,7 @@ export class AntigravityAdapter extends LlmAdapter {
         onActivity: () => watchdog.touch(),
         // agy retries a refused call for about two minutes by itself; a chat should not wait that long.
         maxUpstreamAttempts: 5,
+        ...rewritesFor(settings).length > 0 ? { promptRewrites: rewritesFor(settings) } : {},
         loadImage: async block => {
           const name = block.attachment?.name || block.attachment?.attachmentId || 'image'
           if (this.options.disableImageUpload === true) return `[Image: ${name} (image input disabled)]`

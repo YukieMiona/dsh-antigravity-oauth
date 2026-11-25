@@ -6,6 +6,7 @@ import type { GenerateOptions } from '@deepseek-ai/dsh-llm'
 import { lastAgyReading } from '../agy/quota-watch.ts'
 import { AgyError, CAPACITY_COOLDOWN_MS, rateLimitRetryAfter, stopAgySpare } from '../agy/run.ts'
 import { agyTurn, agyWorkspace, type AgyImage } from '../agy/turn.ts'
+import { rewritesFor, type PromptRewrite } from '../agy/prompt-rewrite.ts'
 import { chatCompletionsUrl, type ManagerSettings } from '../manager/store.ts'
 import type { AntigravitySession } from '../session.ts'
 import type {
@@ -541,6 +542,7 @@ export class AntigravityApiServer {
     signal: AbortSignal,
     onActivity?: () => void,
     hints: AgyRequestHints = {},
+    promptRewrites: readonly PromptRewrite[] = [],
   ): AsyncIterable<any> {
     const images: OpenAiImages = new Map()
     const request = openAiToRequest(body, images)
@@ -560,6 +562,7 @@ export class AntigravityApiServer {
       maxUpstreamAttempts: AGY_MAX_UPSTREAM_ATTEMPTS,
       // API clients send short, self-contained requests; a started spare agy takes them.
       warm: true,
+      ...promptRewrites.length > 0 ? { promptRewrites } : {},
       ...hints,
       ...onActivity === undefined ? {} : { onActivity },
       loadImage: async block => {
@@ -728,7 +731,7 @@ export class AntigravityApiServer {
 
     try {
       const source: AsyncIterable<any> = viaAgy
-        ? this.agyEvents(routeSettings.agyPath, publicId, effort, body, abortController.signal, touch, agyHintsOf(req.headers, startedAt))
+        ? this.agyEvents(routeSettings.agyPath, publicId, effort, body, abortController.signal, touch, agyHintsOf(req.headers, startedAt), rewritesFor(routeSettings))
         : await this.openWithFailover(publicId, input, lease, abortController.signal)
       // Read the first event before any header goes out, so a failure still gets an HTTP status.
       const iterator = source[Symbol.asyncIterator]()

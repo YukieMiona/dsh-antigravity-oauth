@@ -14,7 +14,7 @@ import {
 import { probeBridge } from '../src/manager/probe.ts'
 import { AntigravityManagerStore, normalizeBaseUrl, viewOf } from '../src/manager/store.ts'
 
-const settings = { route: 'gateway' as const, enabled: true, baseUrl: 'http://127.0.0.1:8045/v1', apiKey: 'sk-fixture-key', agyPath: '/opt/fixture/agy', agyTitles: true }
+const settings = { route: 'gateway' as const, enabled: true, baseUrl: 'http://127.0.0.1:8045/v1', apiKey: 'sk-fixture-key', agyPath: '/opt/fixture/agy', agyTitles: true, agyPromptRewrite: false, agyPromptRewrites: [] }
 
 function msg(role: string, content: unknown[], extra: Record<string, unknown> = {}) {
   return { id: `${role}-${Math.random()}`, role, source: { kind: role }, content, ...extra }
@@ -67,6 +67,17 @@ describe('AntigravityManagerStore', () => {
     expect((await store.save({ agyTitles: false })).agyTitles).toBe(false)
     expect((await store.save({ route: 'agy' })).agyTitles).toBe(false)
     expect(viewOf(await store.read()).agyTitles).toBe(false)
+  })
+
+  it('keeps the prompt rewrite switch off by default, and keeps valid extra rules from the file', async () => {
+    dir = await mkdtemp(join(tmpdir(), 'agy-mgr-'))
+    const file = join(dir, 'm.json')
+    await writeFile(file, JSON.stringify({ route: 'agy', agyPromptRewrites: [{ find: 'x', replace: 'y' }, { find: '', replace: 'z' }, { find: 3 }, 'bad'] }))
+    const store = new AntigravityManagerStore(file)
+    expect(await store.read()).toMatchObject({ agyPromptRewrite: false, agyPromptRewrites: [{ find: 'x', replace: 'y' }] })
+    const saved = await store.save({ agyPromptRewrite: true })
+    expect(saved).toMatchObject({ agyPromptRewrite: true, agyPromptRewrites: [{ find: 'x', replace: 'y' }] })
+    expect(viewOf(saved)).toMatchObject({ agyPromptRewrite: true, agyPromptRewriteRules: 1 })
   })
 
   it('rejects unsafe gateway URLs and masks the key in the UI view', () => {

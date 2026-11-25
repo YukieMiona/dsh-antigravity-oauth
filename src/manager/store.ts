@@ -25,6 +25,13 @@ export interface ManagerSettings {
    * without a model call and DSH keeps its own title (the first words of the first prompt).
    */
   agyTitles: boolean
+  /**
+   * On the `agy` route, rewrite known sentences that make Google refuse the request with a 429
+   * (see agy/prompt-rewrite.ts): the built-in rules plus `agyPromptRewrites`. Off by default.
+   */
+  agyPromptRewrite: boolean
+  /** Extra plain-text rules for `agyPromptRewrite`, edited in the settings file. At most 50. */
+  agyPromptRewrites: Array<{ find: string, replace: string }>
 }
 
 /** What the settings UI may see: the key itself never leaves the server. */
@@ -33,6 +40,9 @@ export interface ManagerSettingsView {
   enabled: boolean
   agyPath: string
   agyTitles: boolean
+  agyPromptRewrite: boolean
+  /** Number of extra rules in the settings file. */
+  agyPromptRewriteRules: number
   baseUrl: string
   hasApiKey: boolean
   apiKeyHint: string
@@ -47,6 +57,20 @@ export const DEFAULT_MANAGER_SETTINGS: ManagerSettings = {
   apiKey: '',
   agyPath: DEFAULT_AGY_PATH,
   agyTitles: true,
+  agyPromptRewrite: false,
+  agyPromptRewrites: [],
+}
+
+const MAX_PROMPT_REWRITES = 50
+
+function parsePromptRewrites(raw: unknown): Array<{ find: string, replace: string }> {
+  if (!Array.isArray(raw)) return []
+  return raw
+    .filter((rule): rule is { find: string, replace: string } => typeof rule === 'object' && rule !== null
+      && typeof (rule as { find?: unknown }).find === 'string' && (rule as { find: string }).find.length > 0
+      && typeof (rule as { replace?: unknown }).replace === 'string')
+    .slice(0, MAX_PROMPT_REWRITES)
+    .map(rule => ({ find: rule.find, replace: rule.replace }))
 }
 
 function isRouteKind(value: unknown): value is RouteKind {
@@ -100,6 +124,8 @@ function parseStored(raw: unknown): ManagerSettings {
     apiKey: typeof data.apiKey === 'string' ? data.apiKey.trim() : '',
     agyPath,
     agyTitles: data.agyTitles !== false,
+    agyPromptRewrite: data.agyPromptRewrite === true,
+    agyPromptRewrites: parsePromptRewrites(data.agyPromptRewrites),
   }
 }
 
@@ -109,6 +135,8 @@ export function viewOf(settings: ManagerSettings): ManagerSettingsView {
     enabled: settings.enabled,
     agyPath: settings.agyPath,
     agyTitles: settings.agyTitles,
+    agyPromptRewrite: settings.agyPromptRewrite,
+    agyPromptRewriteRules: settings.agyPromptRewrites.length,
     baseUrl: settings.baseUrl,
     hasApiKey: settings.apiKey.length > 0,
     apiKeyHint: settings.apiKey.length >= 8 ? `…${settings.apiKey.slice(-4)}` : '',
@@ -158,6 +186,9 @@ export class AntigravityManagerStore {
       apiKey: typeof data.apiKey === 'string' ? data.apiKey.trim() : current.apiKey,
       agyPath: data.agyPath === undefined ? current.agyPath : normalizeAgyPath(data.agyPath),
       agyTitles: typeof data.agyTitles === 'boolean' ? data.agyTitles : current.agyTitles,
+      agyPromptRewrite: typeof data.agyPromptRewrite === 'boolean' ? data.agyPromptRewrite : current.agyPromptRewrite,
+      // Extra rules are edited in the file; the UI never sends them, so they are kept.
+      agyPromptRewrites: data.agyPromptRewrites === undefined ? current.agyPromptRewrites : parsePromptRewrites(data.agyPromptRewrites),
     }
     await writeFileAtomic(this.filename, JSON.stringify(next, null, 2) + '\n', { mode: 0o600, dirMode: 0o700 })
     this.cached = { settings: next, at: Date.now() }
