@@ -20,6 +20,7 @@ import {
 import { AgyError, streamAgy, type AgyResult, type AgyUsage } from './run.ts'
 import { noteAgyUse } from './quota-watch.ts'
 import { ensureTemplate } from './template.ts'
+import { rewriteRequest, type PromptRewrite } from './prompt-rewrite.ts'
 
 export type AgyTurnEvent =
   | { type: 'text', text: string }
@@ -46,6 +47,8 @@ export interface AgyTurnOptions {
   deadlineAt?: number
   /** See `AgyRunOptions.interactive`. */
   interactive?: boolean
+  /** Rules applied to the system instructions before they go to agy (see prompt-rewrite.ts). */
+  promptRewrites?: readonly PromptRewrite[]
   /**
    * Send a request that fits one user message with a fixed template, so a started spare agy
    * process can take it (no start-up on the request path). Larger requests and images do not.
@@ -155,6 +158,11 @@ const TOO_LARGE_SHARES = [1, 0.6, 0.25] as const
  */
 export async function* agyTurn(options: AgyTurnOptions): AsyncGenerator<AgyTurnEvent> {
   noteAgyUse(options.binary)
+  if (options.promptRewrites !== undefined && options.promptRewrites.length > 0) {
+    const rewritten = rewriteRequest(options.request, options.promptRewrites)
+    if (rewritten.count > 0) console.info(`[dsh-antigravity-oauth] agy prompt rewrite: ${rewritten.count} replacement(s)`)
+    options = { ...options, request: rewritten.request }
+  }
   const images = await stageImages(options)
   try {
     const withImages = images.dir !== undefined

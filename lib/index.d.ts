@@ -383,6 +383,16 @@ interface ManagerSettings {
    * without a model call and DSH keeps its own title (the first words of the first prompt).
    */
   agyTitles: boolean;
+  /**
+   * On the `agy` route, rewrite known sentences that make Google refuse the request with a 429
+   * (see agy/prompt-rewrite.ts): the built-in rules plus `agyPromptRewrites`. Off by default.
+   */
+  agyPromptRewrite: boolean;
+  /** Extra plain-text rules for `agyPromptRewrite`, edited in the settings file. At most 50. */
+  agyPromptRewrites: Array<{
+    find: string;
+    replace: string;
+  }>;
 }
 declare class AntigravityManagerStore {
   readonly filename: string;

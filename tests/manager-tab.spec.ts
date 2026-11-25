@@ -17,9 +17,9 @@ describe('ManagerTab', () => {
     root = createRoot(host)
     const full = {
       t,
-      settings: { route: 'direct' as const, enabled: false, agyPath: '/root/.local/bin/agy', agyTitles: true, baseUrl: 'http://127.0.0.1:8045/v1', hasApiKey: true, apiKeyHint: '…4e5f' },
+      settings: { route: 'direct' as const, enabled: false, agyPath: '/root/.local/bin/agy', agyTitles: true, agyPromptRewrite: false, agyPromptRewriteRules: 0, baseUrl: 'http://127.0.0.1:8045/v1', hasApiKey: true, apiKeyHint: '…4e5f' },
       enabledModels: ['gemini-3.8-flash', 'gemini-3.7-flash'],
-      save: vi.fn(async () => ({ route: 'gateway' as const, enabled: true, agyPath: '/root/.local/bin/agy', agyTitles: true, baseUrl: 'http://127.0.0.1:8045/v1', hasApiKey: true, apiKeyHint: '…4e5f' })),
+      save: vi.fn(async () => ({ route: 'gateway' as const, enabled: true, agyPath: '/root/.local/bin/agy', agyTitles: true, agyPromptRewrite: false, agyPromptRewriteRules: 0, baseUrl: 'http://127.0.0.1:8045/v1', hasApiKey: true, apiKeyHint: '…4e5f' })),
       test: vi.fn(async () => ({
         ok: true, latencyMs: 42, gatewayUp: true,
         models: ['gemini-3.8-flash-low', 'gemini-3.8-flash-medium', 'gemini-3.8-flash-high'],
@@ -65,11 +65,19 @@ describe('ManagerTab', () => {
     const { host: direct } = await mount({})
     expect(direct.textContent).not.toContain(en.agyTitles)
     act(() => root?.unmount()); document.body.innerHTML = ''
-    const { host, props } = await mount({ settings: { route: 'agy', enabled: false, agyPath: '/root/.local/bin/agy', agyTitles: true, baseUrl: '', hasApiKey: false, apiKeyHint: '' } })
+    const { host, props } = await mount({ settings: { route: 'agy', enabled: false, agyPath: '/root/.local/bin/agy', agyTitles: true, agyPromptRewrite: false, agyPromptRewriteRules: 0, baseUrl: '', hasApiKey: false, apiKeyHint: '' } })
     const toggle = Array.from(host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')).find(i => i.closest('label')?.textContent?.includes(en.agyTitles))!
     expect(toggle.checked).toBe(true)
     await act(async () => { toggle.click() })
     expect(props.save).toHaveBeenLastCalledWith({ agyTitles: false })
+  })
+  it('shows the prompt rewrite switch on the official CLI route and saves it', async () => {
+    const { host, props } = await mount({ settings: { route: 'agy', enabled: false, agyPath: '/root/.local/bin/agy', agyTitles: true, agyPromptRewrite: false, agyPromptRewriteRules: 2, baseUrl: '', hasApiKey: false, apiKeyHint: '' } })
+    const toggle = Array.from(host.querySelectorAll<HTMLInputElement>('input[type="checkbox"]')).find(i => i.closest('label')?.textContent?.includes(en.agyPromptRewrite))!
+    expect(toggle.checked).toBe(false)
+    expect(toggle.closest('label')?.textContent).toContain(': 2.')
+    await act(async () => { toggle.click() })
+    expect(props.save).toHaveBeenLastCalledWith({ agyPromptRewrite: true })
   })
   it('flags an agy version outside the tested release line', async () => {
     const { host } = await mount({

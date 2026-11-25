@@ -4,6 +4,11 @@ This file records completed features, fixes, and process milestones in `YukieMio
 
 ## Unreleased
 
+## v0.2.6.1 (2026-11-25)
+
+- Official CLI: a Route tab switch, "Rewrite sentences Google refuses" (off by default). Google's Antigravity backend answers 429 `RESOURCE_EXHAUSTED`, with quota left, when the system prompt carries certain sentences of known third-party harnesses. Measured 2026-11-25 (one account, `gemini-4-neon-medium`): DSH's prompt got a 429 on every request while a neutral prompt passed before and after; bisection found three stock DSH sentences (the "powered by DeepSeek Harness" identity line and two Web GUI sentences). With those reworded, the same 185K-character prompt was answered. Only system instructions change, never user or tool content. Extra plain-text rules go in the route settings file (`agyPromptRewrites`). Google may change what it matches; the account carries the risk.
+- DSH 0.2.3: the four client peers accept `<0.2.4-0` (DSH 0.2.3-alpha.2 refused to load the plugin with `<=0.2.2`).
+
 ## v0.2.6 (2026-11-24)
 
 - API server (Official CLI route): a request that fits one user message whole (instructions and every turn, up to the 36K-token message budget, no images) goes to a started spare `agy` process with a fixed agent template. `agy`'s own start-up (2-3 s: language server, sign-in, five calls to Google) is then off the request path: measured 2026-11-22 with a 15K-token request, setup 1.9-2.8 s cold, 0.0-0.1 s warm. Each spare answers one request and exits, so no history passes between requests. One spare waits at most, only while 700 MB of memory is available and no 429 hold is active, and it stops after 5 idle minutes. Larger requests and image requests take the usual path. DSH chats are unchanged.
